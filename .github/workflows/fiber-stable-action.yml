@@ -1,0 +1,63 @@
+# This workflow will install Python dependencies, run tests and lint with a single version of Python
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
+
+name: fiber stable action
+on:
+  workflow_dispatch: # Allows the workflow to be manually triggered
+    inputs:
+      GitUrl:
+        description: 'fiber -git url'
+        default: 'https://github.com/nervosnetwork/fiber.git'
+      GitBranch:
+        description: 'fiber -git branch'
+        default: 'develop'
+      BuildFIBER:
+        description: 'build fiber'
+        default: 'true'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v3
+        with:
+          python-version: "3.12"
+
+      - name: Print Input Values
+        run: |
+          echo "**Input Values:**"
+          echo "  GitUrl: ${{ github.event.inputs.GitUrl }}"
+          echo "  GitBranch: ${{ github.event.inputs.GitBranch }}"
+          echo "  BuildCKbCLI: ${{ github.event.inputs.BuildFIBER }}"
+
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Install dependencies
+        run: make prepare_develop_testnet
+        env:
+          GitUrl: '${{ github.event.inputs.GitUrl }}'
+          GitBranch: '${{ github.event.inputs.GitBranch }}'
+          BuildFIBER: '${{ github.event.inputs.BuildFIBER }}'
+
+      - name: Run tests
+        run:  make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/stable"
+
+      #    - name: Setup upterm session
+      #      if: always()
+      #      uses: lhotari/action-upterm@v1
+
+      - name: Publish reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jfoa-build-reports-${{ runner.os }}
+          path: ./report

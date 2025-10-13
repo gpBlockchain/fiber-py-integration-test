@@ -1,0 +1,10 @@
+# Created by pytest automatically.
+tmp
+.pytest_cache
+download
+pytest.ini
+reprot
+__pycache__
+pid.txt
+.idea
+venv

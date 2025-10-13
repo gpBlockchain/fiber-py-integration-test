@@ -1,0 +1,42 @@
+fiber:
+  listening_addr: {{ fiber_listening_addr | default("/ip4/127.0.0.1/tcp/8228") }}
+  chain: dev.toml
+  announce_listening_addr: true
+  announce_private_addr: true
+  gossip_store_maintenance_interval_ms: 1000
+  gossip_network_maintenance_interval_ms: 1000
+  open_channel_auto_accept_min_ckb_funding_amount: {{ fiber_open_channel_auto_accept_min_ckb_funding_amount | default(10000000000)}}
+  watchtower_check_interval_seconds: {{ fiber_watchtower_check_interval_seconds | default(60) }}
+  tlc_expiry_delta: {{ fiber_tlc_expiry_delta | default(86400000) }}
+
+rpc:
+  listening_addr: {{ rpc_listening_addr | default("127.0.0.1:8227") }}
+  enabled_modules:
+    - cch
+    - channel
+    - payment
+    - graph
+    - info
+    - invoice
+    - peer
+    - dev
+ckb:
+  rpc_url: {{ ckb_rpc_url | default("http://127.0.0.1:8114") }}
+  {% if ckb_udt_whitelist is defined %}
+  udt_whitelist:
+    - name: XUDT
+      script:
+        code_hash: {{ xudt_script_code_hash }}
+        hash_type: type
+        args: 0x.*
+      cell_deps:
+        - tx_hash: {{ xudt_cell_deps_tx_hash }}
+          index: {{ xudt_cell_deps_index }}
+          dep_type: code
+      auto_accept_amount: {{ fiber_auto_accept_amount | default(1000000000)}}
+  {% endif %}
+
+services:
+  - fiber
+  - rpc
+  - ckb

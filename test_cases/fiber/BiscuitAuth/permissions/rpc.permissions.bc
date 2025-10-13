@@ -1,0 +1,13 @@
+write("channels");
+read("channels");
+write("messages");
+write("chain");
+read("graph");
+read("node");
+write("invoices");
+read("invoices");
+write("payments");
+read("payments");
+write("peers");
+read("peers");
+write("watchtower");

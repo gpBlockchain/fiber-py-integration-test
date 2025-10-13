@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lightning Network Visualization</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { margin: 0; font-family: Arial, sans-serif; background-color: #1E1E1E; color: #FFFFFF; }
+        #header { padding: 10px; display: flex; justify-content: space-between; align-items: center; background-color: #2A2A2A; }
+        #query-bar input, #rpc-bar input { padding: 5px; width: 250px; font-size: 16px; margin-right: 10px; }
+        #query-bar button, #rpc-bar button { padding: 5px 10px; background-color: #F7931A; border: none; color: white; cursor: pointer; margin-left: 10px; }
+        #filter-bar select { padding: 5px; font-size: 16px; background-color: #3A3A3A; color: #FFFFFF; border: 1px solid #F7931A; }
+        #overview { display: flex; justify-content: space-around; padding: 10px; background-color: #2A2A2A; }
+        .stat-card { background-color: #3A3A3A; padding: 10px; border-radius: 5px; text-align: center; }
+        .stat-card h3 { margin: 0; font-size: 24px; color: #F7931A; }
+        #chart { width: 100%; height: 70vh; position: relative; }
+        #info-panel { position: fixed; top: 100px; right: 10px; width: 300px; background-color: #2A2A2A; padding: 10px; border-radius: 5px; display: none; }
+        #status { text-align: center; padding: 20px; color: #FFA500; }
+        .fixed-node { stroke: #FF4500; stroke-width: 2px; }
+        .public-node { fill: #FFD700; stroke: #FFA500; stroke-width: 3px; }
+        .highlighted-node { transform: scale(1.5); stroke: #F7931A; stroke-width: 2px; }
+        .highlighted-edge { stroke: #F7931A; stroke-width: 3px; opacity: 1.0; }
+        .path-node {
+            stroke: #00FFFF; /* 改为青色，更显眼 */
+            stroke-width: 6px; /* 增加描边宽度 */
+            fill: #00FFFF;
+            transform: scale(2); /* 放大到 2 倍 */
+            filter: url(#glow); /* 添加发光效果 */
+            animation: pulse 1.5s infinite; /* 添加脉冲动画 */
+        }
+        .path-edge {
+            stroke: #00FFFF; /* 改为青色 */
+            stroke-width: 8px; /* 增加宽度 */
+            opacity: 1.0;
+            filter: url(#glow); /* 添加发光效果 */
+            animation: glow 1.5s infinite; /* 添加闪烁动画 */
+        }
+        .dimmed { opacity: 0.1; }
+        .crown { fill: #FFD700; stroke: #FFA500; stroke-width: 1px; }
+        @keyframes pulse {
+            0% { transform: scale(2); }
+            50% { transform: scale(2.2); }
+            100% { transform: scale(2); }
+        }
+        @keyframes glow {
+            0% { stroke-opacity: 1; }
+            50% { stroke-opacity: 0.7; }
+            100% { stroke-opacity: 1; }
+        }
+    </style>
+</head>
+<body onload="fetchRPC()">
+<div id="header">
+    <div id="query-bar">
+        <input type="text" id="query-input1" placeholder="Start Node Public Key (e.g., 0268847a...)">
+        <input type="text" id="query-input2" placeholder="Target Node Public Key (e.g., 02d0ab8c...)">
+        <button onclick="handleQuery()">Query</button>
+    </div>
+    <div id="rpc-bar">
+        <input type="text" id="rpc-url" placeholder="Enter RPC Address" value="https://proxy.cors.sh/http://18.162.235.225:8227">
+        <button onclick="fetchRPC()">Fetch RPC Data</button>
+    </div>
+    <div id="filter-bar">
+        <select id="channel-filter" onchange="applyFilter()">
+            <option value="all">Show All Channels</option>
+            <option value="ckb">Show CKB Channels Only</option>
+            <option value="udt">Show UDT Channels Only</option>
+        </select>
+    </div>
+    <span>Real-time Update</span>
+</div>
+<div id="overview">
+    <div class="stat-card">
+        <h3 id="node-count">0</h3>
+        <p>Total Nodes</p>
+    </div>
+    <div class="stat-card">
+        <h3 id="channel-count">0</h3>
+        <p>Total Channels</p>
+    </div>
+    <div class="stat-card">
+        <h3 id="ckb-capacity">0 CKB</h3>
+        <p>CKB Capacity</p>
+    </div>
+    <div class="stat-card">
+        <h3 id="udt-capacity">0 UDT</h3>
+        <p>UDT Capacity</p>
+    </div>
+</div>
+<div id="status">Loading...</div>
+<div id="chart"></div>
+<div id="info-panel">
+    <h2>Node Information</h2>
+    <p><strong>Public Key:</strong> <span id="node-id"></span></p>
+    <p><strong>Is Public Node:</strong> <span id="is-public-node"></span></p>
+    <p><strong>Node Name:</strong> <span id="node-name"></span></p>
+    <p><strong>Addresses:</strong> <span id="node-addresses"></span></p>
+    <p><strong>Connected Channels:</strong> <span id="channel-count-info"></span></p>
+    <p><strong>CKB Capacity:</strong> <span id="ckb-capacity-info"></span>
+    <p><strong>UDT Capacity:</strong> <span id="udt-capacity-info"></span></p>
+    <p><strong>Average Fee Rate:</strong> <span id="avg-fee-rate"></span></p>
+    <p><strong>Last Updated:</strong> <span id="last-updated"></span></p>
+    <p><strong>Min CKB Funding:</strong> <span id="min-ckb-funding"></span></p>
+    <p><strong>UDT Configs:</strong> <span id="udt-configs"></span></p>
+    <button onclick="closeInfoPanel()">Close</button>
+</div>
+
+<script>
+    let nodes = [];
+    let edges = [];
+    let allEdges = [];
+    let rpcData = null;
+    let publicNodes = [];
+    let svg, g, zoom, simulation;
+
+    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+    const CURRENT_TIME = new Date().getTime();
+
+    function updateStatus(message) {
+        document.getElementById('status').textContent = message;
+    }
+
+    async function fetchPublicNodes() {
+        const rpcUrl = document.getElementById('rpc-url').value.trim();
+        if (!rpcUrl) {
+            updateStatus('Please enter a valid RPC address for public nodes');
+            return;
+        }
+        try {
+            const response = await fetch(rpcUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    id: 42,
+                    jsonrpc: '2.0',
+                    method: 'graph_nodes',
+                    params: [{}]
+                })
+            });
+            if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
+            const data = await response.json();
+            if (!data.result || !data.result.nodes) throw new Error('Invalid graph_nodes response data');
+            publicNodes = data.result.nodes;
+            updateStatus('Public nodes loaded successfully');
+        } catch (error) {
+            console.error('Failed to fetch public nodes:', error);
+            updateStatus(`Failed to load public nodes: ${error.message}`);
+        }
+    }
+
+    async function fetchRPC() {
+        const rpcUrl = document.getElementById('rpc-url').value.trim();
+        if (!rpcUrl) {
+            updateStatus('Please enter a valid RPC address');
+            return;
+        }
+        updateStatus('Loading...');
+        try {
+            await fetchPublicNodes();
+
+            const response = await fetch(rpcUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    id: 42,
+                    jsonrpc: '2.0',
+                    method: 'graph_channels',
+                    params: [{ limit: '0x1ffff', after: null }]
+                })
+            });
+            if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
+            rpcData = await response.json();
+            if (!rpcData.result || !rpcData.result.channels) throw new Error('Invalid RPC response data');
+            processData(rpcData);
+            updateStatus('Data loaded successfully');
+        } catch (error) {
+            console.error('RPC request failed:', error);
+            updateStatus(`Loading failed: ${error.message}`);
+        }
+    }
+
+    function processData(data) {
+        const channels = data.result.channels;
+        const nodeSet = new Map();
+        allEdges = [];
+
+        channels.forEach(channel => {
+            const time1 = parseInt(channel.last_updated_timestamp_of_node1, 16);
+            const time2 = parseInt(channel.last_updated_timestamp_of_node2, 16);
+
+            if (!nodeSet.has(channel.node1)) {
+                nodeSet.set(channel.node1, { time: time1, fixed: false });
+            } else {
+                nodeSet.set(channel.node1, { time: Math.max(nodeSet.get(channel.node1).time, time1), fixed: false });
+            }
+            if (!nodeSet.has(channel.node2)) {
+                nodeSet.set(channel.node2, { time: time2, fixed: false });
+            } else {
+                nodeSet.set(channel.node2, { time: Math.max(nodeSet.get(channel.node2).time, time2), fixed: false });
+            }
+
+            allEdges.push({
+                source: channel.node1,
+                target: channel.node2,
+                capacity: parseInt(channel.capacity, 16) / 1e8,
+                isUDT: channel.udt_type_script !== null,
+                udtType: channel.udt_type_script ? 'UDT' : 'CKB',
+                fee_rate: (parseInt(channel.fee_rate_of_node1, 16) + parseInt(channel.fee_rate_of_node2, 16)) / 2,
+                channel_outpoint: channel.channel_outpoint
+            });
+        });
+
+        nodes = Array.from(nodeSet.entries()).map(([id, { time, fixed }]) => {
+            const publicNodeInfo = publicNodes.find(node => node.node_id === id);
+            return {
+                id,
+                degree: allEdges.filter(e => e.source === id || e.target === id).length,
+                lastUpdated: time,
+                isActive: (CURRENT_TIME - time) <= THREE_DAYS_MS,
+                fixed: fixed,
+                fx: null,
+                fy: null,
+                isPublic: !!publicNodeInfo,
+                publicInfo: publicNodeInfo || null
+            };
+        });
+
+        applyFilter();
+    }
+
+    function applyFilter() {
+        const filter = document.getElementById('channel-filter').value;
+
+        // 动态调整可见性
+        d3.selectAll('.edge')
+          .classed('hidden', function(d) {
+            if (filter === 'ckb') return d.isUDT;
+            if (filter === 'udt') return !d.isUDT;
+            return false;
+          });
+
+        // 更新节点可见性
+        d3.selectAll('.node-group')
+          .classed('hidden', function(d) {
+            const connectedEdges = edges.filter(e =>
+              e.source === d.id || e.target === d.id
+            );
+            return connectedEdges.every(e => e.isUDT && filter === 'ckb') ||
+                   connectedEdges.every(e => !e.isUDT && filter === 'udt');
+          });
+
+        updateOverview();
+    }
+
+    function updateOverview() {
+        document.getElementById('node-count').textContent = nodes.length;
+        document.getElementById('channel-count').textContent = edges.length;
+        const ckbCapacity = edges.filter(e => !e.isUDT).reduce((sum, e) => sum + e.capacity, 0).toFixed(2);
+        const udtCapacity = edges.filter(e => e.isUDT).reduce((sum, e) => sum + e.capacity, 0).toFixed(2);
+        document.getElementById('ckb-capacity').textContent = `${ckbCapacity} CKB`;
+        document.getElementById('udt-capacity').textContent = `${udtCapacity} UDT`;
+    }
+
+    function renderGraph() {
+        d3.select('#chart svg').remove();
+        const width = window.innerWidth;
+        const height = window.innerHeight * 0.7;
+
+        svg = d3.select('#chart').append('svg')
+            .attr('width', '100%')
+            .attr('height', '100%');
+
+        // 添加发光效果滤镜
+        const defs = svg.append('defs');
+        const filter = defs.append('filter')
+            .attr('id', 'glow')
+            .attr('x', '-50%')
+            .attr('y', '-50%')
+            .attr('width', '200%')
+            .attr('height', '200%');
+        filter.append('feGaussianBlur')
+            .attr('stdDeviation', '3')
+            .attr('result', 'blur');
+        filter.append('feMerge')
+            .append('feMergeNode')
+            .attr('in', 'blur');
+        filter.append('feMerge')
+            .append('feMergeNode')
+            .attr('in', 'SourceGraphic');
+
+        g = svg.append('g');
+        zoom = d3.zoom().on('zoom', (event) => g.attr('transform', event.transform));
+        svg.call(zoom);
+
+        simulation = d3.forceSimulation(nodes)
+            .force('link', d3.forceLink(edges).id(d => d.id).distance(d => Math.max(50, Math.sqrt(d.capacity) * 6)))
+            .force('charge', d3.forceManyBody().strength(-200))
+            .force('center', d3.forceCenter(width / 2, height / 2))
+            .force('collision', d3.forceCollide()
+                .radius(d => 20 + d.degree * 4)
+                .strength(1)
+            )
+            .alphaDecay(0.01);
+
+        for (let i = 0; i < 300; i++) simulation.tick();
+
+        const link = g.selectAll('.edge')
+            .data(edges)
+            .enter().append('line')
+            .attr('class', 'edge')
+            .attr('stroke', d => d.isUDT ? '#FFD700' : (d.fee_rate < 500 ? '#00F' : d.fee_rate < 2000 ? '#FFA500' : '#F00'))
+            .attr('stroke-width', d => Math.min(Math.sqrt(d.capacity), 10))
+            .attr('opacity', 0.5);
+
+        const node = g.selectAll('.node-group')
+            .data(nodes)
+            .enter().append('g')
+            .attr('class', 'node-group')
+            .attr('id', d => `node-group-${d.id}`);
+
+        node.append('circle')
+            .attr('class', 'node')
+            .attr('r', d => Math.max(10, 5 + d.degree * 3))
+            .attr('fill', d => d.isActive ? '#0F0' : '#666633')
+            .classed('fixed-node', d => d.fixed)
+            .classed('public-node', d => d.isPublic)
+            .on('click', (event, d) => {
+                toggleFixed(d);
+                showNodeInfo(d.id);
+            })
+            .on('contextmenu', (event, d) => {
+                event.preventDefault();
+                toggleFixed(d);
+            })
+            .call(d3.drag()
+                .on('start', dragstarted)
+                .on('drag', dragged)
+                .on('end', dragended));
+
+        const crown = node.filter(d => d.isPublic)
+            .append('path')
+            .attr('class', 'crown')
+            .attr('d', 'M10 0 L15 5 L20 0 L22 2 L18 6 L22 10 L20 12 L15 8 L10 12 L8 10 L12 6 L8 2 Z')
+            .attr('transform', `translate(-5, -15) scale(0.5)`)
+            .style('pointer-events', 'none');
+
+        let lastUpdate = 0;
+        function ticked(timestamp) {
+            if (timestamp - lastUpdate < 16) {
+                requestAnimationFrame(ticked);
+                return;
+            }
+            lastUpdate = timestamp;
+
+            link
+                .attr('x1', d => d.source.x)
+                .attr('y1', d => d.source.y)
+                .attr('x2', d => d.target.x)
+                .attr('y2', d => d.target.y);
+
+            node
+                .attr('transform', d => `translate(${d.x}, ${d.y})`);
+
+            if (simulation.alpha() > 0.01) {
+                requestAnimationFrame(ticked);
+            }
+        }
+
+        simulation.on('tick', () => requestAnimationFrame(ticked));
+
+        function dragstarted(event, d) {
+            if (!event.active) {
+                simulation.force('charge', null);
+                simulation.force('link', null);
+                simulation.alphaTarget(0.1).restart();
+            }
+            d.fx = d.x;
+            d.fy = d.y;
+            d3.select(this).classed('fixed-node', true);
+        }
+
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+            simulation.alpha(0.1);
+        }
+
+        function dragended(event, d) {
+            if (!event.active) {
+                simulation.force('charge', d3.forceManyBody().strength(-200));
+                simulation.force('link', d3.forceLink(edges).id(d => d.id).distance(d => Math.max(50, Math.sqrt(d.capacity) * 6)));
+                simulation.alphaTarget(0);
+            }
+            if (!d.fixed) {
+                d.fx = null;
+                d.fy = null;
+                d3.select(this).classed('fixed-node', false);
+            }
+        }
+
+        function toggleFixed(d) {
+            d.fixed = !d.fixed;
+            if (d.fixed) {
+                d.fx = d.x;
+                d.fy = d.y;
+                d3.select(`#node-group-${d.id}`).select('.node').classed('fixed-node', true);
+            } else {
+                d.fx = null;
+                d.fy = null;
+                d3.select(`#node-group-${d.id}`).select('.node').classed('fixed-node', false);
+            }
+            simulation.alpha(0.1).restart();
+        }
+    }
+
+    function handleQuery() {
+        const query1 = document.getElementById('query-input1').value.trim();
+        const query2 = document.getElementById('query-input2').value.trim();
+        const node1 = nodes.find(n => n.id === query1);
+        const node2 = query2 ? nodes.find(n => n.id === query2) : null;
+
+        if (!query1) {
+            alert('Please enter at least one node public key');
+            return;
+        }
+
+        if (!node1) {
+            alert(`Start node ${query1} not found`);
+            return;
+        }
+
+        if (!query2) {
+            highlightNode(node1);
+            centerNode(node1);
+            showNodeInfo(node1.id);
+        } else if (!node2) {
+            alert(`Target node ${query2} not found`);
+        } else if (query1 === query2) {
+            highlightNode(node1);
+            centerNode(node1);
+            showNodeInfo(node1.id);
+        } else {
+            const path = findPath(query1, query2);
+            if (path) {
+                highlightPath(path);
+                centerPath(path);
+            } else {
+                alert(`No path found from ${query1} to ${query2}.\nAvailable nodes: ${nodes.length}`);
+            }
+        }
+    }
+
+    function findPath(startId, endId) {
+        const graph = new Map();
+        if (!rpcData || !rpcData.result || !rpcData.result.channels) {
+            console.error('No graph_channels data available');
+            return null;
+        }
+
+        rpcData.result.channels.forEach(channel => {
+            const node1 = channel.node1;
+            const node2 = channel.node2;
+
+            if (!graph.has(node1)) graph.set(node1, new Set());
+            if (!graph.has(node2)) graph.set(node2, new Set());
+            graph.get(node1).add(node2);
+            graph.get(node2).add(node1);
+        });
+
+        const visited = new Set();
+        const prev = new Map();
+        const queue = [startId];
+        visited.add(startId);
+
+        while (queue.length > 0) {
+            const current = queue.shift();
+            if (current === endId) break;
+
+            const neighbors = graph.get(current) || new Set();
+            for (const neighbor of neighbors) {
+                if (!visited.has(neighbor)) {
+                    visited.add(neighbor);
+                    prev.set(neighbor, current);
+                    queue.push(neighbor);
+                }
+            }
+        }
+
+        if (!visited.has(endId)) return null;
+
+        const path = [];
+        let current = endId;
+        while (current !== startId) {
+            path.unshift(current);
+            current = prev.get(current);
+        }
+        path.unshift(startId);
+        return path;
+    }
+
+    function highlightNode(node) {
+        d3.selectAll('.node-group').classed('dimmed', true).select('.node').classed('path-node', false);
+        d3.selectAll('.edge').classed('dimmed', true).classed('path-edge', false);
+        d3.select(`#node-group-${node.id}`).select('.node').classed('highlighted-node', true).classed('dimmed', false);
+        edges.forEach(e => {
+            if (e.source === node.id || e.target === node.id) {
+                d3.select(`[x1="${e.source.x}"][y1="${e.source.y}"][x2="${e.target.x}"][y2="${e.target.y}"]`)
+                    .classed('highlighted-edge', true)
+                    .classed('dimmed', false);
+            }
+        });
+        setTimeout(resetHighlight, 3000);
+    }
+
+    function highlightPath(path) {
+        d3.selectAll('.node-group').classed('dimmed', true).select('.node').classed('path-node', false);
+        d3.selectAll('.edge').classed('dimmed', true).classed('path-edge', false);
+
+        // 高亮路径节点
+        path.forEach(nodeId => {
+            const nodeGroup = d3.select(`#node-group-${nodeId}`);
+            nodeGroup.select('.node')
+                .classed('path-node', true)
+                .classed('dimmed', false);
+        });
+
+        // 高亮路径边，并确保边的顺序正确
+        for (let i = 0; i < path.length - 1; i++) {
+            const sourceId = path[i];
+            const targetId = path[i + 1];
+            const channel = rpcData.result.channels.find(c =>
+                (c.node1 === sourceId && c.node2 === targetId) ||
+                (c.node1 === targetId && c.node2 === sourceId)
+            );
+            if (channel) {
+                const sourceNode = nodes.find(n => n.id === sourceId);
+                const targetNode = nodes.find(n => n.id === targetId);
+                if (sourceNode && targetNode) {
+                    const edge = edges.find(e =>
+                        (e.source.id === sourceId && e.target.id === targetId) ||
+                        (e.source.id === targetId && e.target.id === sourceId)
+                    );
+                    if (edge) {
+                        const edgeSelection = d3.selectAll('.edge').filter(d =>
+                            (d.source.id === sourceId && d.target.id === targetId) ||
+                            (d.source.id === targetId && d.target.id === sourceId)
+                        );
+                        edgeSelection
+                            .classed('path-edge', true)
+                            .classed('dimmed', false)
+                            .raise(); // 提升层级，确保路径边在最上层
+                    }
+                }
+            }
+        }
+
+        // 提升路径节点的层级
+        path.forEach(nodeId => {
+            d3.select(`#node-group-${nodeId}`).raise();
+        });
+
+        setTimeout(resetHighlight, 5000);
+    }
+
+    function centerNode(node) {
+        const width = window.innerWidth;
+        const height = window.innerHeight * 0.7;
+        const scale = 2;
+        const x = -node.x * scale + width / 2;
+        const y = -node.y * scale + height / 2;
+
+        svg.transition()
+            .duration(750)
+            .call(zoom.transform, d3.zoomIdentity.translate(x, y).scale(scale));
+    }
+
+    function centerPath(path) {
+        const pathNodes = path.map(id => nodes.find(n => n.id === id));
+        const xMin = Math.min(...pathNodes.map(n => n.x));
+        const xMax = Math.max(...pathNodes.map(n => n.x));
+        const yMin = Math.min(...pathNodes.map(n => n.y));
+        const yMax = Math.max(...pathNodes.map(n => n.y));
+
+        const width = window.innerWidth;
+        const height = window.innerHeight * 0.7;
+        const pathWidth = xMax - xMin;
+        const pathHeight = yMax - yMin;
+        const scale = Math.min(width / (pathWidth * 1.2), height / (pathHeight * 1.2), 2);
+        const x = -(xMin + pathWidth / 2) * scale + width / 2;
+        const y = -(yMin + pathHeight / 2) * scale + height / 2;
+
+        svg.transition()
+            .duration(750)
+            .call(zoom.transform, d3.zoomIdentity.translate(x, y).scale(scale));
+    }
+
+    function resetHighlight() {
+        d3.selectAll('.node-group').classed('highlighted-node', false).classed('path-node', false).classed('dimmed', false).select('.node');
+        d3.selectAll('.edge').classed('highlighted-edge', false).classed('path-edge', false).classed('dimmed', false);
+    }
+
+    function showNodeInfo(nodeId) {
+        const node = nodes.find(n => n.id === nodeId);
+
+        const relatedChannels = rpcData.result.channels.filter(c => c.node1 === nodeId || c.node2 === nodeId);
+
+        let ckbCapacity = 0;
+        let udtCapacity = 0;
+        let totalFeeRate = 0;
+
+        relatedChannels.forEach(channel => {
+            const capacity = parseInt(channel.capacity, 16) / 1e8;
+            const isUDT = channel.udt_type_script !== null;
+            if (isUDT) {
+                udtCapacity += capacity;
+            } else {
+                ckbCapacity += capacity;
+            }
+            const feeRate = (parseInt(channel.fee_rate_of_node1, 16) + parseInt(channel.fee_rate_of_node2, 16)) / 2;
+            totalFeeRate += feeRate;
+        });
+
+        const avgFeeRate = relatedChannels.length ? totalFeeRate / relatedChannels.length : 0;
+
+        const lastUpdatedChannels = relatedChannels
+            .map(c => parseInt(c[`last_updated_timestamp_of_node${c.node1 === nodeId ? 1 : 2}`], 16)) || [];
+        const lastUpdated = lastUpdatedChannels.length ? new Date(Math.max(...lastUpdatedChannels)).toLocaleString() : 'Unknown';
+
+        document.getElementById('node-id').textContent = nodeId;
+        document.getElementById('is-public-node').textContent = node.isPublic ? 'Yes' : 'No';
+        document.getElementById('node-name').textContent = node.isPublic ? node.publicInfo.node_name || 'Unnamed' : 'N/A';
+        document.getElementById('node-addresses').textContent = node.isPublic ? node.publicInfo.addresses.join(', ') : 'N/A';
+        document.getElementById('channel-count-info').textContent = relatedChannels.length;
+        document.getElementById('ckb-capacity-info').textContent = `${ckbCapacity.toFixed(2)} CKB`;
+        document.getElementById('udt-capacity-info').textContent = `${udtCapacity.toFixed(2)} UDT`;
+        document.getElementById('avg-fee-rate').textContent = `${avgFeeRate.toFixed(0)} ppm`;
+        document.getElementById('last-updated').textContent = lastUpdated;
+        document.getElementById('min-ckb-funding').textContent = node.isPublic ? (parseInt(node.publicInfo.auto_accept_min_ckb_funding_amount, 16) / 1e8) + ' CKB' : 'N/A';
+        document.getElementById('udt-configs').textContent = node.isPublic ? node.publicInfo.udt_cfg_infos.map(info => `${info.name}: ${info.auto_accept_amount}`).join(', ') : 'N/A';
+        document.getElementById('info-panel').style.display = 'block';
+    }
+
+    function closeInfoPanel() {
+        document.getElementById('info-panel').style.display = 'none';
+    }
+</script>
+</body>
+</html>

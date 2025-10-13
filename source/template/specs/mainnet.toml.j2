@@ -1,0 +1,101 @@
+name = "{{ ckb_name | default("ckb") }}"
+
+[genesis]
+version = 0
+parent_hash = "0x0000000000000000000000000000000000000000000000000000000000000000"
+timestamp = 1573852190812
+compact_target = {{ ckb_params_genesis_compact_target | default(0x1a08a97e) }}
+uncles_hash = "0x0000000000000000000000000000000000000000000000000000000000000000"
+nonce = "0x0"
+
+[genesis.genesis_cell]
+message = "lina 0x18e020f6b1237a3d06b75121f25a7efa0550e4b3f44f974822f471902424c104"
+
+[genesis.genesis_cell.lock]
+code_hash = "0x0000000000000000000000000000000000000000000000000000000000000000"
+args = "0x"
+hash_type = "data"
+
+# An array list paths to system cell files, which is absolute or relative to
+# the directory containing this config file.
+[[genesis.system_cells]]
+file = { bundled = "specs/cells/secp256k1_blake160_sighash_all" }
+create_type_id = true
+capacity = 100_000_0000_0000
+[[genesis.system_cells]]
+file = { bundled = "specs/cells/dao" }
+create_type_id = true
+capacity = 16_000_0000_0000
+[[genesis.system_cells]]
+file = { bundled = "specs/cells/secp256k1_data" }
+create_type_id = false
+capacity = 1_048_617_0000_0000
+[[genesis.system_cells]]
+file = { bundled = "specs/cells/secp256k1_blake160_multisig_all" }
+create_type_id = true
+capacity = 100_000_0000_0000
+
+[genesis.system_cells_lock]
+code_hash = "0x0000000000000000000000000000000000000000000000000000000000000000"
+args = "0x"
+hash_type = "data"
+
+# Dep group cells
+[[genesis.dep_groups]]
+name = "secp256k1_blake160_sighash_all"
+files = [
+  { bundled = "specs/cells/secp256k1_data" },
+  { bundled = "specs/cells/secp256k1_blake160_sighash_all" },
+]
+[[genesis.dep_groups]]
+name = "secp256k1_blake160_multisig_all"
+files = [
+  { bundled = "specs/cells/secp256k1_data" },
+  { bundled = "specs/cells/secp256k1_blake160_multisig_all" },
+]
+
+# For first 11 block
+[genesis.bootstrap_lock]
+code_hash = "0x0000000000000000000000000000000000000000000000000000000000000000"
+args = "0x"
+hash_type = "data"
+
+# Burn
+[[genesis.issued_cells]]
+capacity = 19984800000000
+lock.code_hash = "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8"
+lock.args = "0x470dcdc5e44064909650113a274b3b36aecb6dc7"
+lock.hash_type = "type"
+
+
+[[genesis.issued_cells]]
+capacity = 19984800000000
+lock.code_hash = "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8"
+lock.args = "0xc8328aabcd9b9e8e64fbc566c4385c3bdeb219d7"
+lock.hash_type = "type"
+
+
+[[genesis.issued_cells]]
+capacity = 19984800000000
+lock.code_hash = "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8"
+lock.args = "0xc8328aabcd9b9e8e64fbc566c4385c3bdeb219d7"
+lock.hash_type = "type"
+
+
+[[genesis.issued_cells]]
+capacity = 19984800000000
+lock.code_hash = "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8"
+lock.args = "0x8883a512ee2383c01574a328f60eeccbb4d78240"
+lock.hash_type = "type"
+
+[params]
+genesis_epoch_length = {{ ckb_params_genesis_epoch_length | default(1) }}
+permanent_difficulty_in_dummy = true
+epoch_duration_target = {{ ckb_params_epoch_duration_target | default(8) }}
+{% if starting_block_limiting_dao_withdrawing_lock is defined %}
+starting_block_limiting_dao_withdrawing_lock = {{ starting_block_limiting_dao_withdrawing_lock }}
+{% endif %}
+
+
+[pow]
+func = "{{ ckb_pow_func | default("Dummy") }}"

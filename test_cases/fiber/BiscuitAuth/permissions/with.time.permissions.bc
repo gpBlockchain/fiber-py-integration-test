@@ -1,0 +1,2 @@
+read("peers");
+check if time($time), $time <= 2099-01-01T00:00:00Z;
