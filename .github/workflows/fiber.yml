@@ -4,9 +4,9 @@
 name: fiber test
 on:
   push:
-    branches: ["fiber"]
+    branches: ["main"]
   pull_request:
-    branches: ["fiber"]
+    branches: ["main"]
 
 permissions:
   contents: read
