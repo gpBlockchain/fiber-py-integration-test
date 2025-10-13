@@ -66,7 +66,6 @@ class MppBench(FiberTest):
                     - shutdown_tx["fee"],
                 } in shutdown_tx["output_cells"]
 
-
     # @pytest.mark.skip("not stable: stop cause mutilSig Err")
     def test_bench_self_with_stop(self):
         self.fiber3 = self.start_new_fiber(

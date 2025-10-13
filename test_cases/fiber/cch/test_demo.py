@@ -4,14 +4,13 @@ from framework.test_btc import BtcNode
 from framework.test_lnd import LndNode
 from lndgrpc import LNDClient
 
-class TestDemo():
 
+class TestDemo:
 
     def test_01(self):
         btcNode = BtcNode()
         btcNode.prepare()
         btcNode.start()
-
 
     def test_02(self):
         """
@@ -42,10 +41,10 @@ class TestDemo():
         bobNode = LndNode("tmp/lnd/node1", 9735, 11009, 8180)
         btcNode = BtcNode()
 
-        ingrid_p2tr_address = linNode.ln_cli_with_cmd("newaddress p2tr")['address']
+        ingrid_p2tr_address = linNode.ln_cli_with_cmd("newaddress p2tr")["address"]
 
         #   local bob_node_key="$(lncli -n regtest --lnddir="$bob_dir" --no-macaroons --rpcserver "localhost:$bob_port" getinfo | jq -r .identity_pubkey)"
-        bob_node_key = bobNode.ln_cli_with_cmd("getinfo")['identity_pubkey']
+        bob_node_key = bobNode.ln_cli_with_cmd("getinfo")["identity_pubkey"]
         #   echo "ingrid_p2tr_address=$ingrid_p2tr_address"
         print("ingrid_p2tr_address:", ingrid_p2tr_address)
         #   echo "bob_node_key=$bob_node_key"
@@ -59,7 +58,7 @@ class TestDemo():
         #   bitcoin-cli -conf="$bitcoind_conf" -generate 1 >/dev/null
         btcNode.miner(1)
         for i in range(5):
-            linNode.open_channel(bobNode, 1000000,1,0)
+            linNode.open_channel(bobNode, 1000000, 1, 0)
             time.sleep(1)
         btcNode.miner(3)
         #   echo "openchannel"
@@ -78,6 +77,7 @@ class TestDemo():
         #   echo "generate blocks"
         #   bitcoin-cli -conf="$bitcoind_conf" -generate 3 >/dev/null
         # }
+
     def test_06(self):
         linNode = LndNode("tmp/lnd/node2", 9736, 11010, 8181)
         bobNode = LndNode("tmp/lnd/node1", 9735, 11009, 8180)
@@ -111,8 +111,10 @@ class TestDemo():
         import os
         from jinja2 import FileSystemLoader, Environment, TemplateNotFound
 
-        template_path = '/Users/guopenglin/PycharmProjects/ckb-py-integration-test/source/lnd-init/lnd/lnd.conf.j2'
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(template_path)))  # 调整到根目录
+        template_path = "/Users/guopenglin/PycharmProjects/ckb-py-integration-test/source/lnd-init/lnd/lnd.conf.j2"
+        project_root = os.path.dirname(
+            os.path.dirname(os.path.dirname(template_path))
+        )  # 调整到根目录
 
         try:
             env = Environment(loader=FileSystemLoader(project_root))

@@ -7,21 +7,23 @@ from framework.basic_fiber import FiberTest
 class ForceShutdownTest(FiberTest):
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": "5"}
     debug = True
+
     def test_001(self):
         for i in range(20):
-            self.open_channel(self.fiber1,self.fiber2,1000 * 100000000,0,0,0)
+            self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0, 0, 0)
         for i in range(10):
             try:
-                self.send_invoice_payment(self.fiber1,self.fiber2,1001 * 100000000,False,None,0)
+                self.send_invoice_payment(
+                    self.fiber1, self.fiber2, 1001 * 100000000, False, None, 0
+                )
             except Exception as e:
                 pass
-        self.fiber1.get_client().disconnect_peer({
-            "peer_id": self.fiber2.get_peer_id()
-        })
+        self.fiber1.get_client().disconnect_peer({"peer_id": self.fiber2.get_peer_id()})
 
     def test_000222(self):
         # self.add_time_and_generate_block(25,20)
-        self.add_time_and_generate_block(1,100)
+        self.add_time_and_generate_block(1, 100)
+
     def test_bbb1(self):
         # self.get_fiber_graph_balance()
         self.get_fiber_graph_balance()
@@ -40,15 +42,7 @@ class ForceShutdownTest(FiberTest):
             self.generate_account(10000, self.fiber1.account_private, 1000 * 100000000)
         )
 
-        self.open_channel(
-            self.fiber1,
-            self.fiber2,
-            2000 * 100000000,
-            0,
-            0,
-            0,
-            None
-        )
+        self.open_channel(self.fiber1, self.fiber2, 2000 * 100000000, 0, 0, 0, None)
         # self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0, 0, 0)
 
         self.open_channel(self.fiber2, self.fiber3, 1000 * 100000000, 0, 0, 0)

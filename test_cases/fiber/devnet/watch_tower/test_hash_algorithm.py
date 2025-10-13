@@ -6,8 +6,8 @@ class TestHashAlgorithm(FiberTest):
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 5}
 
     def test_hash_algorithm(self):
-        self.open_channel(self.fiber1,self.fiber2, 1000 * 100000000, 0)
-        self.send_invoice_payment(self.fiber1,self.fiber2,1*100000000)
+        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0)
+        self.send_invoice_payment(self.fiber1, self.fiber2, 1 * 100000000)
         # self.fiber1.get_client().shutdown_channel({
         #     "channel_id": self.fiber1.get_client().list_channels({})["channels"][0]["channel_id"],
         #     "force":True

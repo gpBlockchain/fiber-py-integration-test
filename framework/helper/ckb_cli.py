@@ -17,8 +17,6 @@ LOGGER = logging.getLogger(__name__)
 cli_path = f"cd {get_project_root()}/source && ./ckb-cli"
 
 
-
-
 def wallet_get_capacity(ckb_address, api_url="http://127.0.0.1:8114"):
     """
     MacBook-Pro-4 0.111.0 % ./ckb-cli  wallet get-capacity

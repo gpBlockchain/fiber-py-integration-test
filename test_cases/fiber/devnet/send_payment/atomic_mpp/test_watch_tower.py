@@ -11,12 +11,13 @@ class TestWatchTower(FiberTest):
     #     super().teardown_method(method)
 
     def test_get_tx(self):
-        tx1 = self.node.getClient().get_transaction("0x0534591ecdf9760fe6045e3e96352ff461b513ede53c394056fa93359b0c61ff")
-        print("block_number:",int(tx1['tx_status']['block_number'],16))
+        tx1 = self.node.getClient().get_transaction(
+            "0x0534591ecdf9760fe6045e3e96352ff461b513ede53c394056fa93359b0c61ff"
+        )
+        print("block_number:", int(tx1["tx_status"]["block_number"], 16))
         # block_number: 2640
         # 2/3 epoch
         # block_number: 3881
-
 
     def test_watch_tower(self):
         """
@@ -29,12 +30,16 @@ class TestWatchTower(FiberTest):
         for i in range(10):
             self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0, 0, 0)
 
-
         for i in range(5):
-            self.send_invoice_payment(self.fiber1, self.fiber2, 1001 * 100000000,
-                                      False, None, 0
-                                      # other_options={"allow_atomic_mpp": True}
-                                      )
+            self.send_invoice_payment(
+                self.fiber1,
+                self.fiber2,
+                1001 * 100000000,
+                False,
+                None,
+                0,
+                # other_options={"allow_atomic_mpp": True}
+            )
 
         self.fiber1.get_client().disconnect_peer({"peer_id": self.fiber2.get_peer_id()})
 

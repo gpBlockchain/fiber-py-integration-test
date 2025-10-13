@@ -18,10 +18,10 @@ class FiberRPCClient:
     def send_btc(self, btc_pay_req):
         return self.call("send_btc", [btc_pay_req])
 
-    def get_receive_btc_order(self,params):
+    def get_receive_btc_order(self, params):
         return self.call("get_receive_btc_order", [params])
 
-    def receive_btc(self,params):
+    def receive_btc(self, params):
         return self.call("receive_btc", [params])
 
     def build_router(self, param):

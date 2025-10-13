@@ -92,6 +92,7 @@ class TestFiber(CkbTest):
         #     )
         # for cell in cells:
         #     print(cell)
+
     def test_fiber2(self):
         self.fiber2.stop()
         self.fiber2.start()
@@ -99,21 +100,21 @@ class TestFiber(CkbTest):
     def test_fiber2_message(self):
         self.fiber2.get_client().list_peers()
         peers = self.fiber2.get_client().graph_nodes({})
-        for peer in peers['nodes']:
+        for peer in peers["nodes"]:
             print(peer)
 
         channels = self.fiber2.get_client().graph_channels({})
-        for channel in channels['channels']:
+        for channel in channels["channels"]:
             print(channel)
 
     def test_0000(self):
         self.fiber1.get_client().list_peers()
         peers = self.fiber1.get_client().graph_nodes({})
-        for peer in peers['nodes']:
+        for peer in peers["nodes"]:
             print(peer)
 
         channels = self.fiber1.get_client().graph_channels({})
-        for channel in channels['channels']:
+        for channel in channels["channels"]:
             print(channel)
 
     def test_ckb_01(self):

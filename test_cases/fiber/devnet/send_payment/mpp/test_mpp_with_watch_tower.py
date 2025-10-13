@@ -22,11 +22,8 @@ class TestWatchToerWitMpp(FiberTest):
             self.fiber1, self.fiber3, 3000 * 100000000, False
         )
         time.sleep(0.2)
-        self.fiber1.get_client().disconnect_peer({
-            "peer_id": self.fiber2.get_peer_id()
-        })
+        self.fiber1.get_client().disconnect_peer({"peer_id": self.fiber2.get_peer_id()})
         self.get_fiber_graph_balance()
-
 
     def test_balance(self):
         self.start_new_mock_fiber("")
@@ -41,7 +38,7 @@ class TestWatchToerWitMpp(FiberTest):
         # self.get_fiber_graph_balance()
 
     def test_addTime(self):
-        self.add_time_and_generate_block(48,10)
+        self.add_time_and_generate_block(48, 10)
 
     def test_shutdown(self):
         self.fiber3 = self.start_new_mock_fiber("")
@@ -56,7 +53,10 @@ class TestWatchToerWitMpp(FiberTest):
 
     def test_timeout(self):
         # self.add_time_and_generate_block(1,600)
-        self.node.getClient().get_transaction("0x3ad37809b57ecd6763f3ebc389ed1f6c96f0360bc1e950d39610296df0c98460")
+        self.node.getClient().get_transaction(
+            "0x3ad37809b57ecd6763f3ebc389ed1f6c96f0360bc1e950d39610296df0c98460"
+        )
+
     def test_001234(self):
         # self.node.getClient().generate_epochs("0x4")
         msg = self.get_tx_message(

@@ -1,37 +1,58 @@
 # import time
 #
 from framework.basic_fiber import FiberTest
+
+
 #
 #
 class TestFiberCC(FiberTest):
     debug = True
-#     # start_fiber_config = {
-#     #     "fiber_tlc_expiry_delta": 60
-#     # }
-#
+
+    #     # start_fiber_config = {
+    #     #     "fiber_tlc_expiry_delta": 60
+    #     # }
+    #
     def test_0000(self):
-        self.faucet(self.fiber1.account_private,0,self.fiber1.account_private,10000*100000000)
-        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 1000 * 100000000,udt=self.get_account_udt_script(self.fiber1.account_private))
+        self.faucet(
+            self.fiber1.account_private,
+            0,
+            self.fiber1.account_private,
+            10000 * 100000000,
+        )
+        self.open_channel(
+            self.fiber1,
+            self.fiber2,
+            1000 * 100000000,
+            1000 * 100000000,
+            udt=self.get_account_udt_script(self.fiber1.account_private),
+        )
         self.fiber1.stop()
         self.fiber2.stop()
 
     def test_bbb(self):
         self.fiber1.stop()
         self.fiber1.start()
+
     def test_00021(self):
-        self.fiber1.get_client().send_btc({
-            "btc_pay_req":"lnbcrt10u1p5d3vz9pp5a0ur9jfsygaykujkymv9dax2t54dn28mz4jkk4ud9524zy8n6spsdq8w3jhxaqcqzzsxqyz5vqsp5se27w8ul3fystlc3vpmk85fecjke6022w3g3f7jssm0qr7c8haws9qxpqysgqzd3qr7h7fvmjxzklx2d6d29x5uzenpd4vwqxfsmunxmt5j03rs28e84f5qks03y0jpw66jtqvkzg9u9enggzrmxztyvq9uvlqfwlmzqpkger8p",
-            "currency":"Fibd"
-        })
+        self.fiber1.get_client().send_btc(
+            {
+                "btc_pay_req": "lnbcrt10u1p5d3vz9pp5a0ur9jfsygaykujkymv9dax2t54dn28mz4jkk4ud9524zy8n6spsdq8w3jhxaqcqzzsxqyz5vqsp5se27w8ul3fystlc3vpmk85fecjke6022w3g3f7jssm0qr7c8haws9qxpqysgqzd3qr7h7fvmjxzklx2d6d29x5uzenpd4vwqxfsmunxmt5j03rs28e84f5qks03y0jpw66jtqvkzg9u9enggzrmxztyvq9uvlqfwlmzqpkger8p",
+                "currency": "Fibd",
+            }
+        )
 
     def test_00022(self):
-        self.fiber1.get_client().get_receive_btc_order({
-            "payment_hash": "0xebf832c930223a4b725626d856f4ca5d2ad9a8fb15656b578d2d155110f3d403"
-        })
+        self.fiber1.get_client().get_receive_btc_order(
+            {
+                "payment_hash": "0xebf832c930223a4b725626d856f4ca5d2ad9a8fb15656b578d2d155110f3d403"
+            }
+        )
 
     def test_0002(self):
         self.fiber1.start()
         self.fiber2.start()
+
+
 #         fiber3 = self.start_new_fiber(self.generate_account(1000))
 #         self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 1000 * 100000000)
 #         self.open_channel(self.fiber2, fiber3, 1000 * 100000000, 1000 * 100000000)

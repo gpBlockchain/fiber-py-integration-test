@@ -37,9 +37,19 @@ class MutilPathTestCase(FiberTest):
         self.open_channel(self.fibers[1], self.fibers[2], 2000 * 100000000, 0, 0, 0)
         for i in range(10):
             time.sleep(2)
-            self.send_invoice_payment(self.fibers[0], self.fibers[2], 4000 * 100000000,other_options={"allow_atomic_mpp":True})
+            self.send_invoice_payment(
+                self.fibers[0],
+                self.fibers[2],
+                4000 * 100000000,
+                other_options={"allow_atomic_mpp": True},
+            )
             time.sleep(2)
-            self.send_invoice_payment(self.fibers[2], self.fibers[0], 4000 * 100000000,other_options={"allow_atomic_mpp":True})
+            self.send_invoice_payment(
+                self.fibers[2],
+                self.fibers[0],
+                4000 * 100000000,
+                other_options={"allow_atomic_mpp": True},
+            )
 
     # @pytest.mark.skip("This test is not stable, needs to be fixed")
     def test_mutil_to_one_2(self):
@@ -60,17 +70,47 @@ class MutilPathTestCase(FiberTest):
         self.open_channel(self.fibers[1], self.fibers[2], 2000 * 100000000, 0, 0, 0)
 
         time.sleep(2)
-        self.send_invoice_payment(self.fibers[0], self.fibers[2], 2000 * 100000000,other_options={"allow_atomic_mpp":True})
+        self.send_invoice_payment(
+            self.fibers[0],
+            self.fibers[2],
+            2000 * 100000000,
+            other_options={"allow_atomic_mpp": True},
+        )
         time.sleep(2)
-        self.send_invoice_payment(self.fibers[0], self.fibers[2], 2000 * 100000000,other_options={"allow_atomic_mpp":True})
+        self.send_invoice_payment(
+            self.fibers[0],
+            self.fibers[2],
+            2000 * 100000000,
+            other_options={"allow_atomic_mpp": True},
+        )
         time.sleep(2)
         try:
-            self.send_invoice_payment(self.fibers[0], self.fibers[2], 2000 * 100000000,other_options={"allow_atomic_mpp":True})
+            self.send_invoice_payment(
+                self.fibers[0],
+                self.fibers[2],
+                2000 * 100000000,
+                other_options={"allow_atomic_mpp": True},
+            )
         except Exception as e:
             pass
-        self.send_invoice_payment(self.fibers[2], self.fibers[0], 2000 * 100000000,other_options={"allow_atomic_mpp":True})
-        self.send_invoice_payment(self.fibers[2], self.fibers[0], 2000 * 100000000,other_options={"allow_atomic_mpp":True})
-        self.send_invoice_payment(self.fibers[0], self.fibers[2], 1 * 100000000,other_options={"allow_atomic_mpp":True})
+        self.send_invoice_payment(
+            self.fibers[2],
+            self.fibers[0],
+            2000 * 100000000,
+            other_options={"allow_atomic_mpp": True},
+        )
+        self.send_invoice_payment(
+            self.fibers[2],
+            self.fibers[0],
+            2000 * 100000000,
+            other_options={"allow_atomic_mpp": True},
+        )
+        self.send_invoice_payment(
+            self.fibers[0],
+            self.fibers[2],
+            1 * 100000000,
+            other_options={"allow_atomic_mpp": True},
+        )
 
     def test_mutil_to_one_3(self):
         self.start_new_fiber(
@@ -106,10 +146,25 @@ class MutilPathTestCase(FiberTest):
         self.wait_graph_channels_sync(self.fibers[3], 6)
         # print("channels len:", len(channels["channels"]))
         for i in range(3):
-            self.send_invoice_payment(self.fibers[0], self.fibers[2], 1000 * 100000000,other_options={"allow_atomic_mpp":True})
+            self.send_invoice_payment(
+                self.fibers[0],
+                self.fibers[2],
+                1000 * 100000000,
+                other_options={"allow_atomic_mpp": True},
+            )
         for i in range(10):
-            self.send_invoice_payment(self.fibers[2], self.fibers[0], 2000 * 100000000,other_options={"allow_atomic_mpp":True})
-            self.send_invoice_payment(self.fibers[0], self.fibers[2], 2000 * 100000000,other_options={"allow_atomic_mpp":True})
+            self.send_invoice_payment(
+                self.fibers[2],
+                self.fibers[0],
+                2000 * 100000000,
+                other_options={"allow_atomic_mpp": True},
+            )
+            self.send_invoice_payment(
+                self.fibers[0],
+                self.fibers[2],
+                2000 * 100000000,
+                other_options={"allow_atomic_mpp": True},
+            )
 
     def test_one_to_mutil(self):
         """
@@ -132,8 +187,18 @@ class MutilPathTestCase(FiberTest):
 
         self.open_channel(self.fibers[1], self.fibers[3], 1000 * 100000000, 0, 0, 0)
         self.open_channel(self.fibers[3], self.fibers[2], 1000 * 100000000, 0, 0, 0)
-        self.send_invoice_payment(self.fibers[0], self.fibers[2], 3000 * 100000000,other_options={"allow_atomic_mpp":True})
-        self.send_invoice_payment(self.fibers[2], self.fibers[0], 3000 * 100000000,other_options={"allow_atomic_mpp":True})
+        self.send_invoice_payment(
+            self.fibers[0],
+            self.fibers[2],
+            3000 * 100000000,
+            other_options={"allow_atomic_mpp": True},
+        )
+        self.send_invoice_payment(
+            self.fibers[2],
+            self.fibers[0],
+            3000 * 100000000,
+            other_options={"allow_atomic_mpp": True},
+        )
 
     def test_one_mutil_one(self):
         """
@@ -167,8 +232,18 @@ class MutilPathTestCase(FiberTest):
         self.open_channel(self.fibers[4], self.fibers[2], 1000 * 100000000, 0, 0, 0)
 
         self.open_channel(self.fibers[2], self.fibers[3], 4000 * 100000000, 0, 0, 0)
-        self.send_invoice_payment(self.fibers[0], self.fibers[3], 4000 * 100000000,other_options={"allow_atomic_mpp":True})
-        self.send_invoice_payment(self.fibers[3], self.fibers[0], 4000 * 100000000,other_options={"allow_atomic_mpp":True})
+        self.send_invoice_payment(
+            self.fibers[0],
+            self.fibers[3],
+            4000 * 100000000,
+            other_options={"allow_atomic_mpp": True},
+        )
+        self.send_invoice_payment(
+            self.fibers[3],
+            self.fibers[0],
+            4000 * 100000000,
+            other_options={"allow_atomic_mpp": True},
+        )
 
     def test_mutil_mutil(self):
         """
@@ -195,16 +270,36 @@ class MutilPathTestCase(FiberTest):
         self.open_channel(self.fibers[3], self.fibers[2], 1000 * 100000000, 0, 0, 0)
         self.open_channel(self.fibers[1], self.fibers[2], 1000 * 100000000, 0, 0, 0)
         self.open_channel(self.fibers[1], self.fibers[2], 1000 * 100000000, 0, 0, 0)
-        self.send_invoice_payment(self.fibers[0], self.fibers[2], 4000 * 100000000,other_options={"allow_atomic_mpp":True})
-        self.send_invoice_payment(self.fibers[2], self.fibers[0], 4000 * 100000000,other_options={"allow_atomic_mpp":True})
+        self.send_invoice_payment(
+            self.fibers[0],
+            self.fibers[2],
+            4000 * 100000000,
+            other_options={"allow_atomic_mpp": True},
+        )
+        self.send_invoice_payment(
+            self.fibers[2],
+            self.fibers[0],
+            4000 * 100000000,
+            other_options={"allow_atomic_mpp": True},
+        )
 
     def test_one_one_limit(self):
         N = 30
         for i in range(1, N):
             self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0, 0, 0)
             time.sleep(3)
-            self.send_invoice_payment(self.fiber1, self.fiber2, 1000 * 100000000 * i,other_options={"allow_atomic_mpp":True})
-            self.send_invoice_payment(self.fiber2, self.fiber1, 1000 * 100000000 * i,other_options={"allow_atomic_mpp":True})
+            self.send_invoice_payment(
+                self.fiber1,
+                self.fiber2,
+                1000 * 100000000 * i,
+                other_options={"allow_atomic_mpp": True},
+            )
+            self.send_invoice_payment(
+                self.fiber2,
+                self.fiber1,
+                1000 * 100000000 * i,
+                other_options={"allow_atomic_mpp": True},
+            )
 
     def test_one_mid_one_limit(self):
         for i in range(1, 20):
@@ -217,8 +312,18 @@ class MutilPathTestCase(FiberTest):
             self.open_channel(fiber, self.fiber2, 1000 * 100000000, 0, 0, 0)
 
             self.open_channel(self.fiber1, fiber, 1000 * 100000000, 0, 0, 0)
-            self.send_invoice_payment(self.fiber1, self.fiber2, 1000 * 100000000 * i,other_options={"allow_atomic_mpp":True})
-            self.send_invoice_payment(self.fiber2, self.fiber1, 1000 * 100000000 * i,other_options={"allow_atomic_mpp":True})
+            self.send_invoice_payment(
+                self.fiber1,
+                self.fiber2,
+                1000 * 100000000 * i,
+                other_options={"allow_atomic_mpp": True},
+            )
+            self.send_invoice_payment(
+                self.fiber2,
+                self.fiber1,
+                1000 * 100000000 * i,
+                other_options={"allow_atomic_mpp": True},
+            )
 
     # def test_hold_timeout(self):
     #     """
@@ -320,7 +425,8 @@ class MutilPathTestCase(FiberTest):
                         1001 * 100000000,
                         False,
                         None,
-                        try_count=0,other_options={"allow_atomic_mpp":True}
+                        try_count=0,
+                        other_options={"allow_atomic_mpp": True},
                     )
                     payments[i].append(payment_hash)
                 except:
@@ -337,7 +443,12 @@ class MutilPathTestCase(FiberTest):
 
         for i in range(3):
             self.send_invoice_payment(
-                self.fibers[i], self.fibers[i], 100 * 100000000, True, None,other_options={"allow_atomic_mpp":True}
+                self.fibers[i],
+                self.fibers[i],
+                100 * 100000000,
+                True,
+                None,
+                other_options={"allow_atomic_mpp": True},
             )
 
     def test_transfer_self_3(self):
@@ -440,7 +551,8 @@ class MutilPathTestCase(FiberTest):
                         1001 * 100000000,
                         False,
                         None,
-                        try_count=0,other_options={"allow_atomic_mpp":True}
+                        try_count=0,
+                        other_options={"allow_atomic_mpp": True},
                     )
                     payments[i].append(payment_hash)
                 except:
@@ -504,7 +616,10 @@ class MutilPathTestCase(FiberTest):
         self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0, 0, 0)
         self.open_channel(self.fiber2, self.fiber1, 1000 * 100000000, 10000 - 1, 0, 0)
         self.send_invoice_payment(
-            self.fiber1, self.fiber2, 1000 * 100000000 + 10000 - 1,other_options={"allow_atomic_mpp":True}
+            self.fiber1,
+            self.fiber2,
+            1000 * 100000000 + 10000 - 1,
+            other_options={"allow_atomic_mpp": True},
         )
 
     def test_max_fee(self):
@@ -567,13 +682,23 @@ class MutilPathTestCase(FiberTest):
 
         with pytest.raises(Exception) as exc_info:
             # self.send_invoice_payment(self.fiber1, self.fiber2, 1000 * 100000000 + 10000 - 1)
-            self.send_invoice_payment(self.fiber1, self.fiber3, 3000 * 100000000,other_options={"allow_atomic_mpp":True})
+            self.send_invoice_payment(
+                self.fiber1,
+                self.fiber3,
+                3000 * 100000000,
+                other_options={"allow_atomic_mpp": True},
+            )
         expected_error_message = "no path found"
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "
             f"not found in actual string '{exc_info.value.args[0]}'"
         )
-        self.send_invoice_payment(self.fiber1, self.fiber3, 2000 * 100000000,other_options={"allow_atomic_mpp":True})
+        self.send_invoice_payment(
+            self.fiber1,
+            self.fiber3,
+            2000 * 100000000,
+            other_options={"allow_atomic_mpp": True},
+        )
         channels = self.fiber2.get_client().list_channels(
             {
                 "peer_id": self.fiber3.get_peer_id(),
@@ -606,11 +731,21 @@ class MutilPathTestCase(FiberTest):
         # self.wait_for_channel_state(self.fiber1, self.fiber2.get_peer_id(), "CHANNEL_READY")
         self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0, 0, 0)
         time.sleep(10)
-        self.send_invoice_payment(self.fiber1, self.fiber2, 2000 * 100000000,other_options={"allow_atomic_mpp":True})
+        self.send_invoice_payment(
+            self.fiber1,
+            self.fiber2,
+            2000 * 100000000,
+            other_options={"allow_atomic_mpp": True},
+        )
         self.open_channel(self.fiber3, self.fiber2, 2000 * 100000000, 0, 0, 0)
         time.sleep(10)
         with pytest.raises(Exception) as exc_info:
-            self.send_invoice_payment(self.fiber3, self.fiber1, 2000 * 100000000,other_options={"allow_atomic_mpp":True})
+            self.send_invoice_payment(
+                self.fiber3,
+                self.fiber1,
+                2000 * 100000000,
+                other_options={"allow_atomic_mpp": True},
+            )
         expected_error_message = "no path found"
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "
@@ -636,15 +771,23 @@ class MutilPathTestCase(FiberTest):
         time.sleep(10)
 
         with pytest.raises(Exception) as exc_info:
-            self.send_invoice_payment(self.fiber1, self.fiber2, 1010 * 100000000 - 1,
-                                      other_options={"allow_atomic_mpp": True})
+            self.send_invoice_payment(
+                self.fiber1,
+                self.fiber2,
+                1010 * 100000000 - 1,
+                other_options={"allow_atomic_mpp": True},
+            )
         expected_error_message = "no path found"
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "
             f"not found in actual string '{exc_info.value.args[0]}'"
         )
-        self.send_invoice_payment(self.fiber1, self.fiber2, 1010 * 100000000,other_options={"allow_atomic_mpp":True})
-
+        self.send_invoice_payment(
+            self.fiber1,
+            self.fiber2,
+            1010 * 100000000,
+            other_options={"allow_atomic_mpp": True},
+        )
 
     def test_cancel_invoice(self):
         self.fiber3 = self.start_new_fiber(
@@ -658,7 +801,11 @@ class MutilPathTestCase(FiberTest):
         time.sleep(1)
         for i in range(100):
             payment_hash = self.send_invoice_payment(
-                self.fiber1, self.fiber3, 1 * 100000000, False,other_options={"allow_atomic_mpp":True}
+                self.fiber1,
+                self.fiber3,
+                1 * 100000000,
+                False,
+                other_options={"allow_atomic_mpp": True},
             )
             self.fiber3.get_client().cancel_invoice({"payment_hash": payment_hash})
         time.sleep(200)
@@ -721,11 +868,11 @@ class MutilPathTestCase(FiberTest):
         )
 
         self.wait_payment_state(
-            self.fiber1, invoice["invoice"]["data"]["payment_hash"],"Failed"
+            self.fiber1, invoice["invoice"]["data"]["payment_hash"], "Failed"
         )
 
         self.wait_payment_state(
-            self.fiber4, invoice["invoice"]["data"]["payment_hash"],"Failed"
+            self.fiber4, invoice["invoice"]["data"]["payment_hash"], "Failed"
         )
         # todo 只能有1笔成功
         self.fiber1.get_client().send_payment(
