@@ -1,10 +1,8 @@
 import json
 import re
-from functools import wraps
 
 import yaml
 
-from framework.test_node import CkbNodeConfigPath
 from framework.util import get_project_root
 from framework.util import run_command
 
