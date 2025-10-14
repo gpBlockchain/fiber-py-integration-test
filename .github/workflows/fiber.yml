@@ -32,6 +32,7 @@ jobs:
 
       - name: Tar backup
         run: |
+          rm -rf fiber
           tar -czf prepare-backup.tar.gz \
             download \
             source/ckb-cli

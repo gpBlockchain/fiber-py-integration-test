@@ -390,7 +390,7 @@ def tx_add_multisig_config(ckb_address, tx_file, api_url="http://127.0.0.1:8114"
 
     """
     cmd = (
-        f"export API_URL={api_url} && {cli_path} tx add-multisig-config --sighash-address  {ckb_address} "
+        f"export API_URL={api_url} && {cli_path} tx add-multisig-config --multisig-code-hash legacy  --sighash-address  {ckb_address} "
         f"--tx-file {tx_file}"
     )
     return run_command(cmd)
