@@ -18,7 +18,7 @@ class CkbNodeConfigPath(Enum):
         "source/template/ckb/v118/ckb.toml.j2",
         "source/template/ckb/v118/ckb-miner.toml.j2",
         "source/template/ckb/v118/specs/dev.toml",
-        "download/0.203.0",
+        "download/0.202.0",
     )
 
     CURRENT_FIBER = (
