@@ -34,9 +34,7 @@ jobs:
         run: |
           tar -czf prepare-backup.tar.gz \
             download \
-            source/ckb-cli \
-            source/ckb-cli-old
-
+            source/ckb-cli
       - name: Backup data
         uses: actions/upload-artifact@v4
         with:
