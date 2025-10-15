@@ -6,7 +6,6 @@ from framework.basic_fiber import FiberTest
 
 
 class TestLongRouter(FiberTest):
-    FiberTest.debug = True
 
     def test_long_router(self):
         router_length = 13
