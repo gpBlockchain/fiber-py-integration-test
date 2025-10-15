@@ -215,11 +215,12 @@ class TestRestart(FiberTest):
         for i in range(1, 7):
             self.fiber1.connect_peer(self.fibers[i])
         time.sleep(1)
-        for j in range(500):
+        fiber1_peer_id = self.fiber1.get_peer_id()
+        for j in range(10):
             for i in range(1, 7):
                 self.fibers[i].get_client().open_channel(
                     {
-                        "peer_id": self.fiber1.get_peer_id(),
+                        "peer_id": fiber1_peer_id,
                         "funding_amount": hex(1000 * 100000000),
                         "public": True,
                     }

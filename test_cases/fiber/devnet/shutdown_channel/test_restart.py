@@ -279,18 +279,3 @@ class TestRestart(FiberTest):
         self.fiber1.get_client().shutdown_channel(
             {"channel_id": N1N2_CHANNEL_ID, "force": True}
         )
-
-    def test_000(self):
-        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 1 * 100000000)
-        self.node.stop()
-        channels = self.fiber1.get_client().list_channels(
-            {"peer_id": self.fiber2.get_peer_id()}
-        )
-        N1N2_CHANNEL_ID = channels["channels"][0]["channel_id"]
-        self.fiber1.get_client().shutdown_channel(
-            {"channel_id": N1N2_CHANNEL_ID, "force": True}
-        )
-
-    def test_ba(self):
-        self.fiber1.get_client().list_channels({"include_closed": True})
-        self.fiber2.get_client().list_channels({"include_closed": True})

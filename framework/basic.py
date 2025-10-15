@@ -45,7 +45,10 @@ class CkbTest(ABC, unittest.TestCase):
         print("\nself.did_pass =", self.did_pass)
         if not self.did_pass:
             print("back log data")
-            shutil.copytree(
-                f"{get_project_root()}/tmp",
-                f"{get_project_root()}/report/{method.__name__}",
-            )
+            try:
+                shutil.copytree(
+                    f"{get_project_root()}/tmp",
+                    f"{get_project_root()}/report/{method.__name__}",
+                )
+            except OSError as e:
+                print("Error: %s - %s." % (e.filename, e.strerror))
