@@ -13,8 +13,8 @@ class BtcNode:
 
     def __init__(self):
         self.tmp_path = f"{get_project_root()}/tmp/btc"
-        self.bin = f"{get_project_root()}/download/btc/bitcoin-27.0/bin/bitcoind"
-        self.cli = f"{get_project_root()}/download/btc/bitcoin-27.0/bin/bitcoin-cli"
+        self.bin = f"{get_project_root()}/download/btc/current/bitcoin/bin/bitcoind"
+        self.cli = f"{get_project_root()}/download/btc/current/bitcoin/bin/bitcoin-cli"
         self.config = f"{self.tmp_path}/bitcoin.conf"
 
     def prepare(self, other_config={}):

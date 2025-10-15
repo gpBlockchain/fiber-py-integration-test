@@ -4,6 +4,7 @@ from framework.util import get_project_root
 import os
 from framework.util import create_config_file, get_project_root, run_command
 import time
+import shutil
 
 
 class LndNode:
@@ -31,12 +32,8 @@ class LndNode:
         self.listen_port = listen_port
         self.rpc_port = rpc_port
         self.rest_port = rest_port
-        self.lnd = (
-            f"{get_project_root()}/download/lnd/lnd-darwin-arm64-v0.19.3-beta/lnd"
-        )
-        self.lnd_cli = (
-            f"{get_project_root()}/download/lnd/lnd-darwin-arm64-v0.19.3-beta/lncli"
-        )
+        self.lnd = f"{get_project_root()}/download/lnd/current/lnd/lnd"
+        self.lnd_cli = f"{get_project_root()}/download/lnd/current/lnd/lncli"
         """
             listen=0.0.0.0:{{ lnd_listen_port }}
             rpclisten=localhost:{{ lnd_rpc_listen_port }}
