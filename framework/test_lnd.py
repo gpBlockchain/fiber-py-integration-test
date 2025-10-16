@@ -57,7 +57,7 @@ class LndNode:
 
     def start(self):
         run_command(
-            f'{self.lnd} --lnddir="{self.tmp_path}" &>/dev/null & echo $! > {self.tmp_path}/lnd.pid'
+            f'{self.lnd} --lnddir="{self.tmp_path}" > {self.tmp_path}/lnd.log 2>&1 &'
         )
         retries = 30
         print("waiting for ready")
@@ -95,7 +95,10 @@ class LndNode:
         pass
 
     def stop(self):
-        run_command(f"kill `cat {self.tmp_path}/lnd.pid`")
+        run_command(
+            f"kill $(lsof -i:{self.rpc_port} | grep LISTEN | awk '{{print $2}}')",
+            check_exit_code=False,
+        )
 
     def clean(self):
         shutil.rmtree(self.tmp_path)
