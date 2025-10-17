@@ -415,6 +415,8 @@ class FiberTest(CkbTest):
             "udt_type_script": udt,
         }
         invoice_params.update(other_options)
+        if "allow_atomic_mpp" in invoice_params:
+            del invoice_params['payment_preimage']
         invoice = fiber2.get_client().new_invoice(invoice_params)
         for i in range(try_count):
             # payment = fiber1.get_client().send_payment(
