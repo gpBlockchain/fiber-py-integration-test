@@ -7,6 +7,16 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+  workflow_dispatch: # Allows the workflow to be manually triggered
+    inputs:
+      GitUrl:
+        description: 'fiber -git url'
+        default: 'https://github.com/nervosnetwork/fiber.git'
+      GitBranch:
+        description: 'fiber -git branch'
+        default: 'develop'
+  schedule:
+    - cron: '0 0 */7 * *'
 
 permissions:
   contents: read
@@ -29,6 +39,10 @@ jobs:
 
       - name: Run make prepare
         run: make prepare
+        env:
+          GitUrl: '${{ github.event.inputs.GitUrl }}'
+          GitBranch: '${{ github.event.inputs.GitBranch }}'
+
 
       - name: Tar backup
         run: |
