@@ -342,7 +342,7 @@ class FiberTest(CkbTest):
         ):
             open_channel_config = {
                 "peer_id": fiber2.get_peer_id(),
-                "funding_amount": hex(fiber1_balance + 62 * 100000000),
+                "funding_amount": hex(fiber1_balance + 98 * 100000000),
                 "tlc_fee_proportional_millionths": hex(fiber1_fee),
                 "public": True,
             }
@@ -416,7 +416,7 @@ class FiberTest(CkbTest):
         }
         invoice_params.update(other_options)
         if "allow_atomic_mpp" in invoice_params:
-            del invoice_params['payment_preimage']
+            del invoice_params["payment_preimage"]
         invoice = fiber2.get_client().new_invoice(invoice_params)
         for i in range(try_count):
             # payment = fiber1.get_client().send_payment(
@@ -428,26 +428,28 @@ class FiberTest(CkbTest):
             #     }
             # )
             try:
-                payment = fiber1.get_client().send_payment(
-                    {
-                        "invoice": invoice["invoice_address"],
-                        "allow_self_payment": True,
-                        "max_parts": "0x40",
-                    }
-                )
+                send_payment_params = {
+                    "invoice": invoice["invoice_address"],
+                    "allow_self_payment": True,
+                    "max_parts": "0x40",
+                }
+                if "allow_atomic_mpp" in invoice_params:
+                    send_payment_params["amp"] = True
+                payment = fiber1.get_client().send_payment(send_payment_params)
                 if wait:
                     self.wait_payment_state(fiber1, payment["payment_hash"], "Success")
                 return payment["payment_hash"]
             except Exception as e:
                 time.sleep(1)
                 continue
-        payment = fiber1.get_client().send_payment(
-            {
-                "invoice": invoice["invoice_address"],
-                "allow_self_payment": True,
-                "max_parts": "0x40",
-            }
-        )
+        send_payment_params = {
+            "invoice": invoice["invoice_address"],
+            "allow_self_payment": True,
+            "max_parts": "0x40",
+        }
+        if "allow_atomic_mpp" in invoice_params:
+            send_payment_params["amp"] = True
+        payment = fiber1.get_client().send_payment(send_payment_params)
         if wait:
             self.wait_payment_state(fiber1, payment["payment_hash"], "Success")
         return payment["payment_hash"]

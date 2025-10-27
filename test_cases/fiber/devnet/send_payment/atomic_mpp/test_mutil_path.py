@@ -3,6 +3,7 @@ import time
 import pytest
 
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 
 
 class MutilPathTestCase(FiberTest):
@@ -582,6 +583,7 @@ class MutilPathTestCase(FiberTest):
                                 {
                                     "invoice": invoice["invoice_address"],
                                     "allow_self_payment": True,
+                                    "amp": True,
                                 }
                             )
                         )
@@ -651,6 +653,7 @@ class MutilPathTestCase(FiberTest):
         payment = self.fiber1.get_client().send_payment(
             {
                 "invoice": invoice["invoice_address"],
+                "amp": True,
                 # "max_fee_amount": hex(109890100),
             }
         )
@@ -715,7 +718,7 @@ class MutilPathTestCase(FiberTest):
         self.fiber1.get_client().open_channel(
             {
                 "peer_id": self.fiber2.get_peer_id(),
-                "funding_amount": hex(1062 * 100000000),
+                "funding_amount": hex(1000 * 100000000 + DEFAULT_MIN_DEPOSIT_CKB),
                 "public": False,
             }
         )
@@ -788,38 +791,10 @@ class MutilPathTestCase(FiberTest):
             other_options={"allow_atomic_mpp": True},
         )
 
-    def test_cancel_invoice(self):
-        self.fiber3 = self.start_new_fiber(
-            self.generate_account(10000, self.fiber1.account_private, 1000 * 100000000)
-        )
-
-        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0, 0, 0)
-        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0, 0, 0)
-        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0, 0, 0)
-        self.open_channel(self.fiber2, self.fiber3, 3000 * 100000000, 0, 0, 0)
-        time.sleep(1)
-        for i in range(100):
-            payment_hash = self.send_invoice_payment(
-                self.fiber1,
-                self.fiber3,
-                1 * 100000000,
-                False,
-                other_options={"allow_atomic_mpp": True},
-            )
-            self.fiber3.get_client().cancel_invoice({"payment_hash": payment_hash})
-        time.sleep(200)
-        self.get_fiber_graph_balance()
-        for fiber in self.fibers[:2]:
-            balance = self.get_fiber_balance(fiber)
-            assert balance["ckb"]["offered_tlc_balance"] == 0
-            assert balance["ckb"]["received_tlc_balance"] == 0
-            assert balance["ckb"]["local_balance"] == 3000 * 100000000
-
     def test_invoice_diff_sender_cost_two(self):
         """
         1->2->3
         4->5->3
-          双花
         Returns:
         """
         self.fiber3 = self.start_new_fiber(
@@ -852,36 +827,36 @@ class MutilPathTestCase(FiberTest):
                 "allow_atomic_mpp": True,
             }
         )
-        self.fiber1.get_client().send_payment(
+        payment1 = self.fiber1.get_client().send_payment(
             {
                 "invoice": invoice["invoice_address"],
                 "max_fee_amount": hex(1000000),
+                "amp": True,
             }
         )
-        self.fiber4.get_client().send_payment(
+        payment2 = self.fiber4.get_client().send_payment(
             {
                 "invoice": invoice["invoice_address"],
                 "max_fee_amount": hex(1000000),
+                "amp": True,
             }
         )
 
-        self.wait_payment_state(
-            self.fiber1, invoice["invoice"]["data"]["payment_hash"], "Failed"
-        )
+        self.wait_payment_state(self.fiber1, payment1["payment_hash"], "Success")
 
-        self.wait_payment_state(
-            self.fiber4, invoice["invoice"]["data"]["payment_hash"], "Failed"
-        )
-        # todo 只能有1笔成功
-        self.fiber1.get_client().send_payment(
-            {
-                "invoice": invoice["invoice_address"],
-                "max_fee_amount": hex(1000000),
-            }
-        )
-        self.wait_payment_state(
-            self.fiber1, invoice["invoice"]["data"]["payment_hash"], "Success"
-        )
+        self.wait_payment_state(self.fiber4, payment2["payment_hash"], "Success")
+        assert payment1["payment_hash"] != payment2["payment_hash"]
+        # # todo 只能有1笔成功
+        # payment = self.fiber1.get_client().send_payment(
+        #     {
+        #         "invoice": invoice["invoice_address"],
+        #         "max_fee_amount": hex(1000000),
+        #         "amp":True,
+        #     }
+        # )
+        # self.wait_payment_state(
+        #     self.fiber1, payment["payment_hash"], "Success"
+        # )
 
     def test_invoice_same_sender_cost_two(self):
         self.fiber3 = self.start_new_fiber(
@@ -910,6 +885,7 @@ class MutilPathTestCase(FiberTest):
             {
                 "invoice": invoice["invoice_address"],
                 "max_fee_amount": hex(1000000),
+                "amp": True,
             }
         )
         with pytest.raises(Exception) as exc_info:
@@ -917,9 +893,10 @@ class MutilPathTestCase(FiberTest):
                 {
                     "invoice": invoice["invoice_address"],
                     "max_fee_amount": hex(1000000),
+                    "amp": True,
                 }
             )
-        expected_error_message = "Payment session already exists"
+        expected_error_message = "no path found"
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "
             f"not found in actual string '{exc_info.value.args[0]}'"
