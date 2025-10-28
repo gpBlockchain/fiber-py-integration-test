@@ -92,4 +92,3 @@ class TestForceRestart(FiberTest):
         # 3.检查关闭后balance被正常返还
         assert after_balance2 - before_balance2 == 62.0
         # todo check channel state
-

@@ -6,7 +6,7 @@ from framework.test_lnd import LndNode
 class FiberCchTest(FiberTest):
 
     LNDs: list[LndNode] = []
-    btcNode:BtcNode
+    btcNode: BtcNode
 
     @classmethod
     def setup_class(cls):
@@ -14,7 +14,7 @@ class FiberCchTest(FiberTest):
         cls.btcNode = BtcNode()
         cls.LNDs = [
             LndNode("tmp/lnd/node1", 9735, 10009, 8180),
-            LndNode("tmp/lnd/node2", 9736, 11010, 8181)
+            LndNode("tmp/lnd/node2", 9736, 11010, 8181),
         ]
         if cls.debug == True:
             return
@@ -27,7 +27,7 @@ class FiberCchTest(FiberTest):
             lnd.start()
 
         # 建立2个lnd的连接
-        ingrid_p2tr_address = cls.LNDs[0].ln_cli_with_cmd("newaddress p2tr")['address']
+        ingrid_p2tr_address = cls.LNDs[0].ln_cli_with_cmd("newaddress p2tr")["address"]
         cls.btcNode.sendtoaddress(ingrid_p2tr_address, 5, 25)
         cls.btcNode.miner(1)
         cls.LNDs[0].open_channel(cls.LNDs[1], 1000000, 1, 0)
@@ -35,7 +35,7 @@ class FiberCchTest(FiberTest):
 
         # 重启fiber1
         # cls.fiber1.stop()
-        #lnd_cert_path: {{ cch_lnd_cert_path | default("../../lnd/node1/tls.cert") }}
+        # lnd_cert_path: {{ cch_lnd_cert_path | default("../../lnd/node1/tls.cert") }}
         # lnd_rpc_url: {{ cch_lnd_rpc_url | default("https://localhost:10009") }}
         # cls.fiber1.prepare(
         #     update_config={
@@ -85,7 +85,3 @@ class FiberCchTest(FiberTest):
             lnd.clean()
         cls.btcNode.stop()
         cls.btcNode.clean()
-
-
-
-

@@ -1,10 +1,8 @@
 import json
 import re
-from functools import wraps
 
 import yaml
 
-from framework.test_node import CkbNodeConfigPath
 from framework.util import get_project_root
 from framework.util import run_command
 
@@ -15,8 +13,6 @@ LOGGER = logging.getLogger(__name__)
 # cli_path = "cd {root_path}/{cli_path} && ./ckb-cli".format(root_path=get_project_root(),
 #                                                            cli_path=CkbNodeConfigPath.CURRENT_TEST.ckb_bin_path)
 cli_path = f"cd {get_project_root()}/source && ./ckb-cli"
-
-
 
 
 def wallet_get_capacity(ckb_address, api_url="http://127.0.0.1:8114"):
@@ -394,7 +390,7 @@ def tx_add_multisig_config(ckb_address, tx_file, api_url="http://127.0.0.1:8114"
 
     """
     cmd = (
-        f"export API_URL={api_url} && {cli_path} tx add-multisig-config --sighash-address  {ckb_address} "
+        f"export API_URL={api_url} && {cli_path} tx add-multisig-config --multisig-code-hash legacy  --sighash-address  {ckb_address} "
         f"--tx-file {tx_file}"
     )
     return run_command(cmd)

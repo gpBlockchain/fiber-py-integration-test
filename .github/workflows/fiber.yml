@@ -4,9 +4,19 @@
 name: fiber test
 on:
   push:
-    branches: ["fiber"]
+    branches: ["main"]
   pull_request:
-    branches: ["fiber"]
+    branches: ["main"]
+  workflow_dispatch: # Allows the workflow to be manually triggered
+    inputs:
+      GitUrl:
+        description: 'fiber -git url'
+        default: 'https://github.com/nervosnetwork/fiber.git'
+      GitBranch:
+        description: 'fiber -git branch'
+        default: 'develop'
+  schedule:
+    - cron: '0 0 */7 * *'
 
 permissions:
   contents: read
@@ -29,14 +39,17 @@ jobs:
 
       - name: Run make prepare
         run: make prepare
+        env:
+          GitUrl: '${{ github.event.inputs.GitUrl }}'
+          GitBranch: '${{ github.event.inputs.GitBranch }}'
+
 
       - name: Tar backup
         run: |
+          rm -rf fiber
           tar -czf prepare-backup.tar.gz \
             download \
-            source/ckb-cli \
-            source/ckb-cli-old
-
+            source/ckb-cli
       - name: Backup data
         uses: actions/upload-artifact@v4
         with:
@@ -488,3 +501,42 @@ jobs:
         with:
           name: jfoa-fiber_test_send_payment_debug_mixed-reports-${{ runner.os }}
           path: ./report
+
+  fiber_test_cch:
+    needs: prepare
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v3
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Download prepare backup
+        uses: actions/download-artifact@v4
+        with:
+          name: prepare-backup-${{ runner.os }}
+          path: ./
+
+      - name: Extract tarball and restore permissions
+        run: |
+          tar -xzf prepare-backup.tar.gz
+          python download_btc.py
+          python download_lnd.py
+
+      - name: Run fiber_test_demo
+        run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/cch"
+
+      - name: Publish reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jfoa-fiber_test_send_payment_debug_mixed-reports-${{ runner.os }}
+          path: ./report
+

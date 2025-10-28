@@ -8,6 +8,7 @@ from framework.basic_fiber import FiberTest
 class TestCkbRemoveTx(FiberTest):
 
     debug = True
+
     # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/515")
     def test_remove_open_tx_stuck_node1(self):
         """
@@ -27,9 +28,9 @@ class TestCkbRemoveTx(FiberTest):
         tx = self.node.getClient().get_transaction(tx_hash)
         self.node.client.clear_tx_pool()
         time.sleep(5)
-        del tx['transaction']['hash']
-        tx_hash = self.node.getClient().send_transaction(tx['transaction'])
-        self.Miner.miner_until_tx_committed(self.node,tx_hash)
+        del tx["transaction"]["hash"]
+        tx_hash = self.node.getClient().send_transaction(tx["transaction"])
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
         time.sleep(10)
 
         # self.faucet(self.fiber1.account_private, 10000)
@@ -46,13 +47,12 @@ class TestCkbRemoveTx(FiberTest):
         self.fiber1.get_client().list_peers()
         self.fiber2.get_client().list_peers()
 
-
     def test_0002(self):
         for i in range(100):
             self.fiber1.get_client().open_channel(
                 {
                     "peer_id": self.fiber2.get_peer_id(),
-                    "funding_amount": hex(1000 * 100000000+i),
+                    "funding_amount": hex(1000 * 100000000 + i),
                     "public": True,
                 }
             )

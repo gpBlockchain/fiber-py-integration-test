@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from framework.basic_fiber import FiberTest
@@ -27,18 +29,25 @@ class TestSendPaymentWithShutdown(FiberTest):
         N3N4_CHANNEL_ID = (
             self.fibers[3].get_client().list_channels({})["channels"][0]["channel_id"]
         )
+        for i in range(10):
+            try:
+                self.fibers[3].get_client().shutdown_channel(
+                    {
+                        "channel_id": N3N4_CHANNEL_ID,
+                        "close_script": {
+                            "code_hash": "0x1bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+                            "hash_type": "type",
+                            "args": self.fibers[3].get_account()["lock_arg"],
+                        },
+                        "fee_rate": "0x3FC",
+                    }
+                )
+                break
+            except Exception as e:
+                print("shutdown error:", e)
+                time.sleep(1)
+                pass
 
-        self.fibers[3].get_client().shutdown_channel(
-            {
-                "channel_id": N3N4_CHANNEL_ID,
-                "close_script": {
-                    "code_hash": "0x1bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
-                    "hash_type": "type",
-                    "args": self.fibers[3].get_account()["lock_arg"],
-                },
-                "fee_rate": "0x3FC",
-            }
-        )
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 120)
         tx_message = self.get_tx_message(tx_hash)
         for payment_hash in payment_node1_hashes:

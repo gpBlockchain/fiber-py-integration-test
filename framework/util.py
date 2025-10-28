@@ -3,7 +3,7 @@ import subprocess
 import time
 import json
 import toml
-import  re
+import re
 import struct
 
 import hashlib
@@ -249,7 +249,10 @@ def change_time(hour):
     print("updated time:", time.time())
     print("updated datetime:", datetime.now())
 
+
 import os
+
+
 def restore_time():
     """恢复系统时间"""
     print("开始恢复系统时间...")
