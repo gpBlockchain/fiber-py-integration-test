@@ -182,6 +182,30 @@ class TestRestart(FiberTest):
         # 3.检查关闭后balance被正常返还
         assert after_balance2 - before_balance2 == 62.0
 
+    @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/938")
+    def test_stop_ckb_node_shutdown_channel(self):
+        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0)
+        self.node.stop()
+        self.fiber1.get_client().shutdown_channel(
+            {
+                "channel_id": self.fiber1.get_client().list_channels({})["channels"][0][
+                    "channel_id"
+                ],
+                "close_script": {
+                    "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+                    "hash_type": "type",
+                    "args": self.account1["lock_arg"],
+                },
+                "fee_rate": "0x3FC",
+            }
+        )
+        time.sleep(5)
+        self.node.start()
+        self.node.start_miner()
+        self.wait_for_channel_state(
+            self.fiber1.get_client(), self.fiber2.get_peer_id(), "CLOSED", 30, True
+        )
+
     # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/427")
     def test_restart_ckb_node_shutdown_channel(self):
         """
@@ -225,6 +249,7 @@ class TestRestart(FiberTest):
                 "fee_rate": "0x3FC",
             }
         )
+        time.sleep(1)
         # 1.ckb节点重启
         self.node.stop()
         time.sleep(10)

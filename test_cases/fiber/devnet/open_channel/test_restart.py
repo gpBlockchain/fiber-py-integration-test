@@ -13,7 +13,6 @@ class TestRestart(FiberTest):
         3. ckb节点重启
     """
 
-    # FiberTest.debug = True
     # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/402")
     def test_restart_fiber_node_open_channel(self):
         """
@@ -68,6 +67,8 @@ class TestRestart(FiberTest):
             }
         )
         # 2.对方节点重启：发送openchannel过程中fiber3重启
+        # wait tx submit
+        time.sleep(1)
         self.fiber3.stop()
         self.fiber3.start()
         time.sleep(3)
@@ -101,7 +102,9 @@ class TestRestart(FiberTest):
         # channels = self.fiber1.get_client().list_channels({})
         # N1N2_CHANNEL_ID = channels["channels"][0]
         # 1. ckb节点重启：发送openchannel过程中ckb节点重启
+        time.sleep(1)
         self.node.stop()
+        time.sleep(5)
         self.node.start()
         for i in range(20):
             self.Miner.miner_with_version(self.node, "0x0")
@@ -114,6 +117,26 @@ class TestRestart(FiberTest):
         channels = self.fiber1.get_client().list_channels({})
         print(f"after restart query channel info:{channels}")
         assert channels["channels"][0]["state"]["state_name"] == "CHANNEL_READY"
+
+    @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/938")
+    def test_restart_before_open_channel(self):
+
+        self.fiber1.connect_peer(self.fiber2)
+        time.sleep(1)
+        self.node.stop()
+        self.fiber1.get_client().open_channel(
+            {
+                "peer_id": self.fiber2.get_peer_id(),
+                "funding_amount": hex(200 * 100000000),
+                "public": True,
+            }
+        )
+        time.sleep(5)
+        self.node.start()
+        self.node.start_miner()
+        self.wait_for_channel_state(
+            self.fiber1.get_client(), self.fiber2.get_peer_id(), "CHANNEL_READY"
+        )
 
     def test_restart_channel_ready(self):
         """
@@ -226,6 +249,7 @@ class TestRestart(FiberTest):
                     }
                 )
             time.sleep(0.1)
+        time.sleep(2)
         self.fiber1.stop()
         self.fiber1.start()
         time.sleep(30)
