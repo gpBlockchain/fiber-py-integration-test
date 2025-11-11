@@ -234,7 +234,10 @@ class TestSettleInvoice(FiberTest):
         # 空的 payment_hash 参数校验异常
         with pytest.raises(Exception):
             self.fiber1.get_client().settle_invoice(
-                {"payment_hash": "0x", "payment_preimage": self.generate_random_preimage()}
+                {
+                    "payment_hash": "0x",
+                    "payment_preimage": self.generate_random_preimage(),
+                }
             )
 
     def test_empty_preimage(self):
