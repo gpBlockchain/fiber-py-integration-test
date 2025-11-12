@@ -127,6 +127,9 @@ class FiberRPCClient:
     def cancel_invoice(self, param):
         return self.call("cancel_invoice", [param])
 
+    def settle_invoice(self, param):
+        return self.call("settle_invoice", [param])
+        
     def get_invoice(self, param):
         """
         curl --location 'http://127.0.0.1:8228' --header 'Content-Type: application/json' --data '{

@@ -410,3 +410,56 @@ class TestSettleInvoice(FiberTest):
         self.wait_payment_state(self.fiber2, payment["payment_hash"], "Success")
         inv = self.fiber1.get_client().get_invoice({"payment_hash": payment_hash})
         assert inv["status"] == "Paid"
+
+    @pytest.mark.skip("wait for check")
+    def test_payment_tlc_expiry_beyond_invoice_expiry(self):
+        # 打开通道
+        self.fiber2.get_client().open_channel(
+            {
+                "peer_id": self.fiber1.get_peer_id(),
+                "funding_amount": hex(1000 * 100000000),
+                "public": True,
+            }
+        )
+        self.wait_for_channel_state(
+            self.fiber2.get_client(), self.fiber1.get_peer_id(), "CHANNEL_READY", 120
+        )
+
+        # 创建“短有效期”的 hold invoice（例如 5 秒）
+        expiry_hex = "0x5"
+        preimage = self.generate_random_preimage()
+        payment_hash = sha256_hex(preimage)
+        invoice = self.fiber1.get_client().new_invoice(
+            {
+                "amount": hex(1 * 100000000),
+                "currency": "Fibd",
+                "description": "tlc expiry beyond invoice expiry",
+                "expiry": expiry_hex,
+                "final_cltv": "0x28",
+                "payment_hash": payment_hash,
+                "hash_algorithm": "sha256",
+            }
+        )
+
+        # 发送支付时设置“很大的”TLCS过期参数（例如 1 天）
+        final_delta_ms = 24 * 60 * 60 * 1000
+        payment = self.fiber2.get_client().send_payment(
+            {
+                "invoice": invoice["invoice_address"],
+                "final_tlc_expiry_delta": hex(final_delta_ms),
+                "tlc_expiry_limit": hex(final_delta_ms),
+            }
+        )
+        # 预期：此时发票未过期，支付可创建成功（不抛异常）
+        assert "payment_hash" in payment
+
+        # 等待发票过期
+        time.sleep(int(expiry_hex, 16) + 3)
+
+        # 过期后进行结算，预期支付失败，发票不会变为 Paid
+        self.fiber1.get_client().settle_invoice(
+            {"payment_hash": payment_hash, "payment_preimage": preimage}
+        )
+        self.wait_payment_state(self.fiber2, payment["payment_hash"], "Failed")
+        inv = self.fiber1.get_client().get_invoice({"payment_hash": payment_hash})
+        assert inv["status"] != "Paid"
