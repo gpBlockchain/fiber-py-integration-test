@@ -767,7 +767,7 @@ class FiberTest(CkbTest):
                 return
             time.sleep(interval)
         raise TimeoutError(
-            f"status did not reach state {expected_state} within timeout period."
+            f"invoice:{payment_hash} status did not reach state: {result['status']}, expected:{status} , within timeout period."
         )
 
     def get_tx_message(self, tx_hash):
