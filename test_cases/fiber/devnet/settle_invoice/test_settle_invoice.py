@@ -23,6 +23,8 @@ class TestSettleInvoice(FiberTest):
     8. 并发结算同一 invoice：并发幂等，支付仍成功
     9. 批量结算：批量 hold + 结算稳定运行
     10. 节点重启后结算：重启后仍可结算
+    11. 支付时 TLC expiry 超过 invoice expiry：支付创建成功，结算后支付失败
+    12. 使用 ckb_hash 算法创建的 hold invoice 结算
     """
 
     # FiberTest.debug = True
@@ -126,7 +128,7 @@ class TestSettleInvoice(FiberTest):
         expected_error_message = "Invoice not found"
         assert expected_error_message in exc_info.value.args[0]
 
-    @pytest.mark.skip("wait for check")
+    @pytest.mark.skip("wait for hotfix:https://github.com/nervosnetwork/fiber/issues/949")
     def test_settle_expired_hold_invoice(self):
         # 打开通道
         self.fiber2.get_client().open_channel(
@@ -411,7 +413,7 @@ class TestSettleInvoice(FiberTest):
         inv = self.fiber1.get_client().get_invoice({"payment_hash": payment_hash})
         assert inv["status"] == "Paid"
 
-    @pytest.mark.skip("wait for check")
+    @pytest.mark.skip("wait for hotfix:https://github.com/nervosnetwork/fiber/issues/949")
     def test_payment_tlc_expiry_beyond_invoice_expiry(self):
         # 打开通道
         self.fiber2.get_client().open_channel(
@@ -463,3 +465,47 @@ class TestSettleInvoice(FiberTest):
         self.wait_payment_state(self.fiber2, payment["payment_hash"], "Failed")
         inv = self.fiber1.get_client().get_invoice({"payment_hash": payment_hash})
         assert inv["status"] != "Paid"
+
+    def test_settle_with_ckb_hash_algorithm(self):
+        # 打开通道
+        self.fiber2.get_client().open_channel(
+            {
+                "peer_id": self.fiber1.get_peer_id(),
+                "funding_amount": hex(1000 * 100000000),
+                "public": True,
+            }
+        )
+        self.wait_for_channel_state(
+            self.fiber2.get_client(), self.fiber1.get_peer_id(), "CHANNEL_READY", 120
+        )
+
+        # 使用 ckb_hash 算法创建 hold invoice（仅提供 preimage，让节点生成 payment_hash）
+        preimage = self.generate_random_preimage()
+        invoice = self.fiber1.get_client().new_invoice(
+            {
+                "amount": hex(1 * 100000000),
+                "currency": "Fibd",
+                "description": "ckb_hash algorithm settle",
+                "expiry": "0xe10",
+                "final_cltv": "0x28",
+                "payment_preimage": preimage,
+                "hash_algorithm": "ckb_hash",
+            }
+        )
+
+        # 发送支付
+        payment = self.fiber2.get_client().send_payment(
+            {"invoice": invoice["invoice_address"]}
+        )
+
+        # 直接结算（不等待 Received，避免脆弱的中间态）
+        self.fiber1.get_client().settle_invoice(
+            {"payment_hash": payment["payment_hash"], "payment_preimage": preimage}
+        )
+
+        # 验证支付成功与发票状态
+        self.wait_payment_state(self.fiber2, payment["payment_hash"], "Success")
+        inv = self.fiber1.get_client().get_invoice(
+            {"payment_hash": payment["payment_hash"]}
+        )
+        assert inv["status"] == "Paid"
