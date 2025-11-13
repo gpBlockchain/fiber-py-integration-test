@@ -128,7 +128,9 @@ class TestSettleInvoice(FiberTest):
         expected_error_message = "Invoice not found"
         assert expected_error_message in exc_info.value.args[0]
 
-    @pytest.mark.skip("wait for hotfix:https://github.com/nervosnetwork/fiber/issues/949")
+    @pytest.mark.skip(
+        "wait for hotfix:https://github.com/nervosnetwork/fiber/issues/949"
+    )
     def test_settle_expired_hold_invoice(self):
         # 打开通道
         self.fiber2.get_client().open_channel(
@@ -413,7 +415,9 @@ class TestSettleInvoice(FiberTest):
         inv = self.fiber1.get_client().get_invoice({"payment_hash": payment_hash})
         assert inv["status"] == "Paid"
 
-    @pytest.mark.skip("wait for hotfix:https://github.com/nervosnetwork/fiber/issues/949")
+    @pytest.mark.skip(
+        "wait for hotfix:https://github.com/nervosnetwork/fiber/issues/949"
+    )
     def test_payment_tlc_expiry_beyond_invoice_expiry(self):
         # 打开通道
         self.fiber2.get_client().open_channel(
