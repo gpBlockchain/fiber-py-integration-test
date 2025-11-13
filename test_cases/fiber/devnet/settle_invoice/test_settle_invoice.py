@@ -25,6 +25,7 @@ class TestSettleInvoice(FiberTest):
     10. 节点重启后结算：重启后仍可结算
     11. 支付时 TLC expiry 超过 invoice expiry：支付创建成功，结算后支付失败
     12. 使用 ckb_hash 算法创建的 hold invoice 结算
+    13. 长路径A->B->C,invoice结算：通过长路径支付，成功结算
     """
 
     # FiberTest.debug = True
@@ -512,4 +513,64 @@ class TestSettleInvoice(FiberTest):
         inv = self.fiber1.get_client().get_invoice(
             {"payment_hash": payment["payment_hash"]}
         )
+        assert inv["status"] == "Paid"
+
+    def test_settle_multi_hop_path(self):
+        # 启动第三个节点 C
+        fiber3 = self.start_new_fiber(self.generate_account(10000))
+
+        # 打开 A-B 通道（setup_class 已连接 A-B，这里直接开通道）
+        self.fiber1.get_client().open_channel(
+            {
+                "peer_id": self.fiber2.get_peer_id(),
+                "funding_amount": hex(1000 * 100000000),
+                "public": True,
+            }
+        )
+        self.wait_for_channel_state(
+            self.fiber1.get_client(), self.fiber2.get_peer_id(), "CHANNEL_READY", 120
+        )
+
+        # 先连接 B-C，确保完成 Init 交换，再开通道
+        self.fiber2.connect_peer(fiber3)
+        time.sleep(1)
+        self.fiber2.get_client().open_channel(
+            {
+                "peer_id": fiber3.get_peer_id(),
+                "funding_amount": hex(1000 * 100000000),
+                "public": True,
+            }
+        )
+        self.wait_for_channel_state(
+            self.fiber2.get_client(), fiber3.get_peer_id(), "CHANNEL_READY", 120
+        )
+
+        # 在 C 节点创建 hold invoice（使用 sha256）
+        preimage = self.generate_random_preimage()
+        payment_hash = sha256_hex(preimage)
+        invoice = fiber3.get_client().new_invoice(
+            {
+                "amount": hex(1 * 100000000),
+                "currency": "Fibd",
+                "description": "multi-hop settle A-B-C",
+                "expiry": "0xe10",
+                "final_cltv": "0x28",
+                "payment_hash": payment_hash,
+                "hash_algorithm": "sha256",
+            }
+        )
+
+        # A → C 发起支付，经由 B 中转
+        payment = self.fiber1.get_client().send_payment(
+            {"invoice": invoice["invoice_address"]}
+        )
+
+        # C 直接结算（不等待 Received）
+        fiber3.get_client().settle_invoice(
+            {"payment_hash": payment_hash, "payment_preimage": preimage}
+        )
+
+        # 验证：A 侧支付成功，C 侧发票为 Paid
+        self.wait_payment_state(self.fiber1, payment["payment_hash"], "Success")
+        inv = fiber3.get_client().get_invoice({"payment_hash": payment_hash})
         assert inv["status"] == "Paid"
