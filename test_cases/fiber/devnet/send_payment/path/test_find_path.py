@@ -147,8 +147,6 @@ class FindPath(FiberTest):
         print("payment2", payment2)
         print("payment3", payment3)
 
-    debug = True
-
     # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/475")
     def test_cycle_net(self):
         """
