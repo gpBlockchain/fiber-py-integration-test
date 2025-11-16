@@ -34,11 +34,11 @@ class TestMutilShutdown(FiberTest):
                     "peer_id": self.fiber2.get_peer_id(),
                     "funding_amount": hex(1000 * 100000000),
                     "public": True,
-                    "shutdown_script": {
-                        "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
-                        "hash_type": "type",
-                        "args": f"0x000{i}",
-                    },
+                    # "shutdown_script": {
+                    #     "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+                    #     "hash_type": "type",
+                    #     "args": f"0x000{i}",
+                    # },
                 }
             )
             self.wait_for_channel_state(
@@ -55,11 +55,11 @@ class TestMutilShutdown(FiberTest):
                     "funding_udt_type_script": self.get_account_udt_script(
                         self.fiber1.account_private
                     ),
-                    "shutdown_script": {
-                        "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
-                        "hash_type": "type",
-                        "args": f"0x010{i}",
-                    },
+                    # "shutdown_script": {
+                    #     "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+                    #     "hash_type": "type",
+                    #     "args": f"0x010{i}",
+                    # },
                 }
             )
             time.sleep(1)
