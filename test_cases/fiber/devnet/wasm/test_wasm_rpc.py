@@ -3,6 +3,7 @@ import time
 import pytest
 
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 from framework.test_wasm_fiber import WasmFiber
 
 
@@ -31,7 +32,7 @@ class WasmRpcTest(FiberTest):
         wasmFiber.get_client().open_channel(
             {
                 "peer_id": self.fiber1.get_peer_id(),
-                "funding_amount": hex(1000 * 100000000 + 62 * 100000000),
+                "funding_amount": hex(1000 * 100000000 + DEFAULT_MIN_DEPOSIT_CKB),
                 "public": True,
             }
         )
@@ -64,7 +65,7 @@ class WasmRpcTest(FiberTest):
         temporary_channel = self.fiber1.get_client().open_channel(
             {
                 "peer_id": wasm_fiber_peer_id,
-                "funding_amount": hex(100 + 62 * 100000000),
+                "funding_amount": hex(100 + DEFAULT_MIN_DEPOSIT_CKB),
                 "public": True,
             }
         )
@@ -72,7 +73,7 @@ class WasmRpcTest(FiberTest):
         channel = wasmFiber.get_client().accept_channel(
             {
                 "temporary_channel_id": temporary_channel["temporary_channel_id"],
-                "funding_amount": hex(100 + 62 * 100000000),
+                "funding_amount": hex(100 + DEFAULT_MIN_DEPOSIT_CKB),
             }
         )
         self.wait_for_channel_state(

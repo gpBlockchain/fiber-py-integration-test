@@ -17,7 +17,7 @@ import subprocess
 # FIBER_TAR_GZ = "ckb-py-integration-test/source/fiber/data.fiber.tar.gz"
 XUDT_TX_HASH = "0x03c4475655a46dc4984c49fce03316f80bf666236bd95118112731082758d686"
 XUDT_CODE_HASH = "0x102583443ba6cfe5a3ac268bbb4475fb63eb497dce077f126ad3b148d4f4f8f8"
-
+COMMIT_LOCK_CODE_HASH = "0xf3775d5328de71717f2c5614fa06b9b93c48b7d90c1e135c0812c74ee3126453"
 
 class FiberTest(CkbTest):
     # deploy
@@ -66,7 +66,7 @@ class FiberTest(CkbTest):
 
         cls.node.prepare()
         tar_file(
-            f"{get_project_root()}/source/fiber/data.1214.tar.gz", cls.node.ckb_dir
+            f"{get_project_root()}/source/fiber/data.1117.tar.gz", cls.node.ckb_dir
         )
         cls.node.start()
         cls.node.getClient().get_consensus()
@@ -548,7 +548,7 @@ class FiberTest(CkbTest):
             tx_trace.append({"tx_hash": tx, "msg": self.get_tx_message(tx)})
             if (
                 new_code_hash
-                != "0x3ec6f6b1aa204ef33114476419746476e12dc46182d18a31589ea4f9fee862a9"
+                != COMMIT_LOCK_CODE_HASH
             ):
                 # print("code_hash changed, stop trace")
                 # print("old code_hash:", code_hash, "new code_hash:", new_code_hash)
@@ -1082,7 +1082,8 @@ class FiberTest(CkbTest):
         return self.node.getClient().get_cells(
             {
                 "script": {
-                    "code_hash": "0x3ec6f6b1aa204ef33114476419746476e12dc46182d18a31589ea4f9fee862a9",
+                    # "code_hash": "0x3ec6f6b1aa204ef33114476419746476e12dc46182d18a31589ea4f9fee862a9",
+                    "code_hash": COMMIT_LOCK_CODE_HASH,
                     "hash_type": "type",
                     "args": "0x",
                 },
