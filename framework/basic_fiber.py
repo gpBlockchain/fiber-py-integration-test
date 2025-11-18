@@ -66,7 +66,7 @@ class FiberTest(CkbTest):
 
         cls.node.prepare()
         tar_file(
-            f"{get_project_root()}/source/fiber/data.1106.tar.gz", cls.node.ckb_dir
+            f"{get_project_root()}/source/fiber/data.1214.tar.gz", cls.node.ckb_dir
         )
         cls.node.start()
         cls.node.getClient().get_consensus()
@@ -548,7 +548,7 @@ class FiberTest(CkbTest):
             tx_trace.append({"tx_hash": tx, "msg": self.get_tx_message(tx)})
             if (
                 new_code_hash
-                != "0x862f4ce5b79a8f27c2f40111b83fec073e3b49dc13ba92ae569699b11348642a"
+                != "0x3ec6f6b1aa204ef33114476419746476e12dc46182d18a31589ea4f9fee862a9"
             ):
                 # print("code_hash changed, stop trace")
                 # print("old code_hash:", code_hash, "new code_hash:", new_code_hash)
@@ -1082,7 +1082,7 @@ class FiberTest(CkbTest):
         return self.node.getClient().get_cells(
             {
                 "script": {
-                    "code_hash": "0x862f4ce5b79a8f27c2f40111b83fec073e3b49dc13ba92ae569699b11348642a",
+                    "code_hash": "0x3ec6f6b1aa204ef33114476419746476e12dc46182d18a31589ea4f9fee862a9",
                     "hash_type": "type",
                     "args": "0x",
                 },
@@ -1095,7 +1095,8 @@ class FiberTest(CkbTest):
             None,
         )["objects"]
 
-    def restore_time(self):
+    @classmethod
+    def restore_time(cls):
         """恢复系统时间"""
         print("开始恢复系统时间...")
         print("current time:", time.time())

@@ -76,9 +76,13 @@ class TestPendingTlcHandleUdt(FiberTest):
         复杂的场景5,5个tlc，node2有一个能解锁的tlc
     测试N的上限
     """
+
     def teardown_method(self, method):
-        self.restore_time()
         super().teardown_method(method)
+
+    def teardown_class(cls):
+        cls.restore_time()
+        super().teardown_class()
 
     # todo
     def test_1nodes_have_tlc_no_pre_image_node1_shutdown_un_expiry(self):

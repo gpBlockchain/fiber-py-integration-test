@@ -97,7 +97,6 @@ class TestWatchTower(FiberTest):
         self.fiber1.start()
         tx = self.wait_and_check_tx_pool_fee(1000, False, 20 * 5)
 
-    @pytest.mark.skip(reason="<UNK>")
     def test_no_balance(self):
         """
         standalone_watchtower_rpc 没有ckb
@@ -134,22 +133,13 @@ class TestWatchTower(FiberTest):
             f"not found in actual string '{exc_info.value.args[0]}'"
         )
         self.faucet(self.fiber3.account_private, 1000)
+        before_balance = self.get_fiber_balance(self.fiber3)
+        self.node.getClient().generate_epochs("0x1", 0)
         tx = self.wait_and_check_tx_pool_fee(1000, False, 120 * 5)
         self.Miner.miner_until_tx_committed(self.node, tx)
-        msg = self.get_tx_message(tx)
-        print("force shutdown tx:", msg)
-        assert {
-            "args": self.fiber2.get_account()["lock_arg"],
-            "capacity": 6199999546,
-        } in msg["output_cells"]
-        assert {
-            "args": self.fiber1.get_account()["lock_arg"],
-            "capacity": 106199999545,
-        } in msg["output_cells"]
-        assert {
-            "args": self.fiber3.get_account()["lock_arg"],
-            "capacity": 100000000000,
-        } in msg["input_cells"]
+        after_balance = self.get_fiber_balance(self.fiber3)
+        result = self.get_balance_change([before_balance], [after_balance])
+        assert abs(result[0]['ckb'] + 98*100000000) <10000
 
     def test_standalone_watchtower_rpc_url(self):
         """

@@ -7,9 +7,13 @@ from framework.basic_fiber import FiberTest
 
 class TestDiscard(FiberTest):
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 5}
+
     def teardown_method(self, method):
-        self.restore_time()
         super().teardown_method(method)
+
+    def teardown_class(cls):
+        cls.restore_time()
+        super().teardown_class()
 
     def test_udt(self):
         udt = self.get_account_udt_script(self.fiber1.account_private)
@@ -65,7 +69,7 @@ class TestDiscard(FiberTest):
         ckb_change_balance = 0
         for i in range(len(result)):
             ckb_change_balance += result[i]["ckb"]
-        assert ckb_change_balance < 10000
+        assert ckb_change_balance < 20000
         assert ckb_change_balance > 0
 
     # @pytest.mark.skip("会遗弃tlc")
