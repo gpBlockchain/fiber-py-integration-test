@@ -6,9 +6,13 @@ from framework.util import ckb_hash
 
 class TestMutilToOneHandle(FiberTest):
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 5}
+
     def teardown_method(self, method):
-        self.restore_time()
         super().teardown_method(method)
+
+    def teardown_class(cls):
+        cls.restore_time()
+        super().teardown_class()
 
     def test_mutil_to_one(self):
         """
@@ -81,6 +85,20 @@ class TestMutilToOneHandle(FiberTest):
                     10000, self.fiber1.account_private, 10000 * 100000000
                 )
             )
+        # account = self.Ckb_cli.util_key_info_by_private_key(self.fiber1.account_private)
+        # self.Ckb_cli.wallet_get_live_cells(account['address']['testnet'])
+        # tx_hash = self.Ckb_cli.wallet_transfer_by_private_key(
+        #     self.fiber1.account_private,
+        #     account["address"]["testnet"],
+        #     1000000,
+        #     self.node.rpcUrl,
+        # )
+        # self.Miner.miner_until_tx_committed(self.node, tx_hash)
+        # tx_hash = self.Tx.send_transfer_self_tx_with_input([tx_hash], ["0x0"], self.fiber1.account_private,
+        #                                                    output_count=100, fee=12000)
+        # self.Miner.miner_until_tx_committed(self.node, tx_hash)
+        # self.Ckb_cli.wallet_get_live_cells(account['address']['testnet'])
+
         self.faucet(
             self.fiber1.account_private,
             0,
@@ -129,11 +147,7 @@ class TestMutilToOneHandle(FiberTest):
                 }
             )
             time.sleep(1)
-        self.add_time_and_generate_block(16, 100)
-
-        while len(self.get_commit_cells()) == 0:
-            self.add_time_and_generate_block(1, 100)
-            time.sleep(10)
+        self.add_time_and_generate_block(24, 100)
         for channels in self.fiber1.get_client().list_channels({})["channels"]:
             try:
                 self.fiber1.get_client().shutdown_channel(
@@ -142,23 +156,30 @@ class TestMutilToOneHandle(FiberTest):
             except Exception as e:
                 pass
         time.sleep(10)
+        # account = self.Ckb_cli.util_key_info_by_private_key(self.fiber1.account_private)
+        # self.Ckb_cli.wallet_get_live_cells(account['address']['testnet'])
+        # tx_hash = self.Ckb_cli.wallet_transfer_by_private_key(
+        #     self.fiber1.account_private,
+        #     account["address"]["testnet"],
+        #     1000000,
+        #     self.node.rpcUrl,
+        # )
+        # # self.Miner.miner_until_tx_committed(self.node, tx_hash)
+        # tx_hash = self.Tx.send_transfer_self_tx_with_input([tx_hash], ["0x0"], self.fiber1.account_private,
+        #                                                    output_count=100, fee=12000)
+        # self.Miner.miner_until_tx_committed(self.node, tx_hash)
+        # self.Ckb_cli.wallet_get_live_cells(account['address']['testnet'])
         for i in range(N):
             preimage = fiber2_preimages[i]
             self.fiber2.get_client().settle_invoice(
                 {"payment_hash": ckb_hash(preimage), "payment_preimage": preimage}
             )
         while len(self.get_commit_cells()) > 0:
-            self.add_time_and_generate_block(1, 450)
-            time.sleep(10)
+            self.add_time_and_generate_block(1, 600)
+            time.sleep(20)
 
         after_balance = self.get_fibers_balance()
         result = self.get_balance_change(before_balance, after_balance)
-
-    def test_bbbb(self):
-        for i in range(10):
-            self.start_new_mock_fiber("")
-        self.get_fiber_graph_balance()
-        # self.fiber2.get_client().list_channels({})
 
     def test_mutil_to_one_udt(self):
         """
@@ -171,12 +192,15 @@ class TestMutilToOneHandle(FiberTest):
                     10000, self.fiber1.account_private, 10000 * 100000000
                 )
             )
+        for i in range(20):
+            self.faucet(self.fiber1.account_private, 10000)
         self.faucet(
             self.fiber1.account_private,
             0,
             self.fiber1.account_private,
             10000 * 100000000,
         )
+
         fibers_balance = []
         for i in range(len(self.fibers)):
             balance = self.get_fiber_balance(self.fibers[i])
@@ -259,9 +283,3 @@ class TestMutilToOneHandle(FiberTest):
             )
         print("discard_ckb_balance:", discard_ckb_balance)
         assert discard_ckb_balance == 0
-
-    def test_000(self):
-        self.fiber2.get_client().list_channels({"include_closed": True})
-
-
-# 300300000 + 300300000 + 200200000 * 8

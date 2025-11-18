@@ -1,12 +1,13 @@
 import time
 
 from framework.basic_fiber import FiberTest
+from framework.util import ckb_hash
 
 
 class TestMutilToOne(FiberTest):
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 5}
+
     def teardown_method(self, method):
-        self.restore_time()
         super().teardown_method(method)
 
     def test_mutil_to_one(self):
