@@ -1,0 +1,123 @@
+fiber:
+  listening_addr: {{ fiber_listening_addr | default("/ip4/127.0.0.1/tcp/8228") }}
+  chain: dev.toml
+  announce_listening_addr: true
+  announce_private_addr: true
+  gossip_store_maintenance_interval_ms: 1000
+  gossip_network_maintenance_interval_ms: 1000
+  open_channel_auto_accept_min_ckb_funding_amount: {{ fiber_open_channel_auto_accept_min_ckb_funding_amount | default(10000000000)}}
+  watchtower_check_interval_seconds: {{ fiber_watchtower_check_interval_seconds | default(60) }}
+  {% if fiber_disable_built_in_watchtower is defined %}
+  standalone_watchtower_rpc_url: {{ fiber_standalone_watchtower_rpc_url }}
+  disable_built_in_watchtower: {{ fiber_disable_built_in_watchtower }}
+  {% endif %}
+  {% if fiber_funding_timeout_seconds is defined %}
+  funding_timeout_seconds: {{ fiber_funding_timeout_seconds }}
+  {% endif %}
+  {% if fiber_rpc_biscuit_public_key is defined %}
+  rpc_biscuit_public_key: {{ fiber_rpc_biscuit_public_key }}
+  {% endif %}
+  scripts:
+    - name: FundingLock
+      script:
+        code_hash: 0xe7576045a47bb4cc172ffd0306ce01e232dc43805becb356e58f8bda9df51e26
+        hash_type: type
+        args: 0x
+      cell_deps:
+        - type_id:
+            code_hash: 0x00000000000000000000000000000000000000000000000000545950455f4944
+            hash_type: type
+            args: 0x9ae780bb5b9b7d67bf5a0003813db01952dc37a81d56ac366fa2a80f497bc23a
+        - cell_dep:
+            out_point:
+              tx_hash: 0x8b04bddc0dc0c471caff7c8ef88f8b91ee30b95a78f159eeb499208bb3bde710 # ckb_auth
+              index: 0x0
+            dep_type: code
+    - name: CommitmentLock
+      script:
+        code_hash: 0x862f4ce5b79a8f27c2f40111b83fec073e3b49dc13ba92ae569699b11348642a
+        hash_type: type
+        args: 0x
+      cell_deps:
+        - type_id:
+            code_hash: 0x00000000000000000000000000000000000000000000000000545950455f4944
+            hash_type: type
+            args: 0xd3691d0fa567f54736d362a1959d89cb5fa3820577198f5a7a62ecb340fcbb90
+        - cell_dep:
+            out_point:
+              tx_hash: 0x8b04bddc0dc0c471caff7c8ef88f8b91ee30b95a78f159eeb499208bb3bde710 #ckb_auth
+              index: 0x0
+            dep_type: code
+    - name: SimpleUDT
+      script:
+        code_hash: 0x102583443ba6cfe5a3ac268bbb4475fb63eb497dce077f126ad3b148d4f4f8f8
+        hash_type: type
+        args: 0x
+      cell_deps:
+        - type_id:
+            code_hash: 0x00000000000000000000000000000000000000000000000000545950455f4944
+            hash_type: type
+            args: 0x910391089634a0d2c716586f03e4c053f06e461c8d75a428ff045006e856a6a6
+        - cell_dep:
+            out_point:
+              tx_hash: 0x03c4475655a46dc4984c49fce03316f80bf666236bd95118112731082758d686
+              index: 0x0
+            dep_type: code
+
+rpc:
+  listening_addr: {{ rpc_listening_addr | default("127.0.0.1:8227") }}
+  enabled_modules:
+    - cch
+    - channel
+    - payment
+    - graph
+    - info
+    - invoice
+    - peer
+    - pubsub
+    - dev
+    - watchtower
+{% if cch is defined %}
+cch:
+  ignore_startup_failure: true
+  wrapped_btc_type_script:
+    code_hash: 0x102583443ba6cfe5a3ac268bbb4475fb63eb497dce077f126ad3b148d4f4f8f8
+    hash_type: type
+    args: 0x32e555f3ff8e135cece1351a6a2971518392c1e30375c1e006ad0ce8eac07947
+  lnd_cert_path: {{ cch_lnd_cert_path | default("../../lnd/node1/tls.cert") }}
+  lnd_rpc_url: {{ cch_lnd_rpc_url | default("https://localhost:10009") }}
+  order_expiry: {{ cch_order_expiry | default(3600) }}
+  base_fee_sats: {{ cch_base_fee_sats | default(0) }}
+  fee_rate_per_million_sats : {{ cch_fee_rate_per_million_sats | default(1) }}
+  btc_final_tlc_expiry : {{ cch_btc_final_tlc_expiry | default(36) }}
+  ckb_final_tlc_expiry_delta : {{ cch_ckb_final_tlc_expiry_delta | default(86400000) }}
+  {% if cch_fiber_rpc_url is defined %}
+  fiber_rpc_url : {{ cch_fiber_rpc_url }}
+  {% endif %}
+
+{% endif %}
+
+ckb:
+  rpc_url: {{ ckb_rpc_url | default("http://127.0.0.1:8114") }}
+  {% if ckb_udt_whitelist is defined %}
+  udt_whitelist:
+    - name: XUDT
+      script:
+        code_hash: 0x102583443ba6cfe5a3ac268bbb4475fb63eb497dce077f126ad3b148d4f4f8f8
+        hash_type: type
+        args: 0x.*
+      cell_deps:
+       - type_id:
+            code_hash: 0x00000000000000000000000000000000000000000000000000545950455f4944
+            hash_type: type
+            args: 0x910391089634a0d2c716586f03e4c053f06e461c8d75a428ff045006e856a6a6
+      auto_accept_amount: {{ fiber_auto_accept_amount | default(1000000000)}}
+  {% endif %}
+
+services:
+  - fiber
+  - rpc
+  - ckb
+  {% if cch is defined %}
+  - cch
+  {% endif %}

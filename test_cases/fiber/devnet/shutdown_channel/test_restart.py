@@ -93,7 +93,7 @@ class TestRestart(FiberTest):
         print("after_balance1:", after_balance1)
         print("after_balance2:", after_balance2)
         # 3.检查关闭后balance被正常返还
-        assert after_balance2 - before_balance2 == 62.0
+        assert after_balance2 - before_balance2 == 98.0
 
     def test_force_restart_fiber_node_shutdown_channel(self):
         """
@@ -180,7 +180,7 @@ class TestRestart(FiberTest):
         print("after_balance1:", after_balance1)
         print("after_balance2:", after_balance2)
         # 3.检查关闭后balance被正常返还
-        assert after_balance2 - before_balance2 == 62.0
+        assert after_balance2 - before_balance2 == 98.0
 
     @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/938")
     def test_stop_ckb_node_shutdown_channel(self):
@@ -273,7 +273,7 @@ class TestRestart(FiberTest):
         print("after_balance1:", after_balance1)
         print("after_balance2:", after_balance2)
         # 3.检查关闭后balance被正常返还
-        assert after_balance2 - before_balance2 == 62.0
+        assert after_balance2 - before_balance2 == 98.0
 
     def test_restart_ckb_node_shutdown_channel2(self):
         self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 1 * 100000000)

@@ -66,7 +66,7 @@ class TestTemporaryChannelId(FiberTest):
         accept_channel = self.fiber2.get_client().accept_channel(
             {
                 "temporary_channel_id": temporary_channel["temporary_channel_id"],
-                "funding_amount": hex(63 * 100000000),
+                "funding_amount": hex(99 * 100000000),
             }
         )
         time.sleep(1)
@@ -80,7 +80,7 @@ class TestTemporaryChannelId(FiberTest):
             self.fiber2.get_client().accept_channel(
                 {
                     "temporary_channel_id": temporary_channel["temporary_channel_id"],
-                    "funding_amount": hex(64 * 100000000),
+                    "funding_amount": hex(100 * 100000000),
                 }
             )
 

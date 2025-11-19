@@ -12,7 +12,7 @@ class TestFundingAmount(FiberTest):
         accept_channel:
             ckb
                 funding_amount :0x0
-                    error: The funding amount (0) should be greater than or equal to 6200000000
+                    error: The funding amount (0) should be greater than or equal to 9800000000
 
         Steps:
         1. Get node information.
@@ -56,7 +56,7 @@ class TestFundingAmount(FiberTest):
             )
 
         # Step 6: Verify the exception message contains the expected error message
-        expected_error_message = "should be greater than or equal to 6200000000"
+        expected_error_message = "should be greater than or equal to 9800000000"
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "
             f"not found in actual string '{exc_info.value.args[0]}'"
@@ -213,7 +213,7 @@ class TestFundingAmount(FiberTest):
             self.fiber1.get_client(), self.fiber2.get_peer_id(), "CHANNEL_READY", 120
         )
         channels = self.fiber2.get_client().list_channels({})
-        assert accept_channel_funding_amount - 62 * 100000000 == int(
+        assert accept_channel_funding_amount - 98 * 100000000 == int(
             channels["channels"][0]["local_balance"], 16
         )
         # transfer
@@ -278,7 +278,7 @@ class TestFundingAmount(FiberTest):
         print("before_balance2:", before_balance2)
         print("after_balance1:", after_balance1)
         print("after_balance2:", after_balance2)
-        assert after_balance2 - before_balance2 == 63
+        assert after_balance2 - before_balance2 == 99
 
     def test_ckb_funding_amount_gt_auto_accept_channel_ckb_funding_amount(self):
         """
@@ -322,7 +322,7 @@ class TestFundingAmount(FiberTest):
             self.fiber1.get_client(), self.fiber2.get_peer_id(), "CHANNEL_READY", 120
         )
         channels = self.fiber2.get_client().list_channels({})
-        assert accept_channel_funding_amount - 62 * 100000000 == int(
+        assert accept_channel_funding_amount - 98 * 100000000 == int(
             channels["channels"][0]["local_balance"], 16
         )
         # transfer
@@ -385,7 +385,7 @@ class TestFundingAmount(FiberTest):
         print("before_balance2:", before_balance2)
         print("after_balance1:", after_balance1)
         print("after_balance2:", after_balance2)
-        assert after_balance2 - before_balance2 == 64
+        assert after_balance2 - before_balance2 == 100
 
     @pytest.mark.skip("repeat")
     def test_ckb_funding_amount_lt_account(self):

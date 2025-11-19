@@ -3,6 +3,7 @@ import time
 import pytest
 
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB, DEFAULT_MIN_DEPOSIT_UDT
 
 
 class TestFundingUdtTypeScript(FiberTest):
@@ -223,7 +224,7 @@ class TestFundingUdtTypeScript(FiberTest):
         self.open_channel(
             self.fiber1,
             self.fiber2,
-            340282366920938463463374607431768211455 - 1 - 62 * 100000000,
+            340282366920938463463374607431768211455 - 1 - DEFAULT_MIN_DEPOSIT_CKB,
             1,
             1000,
             1000,
@@ -248,7 +249,7 @@ class TestFundingUdtTypeScript(FiberTest):
         )
         assert {
             "args": self.fiber2.get_account()["lock_arg"],
-            "capacity": 14300000000,
+            "capacity": DEFAULT_MIN_DEPOSIT_UDT,
             "udt_args": self.get_account_udt_script(self.fiber2.account_private)[
                 "args"
             ],
@@ -256,7 +257,7 @@ class TestFundingUdtTypeScript(FiberTest):
         } in tx_msg["output_cells"]
         assert {
             "args": self.fiber1.get_account()["lock_arg"],
-            "capacity": 14300000000 - tx_msg["fee"],
+            "capacity": DEFAULT_MIN_DEPOSIT_UDT - tx_msg["fee"],
             "udt_args": self.get_account_udt_script(self.fiber2.account_private)[
                 "args"
             ],

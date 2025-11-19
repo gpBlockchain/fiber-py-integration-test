@@ -3,6 +3,7 @@ import time
 import pytest
 
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 
 
 class MppBench(FiberTest):
@@ -62,7 +63,7 @@ class MppBench(FiberTest):
                 assert {
                     "args": self.get_account_script(fiber.account_private)["args"],
                     "capacity": int(channel["local_balance"], 16)
-                    + 62 * 100000000
+                    + DEFAULT_MIN_DEPOSIT_CKB
                     - shutdown_tx["fee"],
                 } in shutdown_tx["output_cells"]
 

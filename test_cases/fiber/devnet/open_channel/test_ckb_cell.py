@@ -3,6 +3,7 @@ import time
 import pytest
 
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 
 
 class TestCkbCell(FiberTest):
@@ -83,7 +84,9 @@ class TestCkbCell(FiberTest):
         )
         channels = new_fiber.get_client().graph_channels()
         assert len(channels["channels"]) == 1
-        assert channels["channels"][0]["capacity"] == hex(928 * 100000000)
+        assert channels["channels"][0]["capacity"] == hex(
+            990 * 100000000 - DEFAULT_MIN_DEPOSIT_CKB
+        )
 
     def test_account_mutil_cell_gt_funding_amount_2(self):
         """
@@ -126,7 +129,9 @@ class TestCkbCell(FiberTest):
         )
         channels = new_fiber.get_client().graph_channels()
         assert len(channels["channels"]) == 1
-        assert channels["channels"][0]["capacity"] == hex(928 * 100000000)
+        assert channels["channels"][0]["capacity"] == hex(
+            990 * 100000000 - DEFAULT_MIN_DEPOSIT_CKB
+        )
 
     # FiberTest.debug = True
 
@@ -163,7 +168,9 @@ class TestCkbCell(FiberTest):
         )
         channels = new_fiber.get_client().graph_channels()
         assert len(channels["channels"]) == 1
-        assert channels["channels"][0]["capacity"] == hex(928 * 100000000)
+        assert channels["channels"][0]["capacity"] == hex(
+            990 * 100000000 - DEFAULT_MIN_DEPOSIT_CKB
+        )
         node3_info = new_fiber.get_client().node_info()
         fiber3_pub = node3_info["node_id"]
         payment = self.fiber2.get_client().send_payment(
@@ -200,7 +207,9 @@ class TestCkbCell(FiberTest):
         )
         channels = new_fiber.get_client().graph_channels()
         assert len(channels["channels"]) == 1
-        assert channels["channels"][0]["capacity"] == hex(928 * 100000000)
+        assert channels["channels"][0]["capacity"] == hex(
+            990 * 100000000 - DEFAULT_MIN_DEPOSIT_CKB
+        )
         node3_info = new_fiber.get_client().node_info()
         fiber3_pub = node3_info["node_id"]
         payment = self.fiber2.get_client().send_payment(

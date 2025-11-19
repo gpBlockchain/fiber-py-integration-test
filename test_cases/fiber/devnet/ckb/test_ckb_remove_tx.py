@@ -7,8 +7,6 @@ from framework.basic_fiber import FiberTest
 
 class TestCkbRemoveTx(FiberTest):
 
-    debug = True
-
     # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/515")
     def test_remove_open_tx_stuck_node1(self):
         """

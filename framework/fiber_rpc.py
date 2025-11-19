@@ -18,8 +18,8 @@ class FiberRPCClient:
     def send_btc(self, btc_pay_req):
         return self.call("send_btc", [btc_pay_req])
 
-    def get_receive_btc_order(self, params):
-        return self.call("get_receive_btc_order", [params])
+    def get_cch_order(self, params):
+        return self.call("get_cch_order", [params])
 
     def receive_btc(self, params):
         return self.call("receive_btc", [params])
@@ -120,6 +120,9 @@ class FiberRPCClient:
 
         """
         return self.call("parse_invoice", [param])
+
+    def settle_invoice(self, param):
+        return self.call("settle_invoice", [param])
 
     def connect_peer(self, param):
         return self.call("connect_peer", [param])

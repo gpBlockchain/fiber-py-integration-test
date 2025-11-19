@@ -3,6 +3,7 @@ import time
 import pytest
 
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_UDT
 
 
 class MutilPathTestCase(FiberTest):
@@ -494,7 +495,10 @@ class MutilPathTestCase(FiberTest):
                 elif key == "chain":
                     continue
                 else:
-                    assert balance[key]["local_balance"] == 212400000000
+                    assert (
+                        balance[key]["local_balance"]
+                        == 200000000000 + DEFAULT_MIN_DEPOSIT_UDT
+                    )
 
     def test_split(self):
         """
@@ -591,7 +595,7 @@ class MutilPathTestCase(FiberTest):
         self.fiber1.get_client().open_channel(
             {
                 "peer_id": self.fiber2.get_peer_id(),
-                "funding_amount": hex(1062 * 100000000),
+                "funding_amount": hex(1000 * 100000000 + DEFAULT_MIN_DEPOSIT_CKB),
                 "public": False,
             }
         )
@@ -703,7 +707,7 @@ class MutilPathTestCase(FiberTest):
                 "final_cltv": "0x28",
                 "payment_preimage": self.generate_random_preimage(),
                 "hash_algorithm": "sha256",
-                "allow_atomic_mpp": True,
+                "allow_mpp": True,
             }
         )
         self.fiber1.get_client().send_payment(

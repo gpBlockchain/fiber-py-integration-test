@@ -1,6 +1,7 @@
 import time
 
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 
 
 class TestCkbWithUDT(FiberTest):
@@ -165,7 +166,7 @@ class TestCkbWithUDT(FiberTest):
         for fiber in self.fibers:
             fiber_map = self.get_fiber_balance(fiber)
             assert fiber_map[key] == {
-                "local_balance": 206200000000,
+                "local_balance": 200000000000 + DEFAULT_MIN_DEPOSIT_CKB,
                 "offered_tlc_balance": 0,
                 "received_tlc_balance": 0,
             }

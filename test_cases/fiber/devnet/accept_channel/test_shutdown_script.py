@@ -120,7 +120,7 @@ class TestShutdownScript(FiberTest):
         print("after_balance2:", after_balance2)
         print("after_new_balance:", after_new_balance)
         assert after_balance2 - before_balance2 == 0
-        assert after_new_balance == 63
+        assert after_new_balance == 99
 
     def test_udt_shutdown_script(self):
         """
@@ -242,7 +242,7 @@ class TestShutdownScript(FiberTest):
     def test_shutdown_script_too_long_gt_funding_amount(self):
         """
         shutdown_script : data too big ,will cause ckb not enough
-                err: "The funding amount (6200000000) should be greater than or equal to 147200000000"
+                err: "The funding amount (9800000000) should be greater than or equal to 147200000000"
         Returns:
 
         """
@@ -265,7 +265,7 @@ class TestShutdownScript(FiberTest):
             self.fiber2.get_client().accept_channel(
                 {
                     "temporary_channel_id": temporary_channel["temporary_channel_id"],
-                    "funding_amount": hex(62 * 100000000),
+                    "funding_amount": hex(98 * 100000000),
                     "shutdown_script": {
                         "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
                         "hash_type": "type",
@@ -273,7 +273,7 @@ class TestShutdownScript(FiberTest):
                     },
                 }
             )
-        expected_error_message = "The funding amount (6200000000) should be greater than or equal to 147200000000"
+        expected_error_message = "The funding amount (9800000000) should be greater than or equal to 147200000000"
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "
             f"not found in actual string '{exc_info.value.args[0]}'"

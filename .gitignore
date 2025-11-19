@@ -1,5 +1,5 @@
 # Created by pytest automatically.
-tmp
+tmp.bak
 .pytest_cache
 download
 pytest.ini

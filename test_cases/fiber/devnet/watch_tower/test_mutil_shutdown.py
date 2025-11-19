@@ -4,6 +4,7 @@ from framework.basic_fiber import FiberTest
 
 
 class TestMutilShutdown(FiberTest):
+    start_fiber_config = {"fiber_watchtower_check_interval_seconds": 5}
 
     def test_mutil_shutdown(self):
         """
@@ -23,6 +24,8 @@ class TestMutilShutdown(FiberTest):
         """
         ckb_channel_size = 4
         udt_channel_size = 4
+
+        before_udt_balances = self.get_fibers_balance()
 
         # 1. Open CKB channels.
         for i in range(ckb_channel_size):
@@ -100,94 +103,15 @@ class TestMutilShutdown(FiberTest):
         # 5. todo Check open_channel cell cost.
         time.sleep(5)
 
-        # 6. node1 and node2 stop
-        self.fiber1.stop()
-        self.fiber2.stop()
-
         # 7. Generate epoch.
-        self.node.getClient().generate_epochs("0xa")
+        while len(self.get_commit_cells()) > 0:
+            self.node.getClient().generate_epochs("0x1")
+            time.sleep(10)
+        after_udt_balances = self.get_fibers_balance()
 
-        # 8. node1 and node2 start
-        self.fiber1.start()
-        self.fiber2.start()
+        results = self.get_balance_change(before_udt_balances, after_udt_balances)
+        assert results[0]["ckb"] < 20000
+        assert results[1]["ckb"] < 20000
 
-        # 9. Wait for channel split
-        for i in range(ckb_channel_size):
-            self.wait_cell_len(
-                {
-                    "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
-                    "hash_type": "type",
-                    "args": f"0x000{i}",
-                },
-                1,
-            )
-            cells = self.node.getClient().get_cells(
-                {
-                    "script": {
-                        "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
-                        "hash_type": "type",
-                        "args": f"0x000{i}",
-                    },
-                    "script_search_mode": "exact",
-                    "script_type": "lock",
-                },
-                "asc",
-                "0x64",
-                None,
-            )
-            message = self.get_tx_message(cells["objects"][0]["out_point"]["tx_hash"])
-            assert {
-                "capacity": 99999999545,
-                "args": f"0x000{i}",
-            } in message["output_cells"]
-
-        for i in range(udt_channel_size):
-            self.wait_cell_len(
-                {
-                    "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
-                    "hash_type": "type",
-                    "args": f"0x010{i}",
-                },
-                1,
-            )
-            cells = self.node.getClient().get_cells(
-                {
-                    "script": {
-                        "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
-                        "hash_type": "type",
-                        "args": f"0x010{i}",
-                    },
-                    "script_search_mode": "exact",
-                    "script_type": "lock",
-                },
-                "asc",
-                "0x64",
-                None,
-            )
-            message = self.get_tx_message(cells["objects"][0]["out_point"]["tx_hash"])
-            assert {
-                "capacity": 12499999407,
-                "args": f"0x010{i}",
-                "udt_capacity": 20000000000,
-                "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                    "args"
-                ],
-            } in message["output_cells"]
-
-    def wait_cell_len(self, script, length, timeout=300):
-        for i in range(timeout):
-            cells = self.node.getClient().get_cells(
-                {
-                    "script": script,
-                    "script_search_mode": "exact",
-                    "script_type": "lock",
-                },
-                "asc",
-                "0x64",
-                None,
-            )
-            if len(cells["objects"]) < length:
-                time.sleep(1)
-                continue
-            return
-        raise Exception(f"timeout: {timeout}, scrit: {script}, length: {length}")
+        assert results[0]["udt"] == 0
+        assert results[1]["udt"] == 0

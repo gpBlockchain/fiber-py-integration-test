@@ -1,7 +1,7 @@
 set -ex
 
-DEFAULT_FIBER_BRANCH="develop"
-DEFAULT_FIBER_URL="https://github.com/nervosnetwork/fiber.git"
+DEFAULT_FIBER_BRANCH="quake/force-close-remote-preimage"
+DEFAULT_FIBER_URL="https://github.com/quake/fiber.git"
 
 GitFIBERBranch="${GitBranch:-$DEFAULT_FIBER_BRANCH}"
 GitFIBERUrl="${GitUrl:-$DEFAULT_FIBER_URL}"

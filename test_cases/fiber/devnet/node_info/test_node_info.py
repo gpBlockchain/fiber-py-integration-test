@@ -60,11 +60,11 @@ class TestNodeInfo(FiberTest):
 
         # auto_accept_channel_ckb_funding_amount
         assert node_info["auto_accept_channel_ckb_funding_amount"] == hex(
-            62 * 100000000
+            98 * 100000000
         )
 
         # tlc_expiry_delta
-        assert node_info["tlc_expiry_delta"] == hex(24 * 60 * 60 * 1000)
+        assert node_info["tlc_expiry_delta"] == hex(14400000)
 
         # tlc_min_value
         assert node_info["tlc_min_value"] == hex(0)

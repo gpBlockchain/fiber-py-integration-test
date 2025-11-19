@@ -3,6 +3,7 @@ import time
 import pytest
 
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 
 
 class TestFundingTimeout(FiberTest):
@@ -31,7 +32,7 @@ class TestFundingTimeout(FiberTest):
             self.fiber2.get_client().accept_channel(
                 {
                     "temporary_channel_id": temporary_channel1["temporary_channel_id"],
-                    "funding_amount": hex(62 * 100000000),
+                    "funding_amount": hex(DEFAULT_MIN_DEPOSIT_CKB),
                 }
             )
             channels = self.fiber2.get_client().list_channels({})

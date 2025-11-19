@@ -2,6 +2,8 @@ import time
 from framework.basic_fiber import FiberTest
 import pytest
 
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
+
 
 class TestSendPaymentWithRouter(FiberTest):
     """
@@ -54,7 +56,7 @@ class TestSendPaymentWithRouter(FiberTest):
         self.fibers[3].get_client().open_channel(  # d -a private channel
             {
                 "peer_id": self.fibers[0].get_peer_id(),
-                "funding_amount": hex(fiber1_balance + 62 * 100000000),
+                "funding_amount": hex(fiber1_balance + DEFAULT_MIN_DEPOSIT_CKB),
                 "tlc_fee_proportional_millionths": hex(fiber1_fee),
                 "public": False,
             }
@@ -80,7 +82,7 @@ class TestSendPaymentWithRouter(FiberTest):
             .get_client()
             .build_router(
                 {
-                    "amount": hex(1 + 62 * 100000000),
+                    "amount": hex(1 + DEFAULT_MIN_DEPOSIT_CKB),
                     "udt_type_script": None,
                     "hops_info": [
                         {
@@ -99,7 +101,7 @@ class TestSendPaymentWithRouter(FiberTest):
         print(f"hop:{hop}")
         assert hop["channel_outpoint"] == da_channel_outpoint
         assert hop["target"] == self.fibers[0].get_client().node_info()["node_id"]
-        assert hop["amount_received"] == hex(1 + 62 * 100000000)
+        assert hop["amount_received"] == hex(1 + DEFAULT_MIN_DEPOSIT_CKB)
 
         # d call a ,route info: d-a channel outpoint
         payment = (
@@ -144,7 +146,7 @@ class TestSendPaymentWithRouter(FiberTest):
         self.fibers[3].get_client().open_channel(  # d -a private channel
             {
                 "peer_id": self.fibers[0].get_peer_id(),
-                "funding_amount": hex(fiber1_balance + 62 * 100000000),
+                "funding_amount": hex(fiber1_balance + DEFAULT_MIN_DEPOSIT_CKB),
                 "tlc_fee_proportional_millionths": hex(fiber1_fee),
                 "public": False,
             }
@@ -170,7 +172,7 @@ class TestSendPaymentWithRouter(FiberTest):
             .get_client()
             .build_router(
                 {
-                    "amount": hex(1 + 62 * 100000000),
+                    "amount": hex(1 + DEFAULT_MIN_DEPOSIT_CKB),
                     "udt_type_script": None,
                     "hops_info": [
                         {
@@ -189,7 +191,7 @@ class TestSendPaymentWithRouter(FiberTest):
         print(f"hop:{hop}")
         assert hop["channel_outpoint"] == da_channel_outpoint
         assert hop["target"] == self.fibers[0].get_client().node_info()["node_id"]
-        assert hop["amount_received"] == hex(1 + 62 * 100000000)
+        assert hop["amount_received"] == hex(1 + DEFAULT_MIN_DEPOSIT_CKB)
 
         # b call a ,走route info: b-c-d-私-a网络（检查应该不支持自动拼接完整的路由）
         try:
@@ -236,7 +238,7 @@ class TestSendPaymentWithRouter(FiberTest):
         self.fibers[3].get_client().open_channel(  # d -a private channel
             {
                 "peer_id": self.fibers[0].get_peer_id(),
-                "funding_amount": hex(fiber1_balance + 62 * 100000000),
+                "funding_amount": hex(fiber1_balance + DEFAULT_MIN_DEPOSIT_CKB),
                 "tlc_fee_proportional_millionths": hex(fiber1_fee),
                 "public": False,
             }
@@ -260,7 +262,7 @@ class TestSendPaymentWithRouter(FiberTest):
             .get_client()
             .build_router(
                 {
-                    "amount": hex(4 * (1 + 62 * 100000000)),
+                    "amount": hex(4 * (1 + DEFAULT_MIN_DEPOSIT_CKB)),
                     "udt_type_script": None,
                     "hops_info": [
                         {
@@ -280,7 +282,7 @@ class TestSendPaymentWithRouter(FiberTest):
             .get_client()
             .build_router(
                 {
-                    "amount": hex(3 * (1 + 62 * 100000000)),
+                    "amount": hex(3 * (1 + DEFAULT_MIN_DEPOSIT_CKB)),
                     "udt_type_script": None,
                     "hops_info": [
                         {
@@ -300,7 +302,7 @@ class TestSendPaymentWithRouter(FiberTest):
             .get_client()
             .build_router(
                 {
-                    "amount": hex(2 * (1 + 62 * 100000000)),
+                    "amount": hex(2 * (1 + DEFAULT_MIN_DEPOSIT_CKB)),
                     "udt_type_script": None,
                     "hops_info": [
                         {
@@ -320,7 +322,7 @@ class TestSendPaymentWithRouter(FiberTest):
             .get_client()
             .build_router(
                 {
-                    "amount": hex(1 * (1 + 62 * 100000000)),
+                    "amount": hex(1 * (1 + DEFAULT_MIN_DEPOSIT_CKB)),
                     "udt_type_script": None,
                     "hops_info": [
                         {

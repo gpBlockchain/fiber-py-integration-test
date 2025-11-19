@@ -1,6 +1,7 @@
 from framework.basic import CkbTest
 import socket
 
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 from framework.helper.udt_contract import UdtContract, issue_udt_tx
 from framework.test_fiber import Fiber, FiberConfigPath
 from framework.util import generate_account_privakey, get_project_root
@@ -30,6 +31,7 @@ class FiberTest(CkbTest):
     logger = logging.getLogger(__name__)
     start_fiber_config = {}
     fnn_log_level = "debug"
+    beginNum = "0x0"
 
     @classmethod
     def setup_class(cls):
@@ -64,7 +66,7 @@ class FiberTest(CkbTest):
 
         cls.node.prepare()
         tar_file(
-            f"{get_project_root()}/source/fiber/data.fiber.tar.gz", cls.node.ckb_dir
+            f"{get_project_root()}/source/fiber/data.1106.tar.gz", cls.node.ckb_dir
         )
         cls.node.start()
         cls.node.getClient().get_consensus()
@@ -81,6 +83,7 @@ class FiberTest(CkbTest):
 
         """
         cls.did_pass = None
+        cls.beginNum = hex(cls.node.getClient().get_tip_block_number())
         cls.fibers = []
         cls.new_fibers = []
         cls.fiber1 = Fiber.init_by_port(
@@ -342,7 +345,7 @@ class FiberTest(CkbTest):
         ):
             open_channel_config = {
                 "peer_id": fiber2.get_peer_id(),
-                "funding_amount": hex(fiber1_balance + 98 * 100000000),
+                "funding_amount": hex(fiber1_balance + DEFAULT_MIN_DEPOSIT_CKB),
                 "tlc_fee_proportional_millionths": hex(fiber1_fee),
                 "public": True,
             }
@@ -352,7 +355,7 @@ class FiberTest(CkbTest):
             fiber2.get_client().accept_channel(
                 {
                     "temporary_channel_id": temporary_channel["temporary_channel_id"],
-                    "funding_amount": hex(fiber2_balance + 62 * 100000000),
+                    "funding_amount": hex(fiber2_balance + DEFAULT_MIN_DEPOSIT_CKB),
                     "tlc_fee_proportional_millionths": hex(fiber2_fee),
                 }
             )
@@ -363,7 +366,9 @@ class FiberTest(CkbTest):
             return
         open_channel_config = {
             "peer_id": fiber2.get_peer_id(),
-            "funding_amount": hex(fiber1_balance + fiber2_balance + 62 * 100000000),
+            "funding_amount": hex(
+                fiber1_balance + fiber2_balance + DEFAULT_MIN_DEPOSIT_CKB
+            ),
             "tlc_fee_proportional_millionths": hex(fiber1_fee),
             "public": True,
             "funding_udt_type_script": udt,
@@ -522,6 +527,55 @@ class FiberTest(CkbTest):
             f"status did not reach state {expected_state} within timeout period."
         )
 
+    def get_ln_tx_trace(self, open_channel_tx_hash):
+        tx_trace = []
+        tx_trace.append(
+            {
+                "tx_hash": open_channel_tx_hash,
+                "msg": self.get_tx_message(open_channel_tx_hash),
+            }
+        )
+        print("open_channel_tx_hash:", open_channel_tx_hash)
+        tx, code_hash = self.get_ln_cell_death_hash(open_channel_tx_hash)
+        if tx is None:
+            return tx_trace
+        tx_trace.append({"tx_hash": tx, "msg": self.get_tx_message(tx)})
+        while tx is not None:
+            tx, new_code_hash = self.get_ln_cell_death_hash(tx)
+            print("tx,new_code_hash :", tx, new_code_hash)
+            if tx is None:
+                continue
+            tx_trace.append({"tx_hash": tx, "msg": self.get_tx_message(tx)})
+            if (
+                new_code_hash
+                != "0x862f4ce5b79a8f27c2f40111b83fec073e3b49dc13ba92ae569699b11348642a"
+            ):
+                # print("code_hash changed, stop trace")
+                # print("old code_hash:", code_hash, "new code_hash:", new_code_hash)
+                tx = None
+        # for i in range(len(tx_trace)):
+        # print(tx_trace[i])
+        return tx_trace
+
+    def get_ln_cell_death_hash(self, tx_hash):
+        ckbClient = self.node.getClient()
+        tx = ckbClient.get_transaction(tx_hash)
+        cellLock = tx["transaction"]["outputs"][0]["lock"]
+
+        txs = ckbClient.get_transactions(
+            {
+                "script": cellLock,
+                "script_type": "lock",
+                "script_search_mode": "exact",
+            },
+            "asc",
+            "0xff",
+            None,
+        )
+        if len(txs["objects"]) == 2:
+            return txs["objects"][1]["tx_hash"], cellLock["code_hash"]
+        return None, None
+
     def get_fibers_balance_message(self):
         messages = []
         for fiber in self.fibers:
@@ -574,6 +628,31 @@ class FiberTest(CkbTest):
             self.logger.debug(f"{key}:{datas[key]}")
             # self.logger.debug(datas[key])
 
+    def get_balance_change(self, before_balance, after_balance):
+        results = []
+        for i in range(len(before_balance)):
+            print(
+                f"[{i}]ckb:{before_balance[i]['chain']['ckb']} - {after_balance[i]['chain']['ckb']} = {before_balance[i]['chain']['ckb'] - after_balance[i]['chain']['ckb']}"
+            )
+            print(
+                f"[{i}]udt:{before_balance[i]['chain']['udt']} - {after_balance[i]['chain']['udt']} = {before_balance[i]['chain']['udt'] - after_balance[i]['chain']['udt']}"
+            )
+            results.append(
+                {
+                    "ckb": before_balance[i]["chain"]["ckb"]
+                    - after_balance[i]["chain"]["ckb"],
+                    "udt": before_balance[i]["chain"]["udt"]
+                    - after_balance[i]["chain"]["udt"],
+                }
+            )
+        return results
+
+    def get_fibers_balance(self):
+        balances = []
+        for fiber in self.fibers:
+            balances.append(self.get_fiber_balance(fiber))
+        return balances
+
     def get_fiber_balance(self, fiber):
         channels = fiber.get_client().list_channels({})
         balance_map = {}
@@ -582,7 +661,7 @@ class FiberTest(CkbTest):
 
         chain_udt_balance = self.udtContract.balance(
             self.node.getClient(),
-            self.fiber1.account_private,
+            self.get_account_script(self.fiber1.account_private)["args"],
             lock_script["args"],
         )
 
@@ -756,6 +835,12 @@ class FiberTest(CkbTest):
             "input_cells": input_cells,
             "output_cells": output_cells,
             "fee": input_cap,
+            # 'block_number':  int(tx['tx_status']['block_number'], 16)
+            "block_number": (
+                int(tx.get("tx_status", {}).get("block_number"), 16)
+                if tx.get("tx_status", {}).get("block_number") is not None
+                else 0
+            ),
         }
 
     def get_fiber_env(self, new_fiber_count=0):
@@ -990,18 +1075,20 @@ class FiberTest(CkbTest):
         )
 
     def get_commit_cells(self):
-        #         code_hash: 0x2d7d93e3347ddf9f10f6690af75f1e24debaa6c4363f3b2c068f61c757253d38
+        #         code_hash: 0x4d937548b31beb7e6919e05e3f5c8d6f46b13a7db49254e6867bfb0d4bc7c748
         #         hash_type: type
         #         args: 0x
+        tip_number = hex(self.node.getClient().get_tip_block_number())
         return self.node.getClient().get_cells(
             {
                 "script": {
-                    "code_hash": "0x2d7d93e3347ddf9f10f6690af75f1e24debaa6c4363f3b2c068f61c757253d38",
+                    "code_hash": "0x862f4ce5b79a8f27c2f40111b83fec073e3b49dc13ba92ae569699b11348642a",
                     "hash_type": "type",
                     "args": "0x",
                 },
                 "script_type": "lock",
                 "script_search_mode": "prefix",
+                "filter": {"block_range": [self.beginNum, "0xffffffffff"]},
             },
             "asc",
             "0xfff",

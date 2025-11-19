@@ -3,6 +3,7 @@ import time
 import pytest
 
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 from framework.test_fiber import FiberConfigPath
 
 
@@ -89,5 +90,5 @@ class TestData(FiberTest):
         print("tx message:", tx_message)
         assert {
             "args": self.get_account_script(old_fiber_2.account_private)["args"],
-            "capacity": 106200000000,
+            "capacity": 100000000000 + DEFAULT_MIN_DEPOSIT_CKB,
         } in tx_message["output_cells"]
