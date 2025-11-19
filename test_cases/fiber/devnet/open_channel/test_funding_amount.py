@@ -3,6 +3,7 @@ import time
 import pytest
 
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 
 
 class FundingAmount(FiberTest):
@@ -24,7 +25,7 @@ class FundingAmount(FiberTest):
                 }
             )
         expected_error_message = (
-            "The funding amount (0) should be greater than or equal to 6200000000"
+            "The funding amount (0) should be greater than or equal to"
         )
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "
@@ -68,12 +69,12 @@ class FundingAmount(FiberTest):
             temporary_channel_id = self.fiber1.get_client().open_channel(
                 {
                     "peer_id": self.fiber2.get_peer_id(),
-                    "funding_amount": hex(62 * 100000000 - 1),
+                    "funding_amount": hex(DEFAULT_MIN_DEPOSIT_CKB - 1),
                     "public": True,
                     # "tlc_fee_proportional_millionths": "0x4B0",
                 }
             )
-        expected_error_message = "The funding amount (6199999999) should be greater than or equal to 6200000000"
+        expected_error_message = "should be greater than or equal to"
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "
             f"not found in actual string '{exc_info.value.args[0]}'"

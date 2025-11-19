@@ -3,6 +3,7 @@ import time
 import pytest
 
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 from framework.test_fiber import FiberConfigPath
 
 
@@ -21,7 +22,7 @@ class TestP2p(FiberTest):
             self.fiber1.get_client().open_channel(
                 {
                     "peer_id": old_fiber.get_peer_id(),
-                    "funding_amount": hex(1000 + 62 * 100000000),
+                    "funding_amount": hex(1000 + DEFAULT_MIN_DEPOSIT_CKB),
                     "tlc_fee_proportional_millionths": hex(1000),
                     "public": True,
                 }

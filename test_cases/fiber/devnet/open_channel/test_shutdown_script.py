@@ -3,6 +3,7 @@ import time
 import pytest
 
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB, DEFAULT_MIN_DEPOSIT_UDT
 
 
 class TestShutdownScript(FiberTest):
@@ -47,7 +48,9 @@ class TestShutdownScript(FiberTest):
             self.fiber2.get_client(), self.fiber1.get_peer_id(), "CHANNEL_READY", 120
         )
         channels = self.fiber1.get_client().list_channels({})
-        assert channels["channels"][0]["local_balance"] == hex(1589 * 100000000)
+        assert channels["channels"][0]["local_balance"] == hex(
+            1651 * 100000000 - DEFAULT_MIN_DEPOSIT_CKB
+        )
 
     def test_script_udt_none(self):
         temporary_channel_id = self.fiber1.get_client().open_channel(
@@ -117,7 +120,7 @@ class TestShutdownScript(FiberTest):
         print("after_balance1:", after_balance1)
         assert (
             int(after_balance1["capacity"], 16) - int(before_balance1["capacity"], 16)
-            == 143 * 100000000
+            == DEFAULT_MIN_DEPOSIT_UDT
         )
 
     def test_shutdown_script(self):

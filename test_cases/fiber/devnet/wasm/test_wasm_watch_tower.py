@@ -3,6 +3,7 @@ import time
 import pytest
 
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 from framework.test_wasm_fiber import WasmFiber
 
 
@@ -60,15 +61,25 @@ class TestWasmWatchTower(FiberTest):
             )
             if message["output_cells"][0]["args"] == wasmFiberArgs:
                 assert (
-                    1062 * 100000000 - message["output_cells"][0]["capacity"]
+                    1000 * 100000000
+                    + DEFAULT_MIN_DEPOSIT_CKB
+                    - message["output_cells"][0]["capacity"]
                     < 100000000
-                    and 1062 * 100000000 - message["output_cells"][0]["capacity"] > 0
+                    and 1000 * 100000000
+                    + DEFAULT_MIN_DEPOSIT_CKB
+                    - message["output_cells"][0]["capacity"]
+                    > 0
                 )
             else:
                 assert (
-                    1062 * 100000000 - message["output_cells"][1]["capacity"]
+                    1000 * 100000000
+                    + DEFAULT_MIN_DEPOSIT_CKB
+                    - message["output_cells"][1]["capacity"]
                     < 100000000
-                    and 1062 * 100000000 - message["output_cells"][1]["capacity"] > 0
+                    and 1000 * 100000000
+                    + DEFAULT_MIN_DEPOSIT_CKB
+                    - message["output_cells"][1]["capacity"]
+                    > 0
                 )
             self.fiber1.start()
 

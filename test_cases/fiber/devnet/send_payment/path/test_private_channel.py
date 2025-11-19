@@ -26,7 +26,7 @@ class TestPrivateChannel(FiberTest):
         self.fiber1.get_client().open_channel(
             {
                 "peer_id": self.fiber2.get_peer_id(),
-                "funding_amount": hex(fiber1_balance + 62 * 100000000),
+                "funding_amount": hex(fiber1_balance + DEFAULT_MIN_DEPOSIT_CKB),
                 "tlc_fee_proportional_millionths": hex(fiber1_fee),
                 "public": False,
             }
@@ -43,7 +43,7 @@ class TestPrivateChannel(FiberTest):
         self.fibers[3].get_client().open_channel(
             {
                 "peer_id": self.fibers[0].get_peer_id(),
-                "funding_amount": hex(fiber1_balance + 62 * 100000000),
+                "funding_amount": hex(fiber1_balance + DEFAULT_MIN_DEPOSIT_CKB),
                 "tlc_fee_proportional_millionths": hex(fiber1_fee),
                 "public": False,
             }

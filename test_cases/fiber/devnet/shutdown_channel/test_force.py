@@ -3,6 +3,7 @@ import time
 import pytest
 
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 from framework.test_fiber import FiberConfigPath
 
 
@@ -81,7 +82,10 @@ class TestForce(FiberTest):
         # assert latest_commitment_transaction_hash == tx_hash
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 5 * 70)
         tx_message = self.get_tx_message(tx_hash)
-        assert 62 * 100000000 - tx_message["output_cells"][0]["capacity"] < 1000000
+        assert (
+            DEFAULT_MIN_DEPOSIT_CKB - tx_message["output_cells"][0]["capacity"]
+            < 1000000
+        )
         assert 200 * 100000000 - tx_message["output_cells"][1]["capacity"] < 1000000
 
     def test_node_online(self):

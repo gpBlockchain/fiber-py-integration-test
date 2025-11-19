@@ -81,7 +81,7 @@ class LndNode:
 
     def ln_cli_with_cmd_without_json(self, cmd):
         return run_command(
-            f'{self.lnd_cli} -n regtest --lnddir="{self.tmp_path}" --no-macaroons --rpcserver "localhost:{self.rpc_port}" {cmd}'
+            f'{self.lnd_cli} -n regtest --lnddir="{self.tmp_path}" --no-macaroons --rpcserver "localhost:{self.rpc_port}" {cmd} --timeout 60s'
         )
 
     def ln_cli_with_cmd(self, cmd):

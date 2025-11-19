@@ -1,7 +1,4 @@
-import time
-
 from framework.basic_fiber import FiberTest
-from framework.test_fiber import FiberConfigPath
 
 
 class TestMppDemo(FiberTest):

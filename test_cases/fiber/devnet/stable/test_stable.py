@@ -3,6 +3,8 @@ import time
 from framework.basic_fiber import FiberTest
 import concurrent.futures
 
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
+
 
 class TestStableStress(FiberTest):
     fnn_log_level = "info"
@@ -153,7 +155,7 @@ class TestStableStress(FiberTest):
                 "received_tlc_balance": 0,
             }
             assert message[udt["args"]] == {
-                "local_balance": 206200000000,
+                "local_balance": 200000000000 + DEFAULT_MIN_DEPOSIT_CKB,
                 "offered_tlc_balance": 0,
                 "received_tlc_balance": 0,
             }

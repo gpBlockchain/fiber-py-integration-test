@@ -3,6 +3,7 @@ import time
 import pytest
 
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 
 
 class TestNodeState(FiberTest):
@@ -95,7 +96,7 @@ class TestNodeState(FiberTest):
         self.wait_fibers_pending_tlc_eq0(self.fiber1, 120)
         fiber_balance = self.get_fiber_balance(self.fiber1)
         fiber1_send_balance = 2000 * 100000000 - fiber_balance["ckb"]["local_balance"]
-        fiber4_receive_balance = fiber4_balance - 62 * 100000000 - 1
+        fiber4_receive_balance = fiber4_balance - DEFAULT_MIN_DEPOSIT_CKB - 1
         channels = self.fibers[3].get_client().list_channels({"include_closed": True})
         print("fiber4_before_ckb_balance:", fiber4_before_ckb_balance)
         print("fiber4_after_ckb_balance:", fiber4_after_ckb_balance)

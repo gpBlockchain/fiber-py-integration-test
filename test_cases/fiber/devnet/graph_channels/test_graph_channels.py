@@ -397,9 +397,9 @@ class TestGraphChannels(FiberTest):
         )
 
         # capacity
-        assert node1_channels["channels"][0]["capacity"] == hex(138 * 100000000)
-        assert node2_channels["channels"][0]["capacity"] == hex(138 * 100000000)
-        assert node3_channels["channels"][0]["capacity"] == hex(138 * 100000000)
+        assert node1_channels["channels"][0]["capacity"] == hex(102 * 100000000)
+        assert node2_channels["channels"][0]["capacity"] == hex(102 * 100000000)
+        assert node3_channels["channels"][0]["capacity"] == hex(102 * 100000000)
 
         # chain_hash
         assert node1_channels["channels"][0]["chain_hash"] == node1_info["chain_hash"]

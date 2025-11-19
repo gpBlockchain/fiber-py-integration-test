@@ -1,5 +1,6 @@
 import time
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 
 
 class TestBuildRouter(FiberTest):
@@ -51,7 +52,7 @@ class TestBuildRouter(FiberTest):
         self.fibers[3].get_client().open_channel(  # d -a private channel
             {
                 "peer_id": self.fibers[0].get_peer_id(),
-                "funding_amount": hex(fiber1_balance + 62 * 100000000),
+                "funding_amount": hex(fiber1_balance + DEFAULT_MIN_DEPOSIT_CKB),
                 "tlc_fee_proportional_millionths": hex(fiber1_fee),
                 "public": False,
             }
@@ -77,7 +78,7 @@ class TestBuildRouter(FiberTest):
             .get_client()
             .build_router(
                 {
-                    "amount": hex(1 + 62 * 100000000),
+                    "amount": hex(1 + DEFAULT_MIN_DEPOSIT_CKB),
                     "udt_type_script": None,
                     "hops_info": [
                         {
@@ -96,7 +97,7 @@ class TestBuildRouter(FiberTest):
         print(f"hop:{hop}")
         assert hop["channel_outpoint"] == da_channel_outpoint
         assert hop["target"] == self.fibers[0].get_client().node_info()["node_id"]
-        assert hop["amount_received"] == hex(1 + 62 * 100000000)
+        assert hop["amount_received"] == hex(1 + DEFAULT_MIN_DEPOSIT_CKB)
 
     def test_amount_invalid(self):
         """

@@ -3,6 +3,7 @@ import time
 import pytest
 
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 
 
 class TestCloseScript(FiberTest):
@@ -75,7 +76,7 @@ class TestCloseScript(FiberTest):
         print("before_balance2:", before_balance2)
         print("after_balance1:", after_balance1)
         print("after_balance2:", after_balance2)
-        assert after_balance2 - before_balance2 == 62.0
+        assert after_balance2 - before_balance2 == 98.0
 
     # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/431")
     def test_not_secp256k1_blake160_sighash_all(self):
@@ -135,7 +136,7 @@ class TestCloseScript(FiberTest):
         print("before_balance2:", before_balance2)
         print("after_balance1:", after_balance1)
         print("after_balance2:", after_balance2)
-        assert after_balance2 - before_balance2 == 62.0
+        assert after_balance2 - before_balance2 == 98.0
 
     # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/332")
     def test_ckb_arg_change_long_not_enough(self):
@@ -263,7 +264,7 @@ class TestCloseScript(FiberTest):
         print("before_balance2:", before_balance2)
         print("after_balance1:", after_balance1)
         print("after_balance2:", after_balance2)
-        assert after_balance2 - before_balance2 == 62.0
+        assert after_balance2 - before_balance2 == 98.0
         assert (
             int(after_account_balance1["capacity"], 16)
             - int(before_account_balance1["capacity"], 16)
@@ -292,7 +293,9 @@ class TestCloseScript(FiberTest):
             self.fiber2.get_client(), self.fiber1.get_peer_id(), "CHANNEL_READY", 120
         )
         channels = self.fiber1.get_client().list_channels({})
-        assert channels["channels"][0]["local_balance"] == hex(1607 * 100000000)
+        assert channels["channels"][0]["local_balance"] == hex(
+            1651 * 100000000 - DEFAULT_MIN_DEPOSIT_CKB
+        )
         channels = self.fiber1.get_client().list_channels(
             {"peer_id": self.fiber2.get_peer_id()}
         )

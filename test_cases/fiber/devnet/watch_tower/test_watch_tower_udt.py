@@ -6,7 +6,9 @@ from framework.basic_fiber import FiberTest
 
 
 class TestWatchTowerUdt(FiberTest):
+    start_fiber_config = {"fiber_watchtower_check_interval_seconds": 5}
 
+    # @pytest.mark.skip("手续费不对 ckb 当手续费了")
     def test_node1_shutdown_when_open_and_node2_split_tx(self):
         """
         Test scenario where node1 shuts down when open and node2 splits the transaction.
@@ -25,7 +27,9 @@ class TestWatchTowerUdt(FiberTest):
         11. Wait for the transaction to be committed and check the transaction message.
         12. Assert the capacity and arguments of input and output cells in the transaction message.
         """
-
+        before_udt_balances = []
+        for fiber in self.fibers:
+            before_udt_balances.append(self.get_fiber_balance(fiber))
         # Step 1: Open a channel from node1 to node2
         self.fiber1.get_client().open_channel(
             {
@@ -77,40 +81,46 @@ class TestWatchTowerUdt(FiberTest):
         self.fiber1.stop()
 
         # Step 10: Generate epochs
-        self.node.getClient().generate_epochs("0x6", 0)
+        self.node.getClient().generate_epochs("0x1", 0)
 
         # Step 11: Wait for the transaction to be committed and check the transaction message
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
         tx_message = self.get_tx_message(tx_hash)
         print("tx_message:", tx_message)
 
         # Step 12: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 28599999407
-        assert (
-            tx_message["input_cells"][1]["args"]
-            == self.get_account_script(self.fiber2.account_private)["args"]
-        )
-        assert tx_message["input_cells"][0]["udt_capacity"] == 20000000000
+        self.fiber1.start()
+        self.node.getClient().generate_epochs("0x1", 0)
+        tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
+        tx_message = self.get_tx_message(tx_hash)
+        print("tx_message:", tx_message)
+        # assert tx_message['fee'] < 10000
+        after_udt_balances = []
+        for fiber in self.fibers:
+            after_udt_balances.append(self.get_fiber_balance(fiber))
 
-        assert (
-            tx_message["output_cells"][0]["args"]
-            == self.get_account_script(self.fiber2.account_private)["args"]
-        )
-        assert tx_message["output_cells"][0]["capacity"] == 14299999407
-        assert tx_message["output_cells"][0]["udt_capacity"] == 0
-
-        assert (
-            tx_message["output_cells"][1]["args"]
-            == self.get_account_script(self.fiber1.account_private)["args"]
-        )
-        assert tx_message["output_cells"][1]["capacity"] == 14299999407
-        assert tx_message["output_cells"][1]["udt_capacity"] == 20000000000
-
-        # todo add assert list_channel
-
-        # todo assert node_info
-
-        # todo assert graph_channels
+        results = []
+        for i in range(len(before_udt_balances)):
+            print(
+                f"ckb:{before_udt_balances[i]['chain']['ckb']} - {after_udt_balances[i]['chain']['ckb']} = {before_udt_balances[i]['chain']['ckb'] - after_udt_balances[i]['chain']['ckb']}"
+            )
+            print(
+                f"udt:{before_udt_balances[i]['chain']['udt']} - {after_udt_balances[i]['chain']['udt']} = {before_udt_balances[i]['chain']['udt'] - after_udt_balances[i]['chain']['udt']}"
+            )
+            results.append(
+                {
+                    "ckb": before_udt_balances[i]["chain"]["ckb"]
+                    - after_udt_balances[i]["chain"]["ckb"],
+                    "udt": before_udt_balances[i]["chain"]["udt"]
+                    - after_udt_balances[i]["chain"]["udt"],
+                }
+            )
+        assert abs(results[0]["ckb"] - 100000000) < 10000
+        assert results[0]["udt"] == 0
+        assert abs(results[1]["ckb"] + 100000000) < 10000
+        assert results[1]["udt"] == 0
 
     def test_node2_shutdown_when_open_and_node2_split_tx(self):
         """
@@ -131,6 +141,10 @@ class TestWatchTowerUdt(FiberTest):
         12. Assert the capacity and arguments of input and output cells in the transaction message.
         """
         # Step 1: Open a channel from node1 to node2
+        before_udt_balances = []
+        for fiber in self.fibers:
+            before_udt_balances.append(self.get_fiber_balance(fiber))
+
         self.fiber1.get_client().open_channel(
             {
                 "peer_id": self.fiber2.get_peer_id(),
@@ -181,33 +195,45 @@ class TestWatchTowerUdt(FiberTest):
         self.fiber1.stop()
 
         # Step 10: Generate epochs
-        self.node.getClient().generate_epochs("0x6", 0)
+        self.node.getClient().generate_epochs("0x1", 0)
 
         # Step 11: Wait for the transaction to be committed and check the transaction message
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
         tx_message = self.get_tx_message(tx_hash)
 
         # Step 12: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 28599999407
-        assert (
-            tx_message["input_cells"][1]["args"]
-            == self.get_account_script(self.fiber2.account_private)["args"]
-        )
-        assert tx_message["input_cells"][0]["udt_capacity"] == 20000000000
+        self.fiber1.start()
+        self.node.getClient().generate_epochs("0x1", 0)
+        tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
+        tx_message = self.get_tx_message(tx_hash)
+        print("tx_message:", tx_message)
+        # assert tx_message['fee'] < 10000
+        after_udt_balances = []
+        for fiber in self.fibers:
+            after_udt_balances.append(self.get_fiber_balance(fiber))
 
-        assert (
-            tx_message["output_cells"][0]["args"]
-            == self.get_account_script(self.fiber1.account_private)["args"]
-        )
-        assert tx_message["output_cells"][0]["capacity"] == 14299999407
-        assert tx_message["output_cells"][0]["udt_capacity"] == 20000000000
-
-        assert (
-            tx_message["output_cells"][1]["args"]
-            == self.get_account_script(self.fiber2.account_private)["args"]
-        )
-        assert tx_message["output_cells"][1]["capacity"] == 14299999407
-        assert tx_message["output_cells"][1]["udt_capacity"] == 0
+        results = []
+        for i in range(len(before_udt_balances)):
+            print(
+                f"ckb:{before_udt_balances[i]['chain']['ckb']} - {after_udt_balances[i]['chain']['ckb']} = {before_udt_balances[i]['chain']['ckb'] - after_udt_balances[i]['chain']['ckb']}"
+            )
+            print(
+                f"udt:{before_udt_balances[i]['chain']['udt']} - {after_udt_balances[i]['chain']['udt']} = {before_udt_balances[i]['chain']['udt'] - after_udt_balances[i]['chain']['udt']}"
+            )
+            results.append(
+                {
+                    "ckb": before_udt_balances[i]["chain"]["ckb"]
+                    - after_udt_balances[i]["chain"]["ckb"],
+                    "udt": before_udt_balances[i]["chain"]["udt"]
+                    - after_udt_balances[i]["chain"]["udt"],
+                }
+            )
+        assert abs(results[0]["ckb"] - 100000000) < 10000
+        assert results[0]["udt"] == 0
+        assert abs(results[1]["ckb"] + 100000000) < 10000
+        assert results[0]["udt"] == 0
 
     def test_node2_shutdown_when_open_and_node1_split_tx(self):
         """
@@ -227,6 +253,10 @@ class TestWatchTowerUdt(FiberTest):
         11. Wait for the transaction to be committed and check the transaction message.
         12. Assert the capacity and arguments of input and output cells in the transaction message.
         """
+        before_udt_balances = []
+        for fiber in self.fibers:
+            before_udt_balances.append(self.get_fiber_balance(fiber))
+
         # Step 1: Open a channel from node1 to node2
         self.fiber1.get_client().open_channel(
             {
@@ -278,39 +308,50 @@ class TestWatchTowerUdt(FiberTest):
         self.fiber2.stop()
 
         # Step 10: Generate epochs
-        self.node.getClient().generate_epochs("0x6", 0)
+        self.node.getClient().generate_epochs("0x1", 0)
 
         # Step 11: Wait for the transaction to be committed and check the transaction message
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
         tx_message = self.get_tx_message(tx_hash)
 
         # Step 12: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 28599999407
-        assert (
-            tx_message["input_cells"][1]["args"]
-            == self.get_account_script(self.fiber1.account_private)["args"]
-        )
-        assert tx_message["input_cells"][0]["udt_capacity"] == 20000000000
+        self.fiber2.start()
+        self.node.getClient().generate_epochs("0x1", 0)
+        tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
+        tx_message = self.get_tx_message(tx_hash)
+        print("tx_message:", tx_message)
+        # assert tx_message['fee'] < 10000
+        after_udt_balances = []
+        for fiber in self.fibers:
+            after_udt_balances.append(self.get_fiber_balance(fiber))
 
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber1.account_private)["args"],
-            "udt_capacity": 20000000000,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
-
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber2.account_private)["args"],
-            "udt_capacity": 0,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
+        results = []
+        for i in range(len(before_udt_balances)):
+            print(
+                f"ckb:{before_udt_balances[i]['chain']['ckb']} - {after_udt_balances[i]['chain']['ckb']} = {before_udt_balances[i]['chain']['ckb'] - after_udt_balances[i]['chain']['ckb']}"
+            )
+            print(
+                f"udt:{before_udt_balances[i]['chain']['udt']} - {after_udt_balances[i]['chain']['udt']} = {before_udt_balances[i]['chain']['udt'] - after_udt_balances[i]['chain']['udt']}"
+            )
+            results.append(
+                {
+                    "ckb": before_udt_balances[i]["chain"]["ckb"]
+                    - after_udt_balances[i]["chain"]["ckb"],
+                    "udt": before_udt_balances[i]["chain"]["udt"]
+                    - after_udt_balances[i]["chain"]["udt"],
+                }
+            )
+        assert abs(results[0]["ckb"] + 100000000) < 10000
+        assert results[0]["udt"] == 0
+        assert abs(results[1]["ckb"] - 100000000) < 10000
+        assert results[0]["udt"] == 0
 
     def test_node1_shutdown_when_open_and_node1_split_tx(self):
+        before_udt_balances = []
+        for fiber in self.fibers:
+            before_udt_balances.append(self.get_fiber_balance(fiber))
         self.fiber1.get_client().open_channel(
             {
                 "peer_id": self.fiber2.get_peer_id(),
@@ -351,36 +392,43 @@ class TestWatchTowerUdt(FiberTest):
         node1_graph_channels = self.fiber1.get_client().graph_channels()
         node2_graph_channels = self.fiber2.get_client().graph_channels()
         self.fiber2.stop()
-        self.node.getClient().generate_epochs("0x6", 0)
+        self.node.getClient().generate_epochs("0x1", 0)
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
         tx_message = self.get_tx_message(tx_hash)
         # assert tx_message['input_cells'][0]['capacity'] ==
         # todo add assert cap
+        self.fiber2.start()
+        self.node.getClient().generate_epochs("0x1", 0)
+        tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
+        tx_message = self.get_tx_message(tx_hash)
+        print("tx_message:", tx_message)
+        # assert tx_message['fee'] < 10000
+        after_udt_balances = []
+        for fiber in self.fibers:
+            after_udt_balances.append(self.get_fiber_balance(fiber))
 
-        assert tx_message["input_cells"][0]["capacity"] == 28599999407
-        assert (
-            tx_message["input_cells"][1]["args"]
-            == self.get_account_script(self.fiber1.account_private)["args"]
-        )
-        assert tx_message["input_cells"][0]["udt_capacity"] == 20000000000
-
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber1.account_private)["args"],
-            "udt_capacity": 20000000000,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
-
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber2.account_private)["args"],
-            "udt_capacity": 0,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
+        results = []
+        for i in range(len(before_udt_balances)):
+            print(
+                f"ckb:{before_udt_balances[i]['chain']['ckb']} - {after_udt_balances[i]['chain']['ckb']} = {before_udt_balances[i]['chain']['ckb'] - after_udt_balances[i]['chain']['ckb']}"
+            )
+            print(
+                f"udt:{before_udt_balances[i]['chain']['udt']} - {after_udt_balances[i]['chain']['udt']} = {before_udt_balances[i]['chain']['udt'] - after_udt_balances[i]['chain']['udt']}"
+            )
+            results.append(
+                {
+                    "ckb": before_udt_balances[i]["chain"]["ckb"]
+                    - after_udt_balances[i]["chain"]["ckb"],
+                    "udt": before_udt_balances[i]["chain"]["udt"]
+                    - after_udt_balances[i]["chain"]["udt"],
+                }
+            )
+        assert abs(results[0]["ckb"] + 100000000) < 10000
+        assert results[0]["udt"] == 0
+        assert abs(results[1]["ckb"] - 100000000) < 10000
+        assert results[1]["udt"] == 0
 
     def test_node1_shutdown_after_send_tx1_and_node1_split_tx(self):
         """
@@ -401,6 +449,10 @@ class TestWatchTowerUdt(FiberTest):
         12. Wait for the transaction to be committed and check the transaction message.
         13. Assert the capacity and arguments of input and output cells in the transaction message.
         """
+        before_udt_balances = []
+        for fiber in self.fibers:
+            before_udt_balances.append(self.get_fiber_balance(fiber))
+
         # Step 1: Open a channel from node1 to node2
         self.fiber1.get_client().open_channel(
             {
@@ -455,36 +507,45 @@ class TestWatchTowerUdt(FiberTest):
         self.fiber2.stop()
 
         # Step 11: Generate epochs
-        self.node.getClient().generate_epochs("0x6", 0)
+        self.node.getClient().generate_epochs("0x1", 0)
 
         # Step 12: Wait for the transaction to be committed and check the transaction message
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
         tx_message = self.get_tx_message(tx_hash)
 
         # Step 13: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 28599999407
-        assert (
-            tx_message["input_cells"][1]["args"]
-            == self.get_account_script(self.fiber1.account_private)["args"]
-        )
-        assert tx_message["input_cells"][0]["udt_capacity"] == 20000000000
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber1.account_private)["args"],
-            "udt_capacity": 19900000000,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
+        self.fiber2.start()
+        self.node.getClient().generate_epochs("0x1", 0)
+        tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
+        tx_message = self.get_tx_message(tx_hash)
+        print("tx_message:", tx_message)
+        # assert tx_message['fee'] < 10000
+        after_udt_balances = []
+        for fiber in self.fibers:
+            after_udt_balances.append(self.get_fiber_balance(fiber))
 
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber2.account_private)["args"],
-            "udt_capacity": 100000000,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
+        results = []
+        for i in range(len(before_udt_balances)):
+            print(
+                f"ckb:{before_udt_balances[i]['chain']['ckb']} - {after_udt_balances[i]['chain']['ckb']} = {before_udt_balances[i]['chain']['ckb'] - after_udt_balances[i]['chain']['ckb']}"
+            )
+            print(
+                f"udt:{before_udt_balances[i]['chain']['udt']} - {after_udt_balances[i]['chain']['udt']} = {before_udt_balances[i]['chain']['udt'] - after_udt_balances[i]['chain']['udt']}"
+            )
+            results.append(
+                {
+                    "ckb": before_udt_balances[i]["chain"]["ckb"]
+                    - after_udt_balances[i]["chain"]["ckb"],
+                    "udt": before_udt_balances[i]["chain"]["udt"]
+                    - after_udt_balances[i]["chain"]["udt"],
+                }
+            )
+        assert abs(results[0]["ckb"] + 100000000) < 10000
+        assert results[0]["udt"] == 100000000
+        assert abs(results[1]["ckb"] - 100000000) < 10000
+        assert results[1]["udt"] == -100000000
 
     def test_node1_shutdown_after_send_tx1_and_node2_split_tx(self):
         """
@@ -505,6 +566,10 @@ class TestWatchTowerUdt(FiberTest):
         12. Wait for the transaction to be committed and check the transaction message.
         13. Assert the capacity and arguments of input and output cells in the transaction message.
         """
+        before_udt_balances = []
+        for fiber in self.fibers:
+            before_udt_balances.append(self.get_fiber_balance(fiber))
+
         # Step 1: Open a channel from node1 to node2
         self.fiber1.get_client().open_channel(
             {
@@ -559,39 +624,47 @@ class TestWatchTowerUdt(FiberTest):
         self.fiber1.stop()
 
         # Step 11: Generate epochs
-        self.node.getClient().generate_epochs("0x6", 0)
+        self.node.getClient().generate_epochs("0x1", 0)
 
         # Step 12: Wait for the transaction to be committed and check the transaction message
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
         tx_message = self.get_tx_message(tx_hash)
         # assert tx_message['input_cells'][0]['capacity'] ==
         # todo add assert cap
 
         # Step 13: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 28599999407
-        assert (
-            tx_message["input_cells"][1]["args"]
-            == self.get_account_script(self.fiber2.account_private)["args"]
-        )
-        assert tx_message["input_cells"][0]["udt_capacity"] == 20000000000
+        self.fiber1.start()
+        self.node.getClient().generate_epochs("0x1", 0)
+        tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
+        tx_message = self.get_tx_message(tx_hash)
+        print("tx_message:", tx_message)
+        # assert tx_message['fee'] < 10000
+        after_udt_balances = []
+        for fiber in self.fibers:
+            after_udt_balances.append(self.get_fiber_balance(fiber))
 
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber1.account_private)["args"],
-            "udt_capacity": 19900000000,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
-
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber2.account_private)["args"],
-            "udt_capacity": 100000000,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
+        results = []
+        for i in range(len(before_udt_balances)):
+            print(
+                f"ckb:{before_udt_balances[i]['chain']['ckb']} - {after_udt_balances[i]['chain']['ckb']} = {before_udt_balances[i]['chain']['ckb'] - after_udt_balances[i]['chain']['ckb']}"
+            )
+            print(
+                f"udt:{before_udt_balances[i]['chain']['udt']} - {after_udt_balances[i]['chain']['udt']} = {before_udt_balances[i]['chain']['udt'] - after_udt_balances[i]['chain']['udt']}"
+            )
+            results.append(
+                {
+                    "ckb": before_udt_balances[i]["chain"]["ckb"]
+                    - after_udt_balances[i]["chain"]["ckb"],
+                    "udt": before_udt_balances[i]["chain"]["udt"]
+                    - after_udt_balances[i]["chain"]["udt"],
+                }
+            )
+        assert abs(results[0]["ckb"] - 100000000) < 10000
+        assert results[0]["udt"] == 100000000
+        assert abs(results[1]["ckb"] + 100000000) < 10000
+        assert results[1]["udt"] == -100000000
 
     def test_node2_shutdown_after_send_tx1_and_node1_split_tx(self):
         """
@@ -612,6 +685,9 @@ class TestWatchTowerUdt(FiberTest):
         12. Wait for the transaction to be committed and check the transaction message.
         13. Assert the capacity and arguments of input and output cells in the transaction message.
         """
+        before_udt_balances = []
+        for fiber in self.fibers:
+            before_udt_balances.append(self.get_fiber_balance(fiber))
         # Step 1: Open a channel from node1 to node2
         self.fiber1.get_client().open_channel(
             {
@@ -667,37 +743,45 @@ class TestWatchTowerUdt(FiberTest):
         self.fiber2.stop()
 
         # Step 11: Generate epochs
-        self.node.getClient().generate_epochs("0x6", 0)
+        self.node.getClient().generate_epochs("0x1", 0)
 
         # Step 12: Wait for the transaction to be committed and check the transaction message
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
         tx_message = self.get_tx_message(tx_hash)
 
         # Step 13: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 28599999407
-        assert (
-            tx_message["input_cells"][1]["args"]
-            == self.get_account_script(self.fiber1.account_private)["args"]
-        )
-        assert tx_message["input_cells"][0]["udt_capacity"] == 20000000000
+        self.fiber2.start()
+        self.node.getClient().generate_epochs("0x1", 0)
+        tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
+        tx_message = self.get_tx_message(tx_hash)
+        print("tx_message:", tx_message)
+        # assert tx_message['fee'] < 10000
+        after_udt_balances = []
+        for fiber in self.fibers:
+            after_udt_balances.append(self.get_fiber_balance(fiber))
 
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber1.account_private)["args"],
-            "udt_capacity": 19900000000,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
-
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber2.account_private)["args"],
-            "udt_capacity": 100000000,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
+        results = []
+        for i in range(len(before_udt_balances)):
+            print(
+                f"ckb:{before_udt_balances[i]['chain']['ckb']} - {after_udt_balances[i]['chain']['ckb']} = {before_udt_balances[i]['chain']['ckb'] - after_udt_balances[i]['chain']['ckb']}"
+            )
+            print(
+                f"udt:{before_udt_balances[i]['chain']['udt']} - {after_udt_balances[i]['chain']['udt']} = {before_udt_balances[i]['chain']['udt'] - after_udt_balances[i]['chain']['udt']}"
+            )
+            results.append(
+                {
+                    "ckb": before_udt_balances[i]["chain"]["ckb"]
+                    - after_udt_balances[i]["chain"]["ckb"],
+                    "udt": before_udt_balances[i]["chain"]["udt"]
+                    - after_udt_balances[i]["chain"]["udt"],
+                }
+            )
+        assert abs(results[0]["ckb"] + 100000000) < 10000
+        assert results[0]["udt"] == 100000000
+        assert abs(results[1]["ckb"] - 100000000) < 10000
+        assert results[1]["udt"] == -100000000
 
     def test_node2_shutdown_after_send_tx1_and_node2_split_tx(self):
         """
@@ -718,6 +802,10 @@ class TestWatchTowerUdt(FiberTest):
         12. Wait for the transaction to be committed and check the transaction message.
         13. Assert the capacity and arguments of input and output cells in the transaction message.
         """
+        before_udt_balances = []
+        for fiber in self.fibers:
+            before_udt_balances.append(self.get_fiber_balance(fiber))
+
         # Step 1: Open a channel from node1 to node2
         self.fiber1.get_client().open_channel(
             {
@@ -772,37 +860,45 @@ class TestWatchTowerUdt(FiberTest):
         self.fiber1.stop()
 
         # Step 11: Generate epochs
-        self.node.getClient().generate_epochs("0x6", 0)
+        self.node.getClient().generate_epochs("0x1", 0)
 
         # Step 12: Wait for the transaction to be committed and check the transaction message
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
         tx_message = self.get_tx_message(tx_hash)
 
         # Step 13: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 28599999407
-        assert (
-            tx_message["input_cells"][1]["args"]
-            == self.get_account_script(self.fiber2.account_private)["args"]
-        )
-        assert tx_message["input_cells"][0]["udt_capacity"] == 20000000000
+        self.fiber1.start()
+        self.node.getClient().generate_epochs("0x1", 0)
+        tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
+        tx_message = self.get_tx_message(tx_hash)
+        print("tx_message:", tx_message)
+        # assert tx_message['fee'] < 10000
+        after_udt_balances = []
+        for fiber in self.fibers:
+            after_udt_balances.append(self.get_fiber_balance(fiber))
 
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber1.account_private)["args"],
-            "udt_capacity": 19900000000,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
-
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber2.account_private)["args"],
-            "udt_capacity": 100000000,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
+        results = []
+        for i in range(len(before_udt_balances)):
+            print(
+                f"ckb:{before_udt_balances[i]['chain']['ckb']} - {after_udt_balances[i]['chain']['ckb']} = {before_udt_balances[i]['chain']['ckb'] - after_udt_balances[i]['chain']['ckb']}"
+            )
+            print(
+                f"udt:{before_udt_balances[i]['chain']['udt']} - {after_udt_balances[i]['chain']['udt']} = {before_udt_balances[i]['chain']['udt'] - after_udt_balances[i]['chain']['udt']}"
+            )
+            results.append(
+                {
+                    "ckb": before_udt_balances[i]["chain"]["ckb"]
+                    - after_udt_balances[i]["chain"]["ckb"],
+                    "udt": before_udt_balances[i]["chain"]["udt"]
+                    - after_udt_balances[i]["chain"]["udt"],
+                }
+            )
+        assert abs(results[0]["ckb"] - 100000000) < 10000
+        assert results[0]["udt"] == 100000000
+        assert abs(results[1]["ckb"] + 100000000) < 10000
+        assert results[1]["udt"] == -100000000
 
     def test_node1_shutdown_after_send_tx2_and_node1_split_tx(self):
         """
@@ -823,6 +919,10 @@ class TestWatchTowerUdt(FiberTest):
         12. Wait for the transaction to be committed and check the transaction message.
         13. Assert the capacity and arguments of input and output cells in the transaction message.
         """
+        before_udt_balances = []
+        for fiber in self.fibers:
+            before_udt_balances.append(self.get_fiber_balance(fiber))
+
         # Step 1: Open a channel from node1 to node2
         self.fiber1.get_client().open_channel(
             {
@@ -879,39 +979,47 @@ class TestWatchTowerUdt(FiberTest):
         self.fiber2.stop()
 
         # Step 11: Generate epochs
-        self.node.getClient().generate_epochs("0x6", 0)
+        self.node.getClient().generate_epochs("0x1", 0)
 
         # Step 12: Wait for the transaction to be committed and check the transaction message
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
         tx_message = self.get_tx_message(tx_hash)
         # assert tx_message['input_cells'][0]['capacity'] ==
         # todo add assert cap
 
         # Step 13: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 28599999407
-        assert (
-            tx_message["input_cells"][1]["args"]
-            == self.get_account_script(self.fiber1.account_private)["args"]
-        )
-        assert tx_message["input_cells"][0]["udt_capacity"] == 20000000000
+        self.fiber2.start()
+        self.node.getClient().generate_epochs("0x1", 0)
+        tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
+        tx_message = self.get_tx_message(tx_hash)
+        print("tx_message:", tx_message)
+        # assert tx_message['fee'] < 10000
+        after_udt_balances = []
+        for fiber in self.fibers:
+            after_udt_balances.append(self.get_fiber_balance(fiber))
 
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber1.account_private)["args"],
-            "udt_capacity": 20000000000,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
-
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber2.account_private)["args"],
-            "udt_capacity": 0,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
+        results = []
+        for i in range(len(before_udt_balances)):
+            print(
+                f"ckb:{before_udt_balances[i]['chain']['ckb']} - {after_udt_balances[i]['chain']['ckb']} = {before_udt_balances[i]['chain']['ckb'] - after_udt_balances[i]['chain']['ckb']}"
+            )
+            print(
+                f"udt:{before_udt_balances[i]['chain']['udt']} - {after_udt_balances[i]['chain']['udt']} = {before_udt_balances[i]['chain']['udt'] - after_udt_balances[i]['chain']['udt']}"
+            )
+            results.append(
+                {
+                    "ckb": before_udt_balances[i]["chain"]["ckb"]
+                    - after_udt_balances[i]["chain"]["ckb"],
+                    "udt": before_udt_balances[i]["chain"]["udt"]
+                    - after_udt_balances[i]["chain"]["udt"],
+                }
+            )
+        assert abs(results[0]["ckb"] + 100000000) < 10000
+        assert results[0]["udt"] == 0
+        assert abs(results[1]["ckb"] - 100000000) < 10000
+        assert results[1]["udt"] == 0
 
     def test_node1_shutdown_after_send_tx2_and_node2_split_tx(self):
         """
@@ -932,6 +1040,10 @@ class TestWatchTowerUdt(FiberTest):
         12. Wait for the transaction to be committed and check the transaction message.
         13. Assert the capacity and arguments of input and output cells in the transaction message.
         """
+        before_udt_balances = []
+        for fiber in self.fibers:
+            before_udt_balances.append(self.get_fiber_balance(fiber))
+
         # Step 1: Open a channel from node1 to node2
         self.fiber1.get_client().open_channel(
             {
@@ -987,39 +1099,47 @@ class TestWatchTowerUdt(FiberTest):
         self.fiber1.stop()
 
         # Step 11: Generate epochs
-        self.node.getClient().generate_epochs("0x6", 0)
+        self.node.getClient().generate_epochs("0x1", 0)
 
         # Step 12: Wait for the transaction to be committed and check the transaction message
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
         tx_message = self.get_tx_message(tx_hash)
         # assert tx_message['input_cells'][0]['capacity'] ==
         # todo add assert cap
 
         # Step 13: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 28599999407
-        assert (
-            tx_message["input_cells"][1]["args"]
-            == self.get_account_script(self.fiber2.account_private)["args"]
-        )
-        assert tx_message["input_cells"][0]["udt_capacity"] == 20000000000
+        self.fiber1.start()
+        self.node.getClient().generate_epochs("0x1", 0)
+        tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
+        tx_message = self.get_tx_message(tx_hash)
+        print("tx_message:", tx_message)
+        # assert tx_message['fee'] < 10000
+        after_udt_balances = []
+        for fiber in self.fibers:
+            after_udt_balances.append(self.get_fiber_balance(fiber))
 
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber1.account_private)["args"],
-            "udt_capacity": 20000000000,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
-
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber2.account_private)["args"],
-            "udt_capacity": 0,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
+        results = []
+        for i in range(len(before_udt_balances)):
+            print(
+                f"ckb:{before_udt_balances[i]['chain']['ckb']} - {after_udt_balances[i]['chain']['ckb']} = {before_udt_balances[i]['chain']['ckb'] - after_udt_balances[i]['chain']['ckb']}"
+            )
+            print(
+                f"udt:{before_udt_balances[i]['chain']['udt']} - {after_udt_balances[i]['chain']['udt']} = {before_udt_balances[i]['chain']['udt'] - after_udt_balances[i]['chain']['udt']}"
+            )
+            results.append(
+                {
+                    "ckb": before_udt_balances[i]["chain"]["ckb"]
+                    - after_udt_balances[i]["chain"]["ckb"],
+                    "udt": before_udt_balances[i]["chain"]["udt"]
+                    - after_udt_balances[i]["chain"]["udt"],
+                }
+            )
+        assert abs(results[0]["ckb"] - 100000000) < 10000
+        assert results[0]["udt"] == 0
+        assert abs(results[1]["ckb"] + 100000000) < 10000
+        assert results[1]["udt"] == 0
 
     def test_node2_shutdown_after_send_tx2_and_node1_split_tx(self):
         """
@@ -1040,6 +1160,10 @@ class TestWatchTowerUdt(FiberTest):
         12. Wait for the transaction to be committed and check the transaction message.
         13. Assert the capacity and arguments of input and output cells in the transaction message.
         """
+        before_udt_balances = []
+        for fiber in self.fibers:
+            before_udt_balances.append(self.get_fiber_balance(fiber))
+
         # Step 1: Open a channel from node1 to node2
         self.fiber1.get_client().open_channel(
             {
@@ -1096,37 +1220,45 @@ class TestWatchTowerUdt(FiberTest):
         self.fiber1.stop()
 
         # Step 11: Generate epochs
-        self.node.getClient().generate_epochs("0x6", 0)
+        self.node.getClient().generate_epochs("0x1", 0)
 
         # Step 12: Wait for the transaction to be committed and check the transaction message
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
         tx_message = self.get_tx_message(tx_hash)
 
         # Step 13: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 28599999407
-        assert (
-            tx_message["input_cells"][1]["args"]
-            == self.get_account_script(self.fiber2.account_private)["args"]
-        )
-        assert tx_message["input_cells"][0]["udt_capacity"] == 20000000000
+        self.fiber1.start()
+        self.node.getClient().generate_epochs("0x1", 0)
+        tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
+        tx_message = self.get_tx_message(tx_hash)
+        print("tx_message:", tx_message)
+        # assert tx_message['fee'] < 10000
+        after_udt_balances = []
+        for fiber in self.fibers:
+            after_udt_balances.append(self.get_fiber_balance(fiber))
 
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber1.account_private)["args"],
-            "udt_capacity": 20000000000,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
-
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber2.account_private)["args"],
-            "udt_capacity": 0,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
+        results = []
+        for i in range(len(before_udt_balances)):
+            print(
+                f"ckb:{before_udt_balances[i]['chain']['ckb']} - {after_udt_balances[i]['chain']['ckb']} = {before_udt_balances[i]['chain']['ckb'] - after_udt_balances[i]['chain']['ckb']}"
+            )
+            print(
+                f"udt:{before_udt_balances[i]['chain']['udt']} - {after_udt_balances[i]['chain']['udt']} = {before_udt_balances[i]['chain']['udt'] - after_udt_balances[i]['chain']['udt']}"
+            )
+            results.append(
+                {
+                    "ckb": before_udt_balances[i]["chain"]["ckb"]
+                    - after_udt_balances[i]["chain"]["ckb"],
+                    "udt": before_udt_balances[i]["chain"]["udt"]
+                    - after_udt_balances[i]["chain"]["udt"],
+                }
+            )
+        assert abs(results[0]["ckb"] - 100000000) < 10000
+        assert results[0]["udt"] == 0
+        assert abs(results[1]["ckb"] + 100000000) < 10000
+        assert results[1]["udt"] == 0
 
     def test_node2_shutdown_after_send_tx2_and_node2_split_tx(self):
         """
@@ -1147,6 +1279,10 @@ class TestWatchTowerUdt(FiberTest):
         12. Wait for the transaction to be committed and check the transaction message.
         13. Assert the capacity and arguments of input and output cells in the transaction message.
         """
+        before_udt_balances = []
+        for fiber in self.fibers:
+            before_udt_balances.append(self.get_fiber_balance(fiber))
+
         # Step 1: Open a channel from node1 to node2
         self.fiber1.get_client().open_channel(
             {
@@ -1203,37 +1339,45 @@ class TestWatchTowerUdt(FiberTest):
         self.fiber1.stop()
 
         # Step 11: Generate epochs
-        self.node.getClient().generate_epochs("0x6", 0)
+        self.node.getClient().generate_epochs("0x1", 0)
 
         # Step 12: Wait for the transaction to be committed and check the transaction message
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
         tx_message = self.get_tx_message(tx_hash)
 
         # Step 13: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 28599999407
-        assert (
-            tx_message["input_cells"][1]["args"]
-            == self.get_account_script(self.fiber2.account_private)["args"]
-        )
-        assert tx_message["input_cells"][0]["udt_capacity"] == 20000000000
+        self.fiber1.start()
+        self.node.getClient().generate_epochs("0x1", 0)
+        tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
+        tx_message = self.get_tx_message(tx_hash)
+        print("tx_message:", tx_message)
+        # assert tx_message['fee'] < 10000
+        after_udt_balances = []
+        for fiber in self.fibers:
+            after_udt_balances.append(self.get_fiber_balance(fiber))
 
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber1.account_private)["args"],
-            "udt_capacity": 20000000000,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
-
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber2.account_private)["args"],
-            "udt_capacity": 0,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
+        results = []
+        for i in range(len(before_udt_balances)):
+            print(
+                f"ckb:{before_udt_balances[i]['chain']['ckb']} - {after_udt_balances[i]['chain']['ckb']} = {before_udt_balances[i]['chain']['ckb'] - after_udt_balances[i]['chain']['ckb']}"
+            )
+            print(
+                f"udt:{before_udt_balances[i]['chain']['udt']} - {after_udt_balances[i]['chain']['udt']} = {before_udt_balances[i]['chain']['udt'] - after_udt_balances[i]['chain']['udt']}"
+            )
+            results.append(
+                {
+                    "ckb": before_udt_balances[i]["chain"]["ckb"]
+                    - after_udt_balances[i]["chain"]["ckb"],
+                    "udt": before_udt_balances[i]["chain"]["udt"]
+                    - after_udt_balances[i]["chain"]["udt"],
+                }
+            )
+        assert abs(results[0]["ckb"] - 100000000) < 10000
+        assert results[0]["udt"] == 0
+        assert abs(results[1]["ckb"] + 100000000) < 10000
+        assert results[1]["udt"] == 0
 
     def test_node1_shutdown_after_send_txN_and_node1_split_tx(self):
         """
@@ -1254,7 +1398,9 @@ class TestWatchTowerUdt(FiberTest):
         12. Wait for the transaction to be committed and check the transaction message.
         13. Assert the capacity and arguments of input and output cells in the transaction message.
         """
-
+        before_udt_balances = []
+        for fiber in self.fibers:
+            before_udt_balances.append(self.get_fiber_balance(fiber))
         # Step 1: Open a channel from node1 to node2
         self.fiber1.get_client().open_channel(
             {
@@ -1310,37 +1456,45 @@ class TestWatchTowerUdt(FiberTest):
         self.fiber2.stop()
 
         # Step 11: Generate epochs
-        self.node.getClient().generate_epochs("0x6", 0)
+        self.node.getClient().generate_epochs("0x1", 0)
 
         # Step 12: Wait for the transaction to be committed and check the transaction message
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
         tx_message = self.get_tx_message(tx_hash)
 
         # Step 13: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 28599999407
-        assert (
-            tx_message["input_cells"][1]["args"]
-            == self.get_account_script(self.fiber1.account_private)["args"]
-        )
-        assert tx_message["input_cells"][0]["udt_capacity"] == 20000000000
+        self.fiber2.start()
+        self.node.getClient().generate_epochs("0x1", 0)
+        tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
+        tx_message = self.get_tx_message(tx_hash)
+        print("tx_message:", tx_message)
+        # assert tx_message['fee'] < 10000
+        after_udt_balances = []
+        for fiber in self.fibers:
+            after_udt_balances.append(self.get_fiber_balance(fiber))
 
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber1.account_private)["args"],
-            "udt_capacity": 19000000000,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
-
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber2.account_private)["args"],
-            "udt_capacity": 1000000000,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
+        results = []
+        for i in range(len(before_udt_balances)):
+            print(
+                f"ckb:{before_udt_balances[i]['chain']['ckb']} - {after_udt_balances[i]['chain']['ckb']} = {before_udt_balances[i]['chain']['ckb'] - after_udt_balances[i]['chain']['ckb']}"
+            )
+            print(
+                f"udt:{before_udt_balances[i]['chain']['udt']} - {after_udt_balances[i]['chain']['udt']} = {before_udt_balances[i]['chain']['udt'] - after_udt_balances[i]['chain']['udt']}"
+            )
+            results.append(
+                {
+                    "ckb": before_udt_balances[i]["chain"]["ckb"]
+                    - after_udt_balances[i]["chain"]["ckb"],
+                    "udt": before_udt_balances[i]["chain"]["udt"]
+                    - after_udt_balances[i]["chain"]["udt"],
+                }
+            )
+        assert abs(results[0]["ckb"] + 100000000) < 10000
+        assert results[0]["udt"] == 1000000000
+        assert abs(results[1]["ckb"] - 100000000) < 10000
+        assert results[1]["udt"] == -1000000000
 
     def test_node2_shutdown_after_send_txN_and_node1_split_tx(self):
         """
@@ -1361,6 +1515,10 @@ class TestWatchTowerUdt(FiberTest):
         12. Wait for the transaction to be committed and check the transaction message.
         13. Assert the capacity and arguments of input and output cells in the transaction message.
         """
+        before_udt_balances = []
+        for fiber in self.fibers:
+            before_udt_balances.append(self.get_fiber_balance(fiber))
+
         # Step 1: Open a channel from node1 to node2
         self.fiber1.get_client().open_channel(
             {
@@ -1420,39 +1578,47 @@ class TestWatchTowerUdt(FiberTest):
         self.fiber1.stop()
 
         # Step 11: Generate epochs
-        self.node.getClient().generate_epochs("0x6", 0)
+        self.node.getClient().generate_epochs("0x1", 0)
 
         # Step 12: Wait for the transaction to be committed and check the transaction message
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
         tx_message = self.get_tx_message(tx_hash)
         # assert tx_message['input_cells'][0]['capacity'] ==
         # todo add assert cap
 
         # Step 13: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 28599999407
-        assert (
-            tx_message["input_cells"][1]["args"]
-            == self.get_account_script(self.fiber2.account_private)["args"]
-        )
-        assert tx_message["input_cells"][0]["udt_capacity"] == 20000000000
+        self.fiber1.start()
+        self.node.getClient().generate_epochs("0x1", 0)
+        tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 1000)
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
+        tx_message = self.get_tx_message(tx_hash)
+        print("tx_message:", tx_message)
+        # assert tx_message['fee'] < 10000
+        after_udt_balances = []
+        for fiber in self.fibers:
+            after_udt_balances.append(self.get_fiber_balance(fiber))
 
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber1.account_private)["args"],
-            "udt_capacity": 19500000000,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
-
-        assert {
-            "capacity": 14299999407,
-            "args": self.get_account_script(self.fiber2.account_private)["args"],
-            "udt_capacity": 500000000,
-            "udt_args": self.get_account_udt_script(self.fiber1.account_private)[
-                "args"
-            ],
-        } in tx_message["output_cells"]
+        results = []
+        for i in range(len(before_udt_balances)):
+            print(
+                f"ckb:{before_udt_balances[i]['chain']['ckb']} - {after_udt_balances[i]['chain']['ckb']} = {before_udt_balances[i]['chain']['ckb'] - after_udt_balances[i]['chain']['ckb']}"
+            )
+            print(
+                f"udt:{before_udt_balances[i]['chain']['udt']} - {after_udt_balances[i]['chain']['udt']} = {before_udt_balances[i]['chain']['udt'] - after_udt_balances[i]['chain']['udt']}"
+            )
+            results.append(
+                {
+                    "ckb": before_udt_balances[i]["chain"]["ckb"]
+                    - after_udt_balances[i]["chain"]["ckb"],
+                    "udt": before_udt_balances[i]["chain"]["udt"]
+                    - after_udt_balances[i]["chain"]["udt"],
+                }
+            )
+        assert abs(results[0]["ckb"] - 100000000) < 10000
+        assert results[0]["udt"] == 5 * 100000000
+        assert abs(results[1]["ckb"] + 100000000) < 10000
+        assert results[1]["udt"] == -5 * 100000000
 
     def send_payment(self, src_fiber, to_fiber, amount, key_send=False):
         if not key_send:

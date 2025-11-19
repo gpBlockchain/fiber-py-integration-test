@@ -19,7 +19,7 @@ class TestMaxTlcNumberInFlightDebug(FiberTest):
         temporary_channel = self.fiber1.get_client().open_channel(
             {
                 "peer_id": self.fiber2.get_peer_id(),
-                "funding_amount": hex(62 * 100000000),
+                "funding_amount": hex(98 * 100000000),
                 "public": True,
             }
         )
