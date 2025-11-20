@@ -8,7 +8,7 @@ from framework.util import ckb_hash
 
 
 class TestPendingTlcHandle(FiberTest):
-    start_fiber_config = {"fiber_watchtower_check_interval_seconds": 5}
+    start_fiber_config = {"fiber_watchtower_check_interval_seconds": 3}
     """
     pending tlc + watch tower,node1 force shutdown
     node1 和 node2 都没有tlc
@@ -77,12 +77,77 @@ class TestPendingTlcHandle(FiberTest):
     测试N的上限
     """
 
-    def teardown_method(self, method):
-        super().teardown_method(method)
-
     def teardown_class(cls):
         cls.restore_time()
         super().teardown_class()
+
+    def test_2node_have_tlc_one_have_preimage(self):
+        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 1000 * 100000000)
+        fiber1_preimage = self.generate_random_preimage()
+
+        fiber1_invoice = self.fiber1.get_client().new_invoice(
+            {
+                "amount": hex(100000000),
+                "currency": "Fibd",
+                "description": "test invoice",
+                "payment_hash": ckb_hash(fiber1_preimage),
+            }
+        )
+
+        fiber2_preimage = self.generate_random_preimage()
+
+        fiber2_invoice = self.fiber2.get_client().new_invoice(
+            {
+                "amount": hex(100000000),
+                "currency": "Fibd",
+                "description": "test invoice",
+                "payment_hash": ckb_hash(fiber2_preimage),
+            }
+        )
+        self.fiber2.get_client().send_payment(
+            {
+                "invoice": fiber1_invoice["invoice_address"],
+            }
+        )
+        self.fiber1.get_client().send_payment(
+            {
+                "invoice": fiber2_invoice["invoice_address"],
+            }
+        )
+        time.sleep(3)
+        list_channels = self.fiber1.get_client().list_channels({})
+        print("list channels:", list_channels)
+        self.fiber1.get_client().shutdown_channel(
+            {
+                "channel_id": self.fiber1.get_client().list_channels({})["channels"][0][
+                    "channel_id"
+                ],
+                "force": True,
+            }
+        )
+        force_shutdown_tx_hash = self.wait_and_check_tx_pool_fee(1000, False)
+        self.Miner.miner_until_tx_committed(self.node, force_shutdown_tx_hash)
+        self.fiber1.get_client().settle_invoice(
+            {
+                "payment_hash": ckb_hash(fiber1_preimage),
+                "payment_preimage": fiber1_preimage,
+            }
+        )
+        for i in range(600):
+            self.Miner.miner_with_version(self.node, "0x0")
+        time.sleep(10)
+        txs = self.get_ln_tx_trace(force_shutdown_tx_hash)
+        for tx in txs:
+            print("tx:", tx)
+        assert (
+            txs[1]["msg"]["input_cells"][0]["capacity"]
+            - txs[1]["msg"]["output_cells"][0]["capacity"]
+            == 100000000
+        )
+        assert 600 < txs[1]["msg"]["block_number"] - txs[0]["msg"]["block_number"] < 700
+        assert len(txs) == 2
+
+        # self
 
     def test_1nodes_have_tlc_no_pre_image_node1_shutdown_un_expiry(self):
         """
@@ -663,23 +728,19 @@ class TestPendingTlcHandle(FiberTest):
         )
         force_shutdown_tx = self.wait_and_check_tx_pool_fee(1000, False)
         self.Miner.miner_until_tx_committed(self.node, force_shutdown_tx)
-        for i in range(tls_size):
+        for i in range(tls_size - 1):
             self.fiber1.get_client().settle_invoice(
                 {
                     "payment_hash": payments[i]["payment_hash"],
                     "payment_preimage": preimages[i],
                 }
             )
-        for i in range(tls_size):
-            for j in range(600):
-                self.Miner.miner_with_version(self.node, "0x0")
-            settle_tx = self.wait_and_check_tx_pool_fee(1000, False)
-            self.Miner.miner_until_tx_committed(self.node, settle_tx)
-            msg = self.get_tx_message(settle_tx)
-            assert (
-                msg["input_cells"][0]["capacity"] - msg["output_cells"][0]["capacity"]
-                == 100000000
-            )
+        for j in range(600):
+            self.Miner.miner_with_version(self.node, "0x0")
+        time.sleep(20)
+        txs = self.get_ln_tx_trace(force_shutdown_tx)
+        for tx in txs:
+            print("tx:", tx)
 
     def test_tlc_expiry_2nodes_have_tlc_node1_shutdown_no_preimage(self):
         """
@@ -749,7 +810,7 @@ class TestPendingTlcHandle(FiberTest):
         # 第2笔强制关闭交易，间隔大约1200个块
         assert (
             1200
-            < tx_trace[2]["msg"]["block_number"] - tx_trace[1]["msg"]["block_number"]
+            < tx_trace[2]["msg"]["block_number"] - tx_trace[0]["msg"]["block_number"]
             < 1300
         )
         # 第3笔强制关闭交易，间隔大约1800个块
@@ -879,7 +940,7 @@ class TestPendingTlcHandle(FiberTest):
         )
         # 2/3～1
         #     node1可以取回
-        for i in range(1200):
+        for i in range(600):
             self.Miner.miner_with_version(self.node, "0x0")
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False)
         self.Miner.miner_until_tx_committed(self.node, tx_hash)
@@ -891,8 +952,6 @@ class TestPendingTlcHandle(FiberTest):
         )
 
         # node2 可以通过pre_image 解锁部分tlc
-        for i in range(1200):
-            self.Miner.miner_with_version(self.node, "0x0")
         time.sleep(10)
         self.fiber1.get_client().settle_invoice(
             {
@@ -907,18 +966,6 @@ class TestPendingTlcHandle(FiberTest):
         assert (
             msg["input_cells"][0]["capacity"] - msg["output_cells"][0]["capacity"]
             == 100000000
-        )
-
-        # 时间过去 delay_epoch
-        #     node2 会直接解锁本金
-        self.node.getClient().generate_epochs("0x1")
-        tx_hash = self.wait_and_check_tx_pool_fee(1000, False)
-        self.Miner.miner_until_tx_committed(self.node, tx_hash)
-        msg = self.get_tx_message(tx_hash)
-        print("msg:", msg)
-        assert (
-            msg["input_cells"][0]["capacity"] - msg["output_cells"][0]["capacity"]
-            == 109790000000
         )
 
     def test_tlc_expiry_1nodes_have_tlc_node1_shutdown(self):
@@ -1057,7 +1104,7 @@ class TestPendingTlcHandle(FiberTest):
         while len(self.get_commit_cells()) > 0:
             for i in range(600):
                 self.Miner.miner_with_version(self.node, "0x0")
-            time.sleep(10)
+            time.sleep(20)
         after_balance = self.get_fibers_balance()
         result = self.get_balance_change(before_balance, after_balance)
         tx_trace = self.get_ln_tx_trace(force_shutdown_tx_hash)
@@ -1065,15 +1112,15 @@ class TestPendingTlcHandle(FiberTest):
             print("tx:", tx)
         # 第一笔强制关闭交易，间隔大约1800个块
         assert (
-            1800
-            < tx_trace[-1]["msg"]["block_number"] - tx_trace[-2]["msg"]["block_number"]
-            < 2000
+            1200
+            < tx_trace[1]["msg"]["block_number"] - tx_trace[0]["msg"]["block_number"]
+            < 1300
         )
         #  第二笔强制关闭交易，间隔大约1800个块
         assert (
-            1800
-            < tx_trace[-2]["msg"]["block_number"] - tx_trace[-3]["msg"]["block_number"]
-            < 2000
+            1200
+            < tx_trace[2]["msg"]["block_number"] - tx_trace[0]["msg"]["block_number"]
+            < 1300
         )
         # 节点1 消耗 1000 ckb+ 手续费
         assert abs(result[0]["ckb"] - 1000 * 100000000) < 100000

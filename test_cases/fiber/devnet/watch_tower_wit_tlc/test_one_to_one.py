@@ -5,13 +5,14 @@ from framework.util import ckb_hash
 
 
 class TestOneToOne(FiberTest):
+    start_fiber_config = {"fiber_watchtower_check_interval_seconds": 2}
 
     def test_one_to_one(self):
         self.start_new_fiber(self.generate_account(10000))
         before_balance = self.get_fibers_balance()
         self.open_channel(self.fibers[0], self.fibers[1], 1000 * 100000000, 0)
         self.open_channel(self.fibers[1], self.fibers[2], 1000 * 100000000, 0)
-        N = 10
+        N = 8
         fiber3_preimages = []
         fiber3_invoices = []
         for i in range(N):

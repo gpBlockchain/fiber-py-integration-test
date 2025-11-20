@@ -5,10 +5,11 @@ from framework.util import ckb_hash
 
 
 class TestMutilToOne(FiberTest):
-    start_fiber_config = {"fiber_watchtower_check_interval_seconds": 5}
+    start_fiber_config = {"fiber_watchtower_check_interval_seconds": 3}
 
-    def teardown_method(self, method):
-        super().teardown_method(method)
+    def teardown_class(cls):
+        cls.restore_time()
+        super().teardown_class()
 
     def test_mutil_to_one(self):
         """
@@ -27,7 +28,7 @@ class TestMutilToOne(FiberTest):
             for j in range(len(self.new_fibers)):
                 self.send_payment(self.new_fibers[i], self.fiber2, 1 * 100000000, False)
         self.fiber1.get_client().disconnect_peer({"peer_id": self.fiber2.get_peer_id()})
-        self.add_time_and_generate_block(23, 20)
+        self.add_time_and_generate_block(22, 20)
         while len(self.get_commit_cells()) == 0:
             self.add_time_and_generate_block(1, 20)
             time.sleep(15)
@@ -60,6 +61,11 @@ class TestMutilToOne(FiberTest):
 
         after_balance = self.get_fibers_balance()
         result = self.get_balance_change(before_balance, after_balance)
+        assert result[0]["ckb"] < 1 * 100000000
+        ckb_fee = 0
+        for rt in result:
+            ckb_fee += rt["ckb"]
+        assert ckb_fee < 1 * 100000000
 
     def test_mutil_to_one_udt(self):
         """
@@ -112,7 +118,7 @@ class TestMutilToOne(FiberTest):
                 )
 
         self.fiber1.get_client().disconnect_peer({"peer_id": self.fiber2.get_peer_id()})
-        self.add_time_and_generate_block(23, 20)
+        self.add_time_and_generate_block(22, 20)
         while len(self.get_commit_cells()) == 0:
             self.add_time_and_generate_block(1, 20)
             time.sleep(15)
