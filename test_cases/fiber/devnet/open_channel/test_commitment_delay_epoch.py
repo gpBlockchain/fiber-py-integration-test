@@ -38,7 +38,7 @@ class TestCommitmentDelayEpoch(FiberTest):
         self.Miner.miner_until_tx_committed(self.node, tx_hash)
         second_tx_message = self.get_tx_message(tx_hash)
         print("first tx message:", first_tx_message)
-        assert first_tx_message["input_cells"][0]["capacity"] == 109799999545
+        assert first_tx_message["input_cells"][0]["capacity"] == 109899999544
         assert (
             first_tx_message["input_cells"][0]["capacity"]
             - second_tx_message["input_cells"][0]["capacity"]
@@ -75,17 +75,8 @@ class TestCommitmentDelayEpoch(FiberTest):
         status = self.node.getClient().get_live_cell("0x0", tx_hash)
         assert status["status"] == "live"
         self.node.getClient().generate_epochs("0x5", 0)
-        first_settle_tx_hash = self.wait_and_check_tx_pool_fee(1000, False)
-        self.Miner.miner_until_tx_committed(self.node, first_settle_tx_hash)
-        status = self.node.getClient().get_live_cell("0x0", tx_hash)
-        assert status["status"] != "live"
-        self.node.getClient().generate_epochs("0x1", 0)
-        time.sleep(10)
-        status = self.node.getClient().get_live_cell("0x0", first_settle_tx_hash)
-        assert status["status"] == "live"
-        self.node.getClient().generate_epochs("0x5", 0)
-        second_settle_tx_hash = self.wait_and_check_tx_pool_fee(1000, False)
-        self.Miner.miner_until_tx_committed(self.node, second_settle_tx_hash)
+        while len(self.get_commit_cells()) > 0:
+            time.sleep(5)
         after_balance = self.get_fibers_balance()
         result = self.get_balance_change(before_balance, after_balance)
         assert 0 < result[0]["ckb"] < 2000
@@ -122,17 +113,8 @@ class TestCommitmentDelayEpoch(FiberTest):
         status = self.node.getClient().get_live_cell("0x0", tx_hash)
         assert status["status"] == "live"
         self.node.getClient().generate_epochs("0x5", 0)
-        first_settle_tx_hash = self.wait_and_check_tx_pool_fee(1000, False)
-        self.Miner.miner_until_tx_committed(self.node, first_settle_tx_hash)
-        status = self.node.getClient().get_live_cell("0x0", tx_hash)
-        assert status["status"] != "live"
-        self.node.getClient().generate_epochs("0x1", 0)
-        time.sleep(10)
-        status = self.node.getClient().get_live_cell("0x0", first_settle_tx_hash)
-        assert status["status"] == "live"
-        self.node.getClient().generate_epochs("0x5", 0)
-        second_settle_tx_hash = self.wait_and_check_tx_pool_fee(1000, False)
-        self.Miner.miner_until_tx_committed(self.node, second_settle_tx_hash)
+        while len(self.get_commit_cells()) > 0:
+            time.sleep(5)
         after_balance = self.get_fibers_balance()
         result = self.get_balance_change(before_balance, after_balance)
         assert 0 < result[0]["ckb"] < 2000

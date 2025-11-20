@@ -76,7 +76,7 @@ class TestCloseScript(FiberTest):
         print("before_balance2:", before_balance2)
         print("after_balance1:", after_balance1)
         print("after_balance2:", after_balance2)
-        assert after_balance2 - before_balance2 == 98.0
+        assert after_balance2 - before_balance2 == DEFAULT_MIN_DEPOSIT_CKB / 100000000
 
     # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/431")
     def test_not_secp256k1_blake160_sighash_all(self):
@@ -136,7 +136,7 @@ class TestCloseScript(FiberTest):
         print("before_balance2:", before_balance2)
         print("after_balance1:", after_balance1)
         print("after_balance2:", after_balance2)
-        assert after_balance2 - before_balance2 == 98.0
+        assert after_balance2 - before_balance2 == DEFAULT_MIN_DEPOSIT_CKB / 100000000
 
     # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/332")
     def test_ckb_arg_change_long_not_enough(self):
@@ -264,7 +264,7 @@ class TestCloseScript(FiberTest):
         print("before_balance2:", before_balance2)
         print("after_balance1:", after_balance1)
         print("after_balance2:", after_balance2)
-        assert after_balance2 - before_balance2 == 98.0
+        assert after_balance2 - before_balance2 == DEFAULT_MIN_DEPOSIT_CKB / 100000000
         assert (
             int(after_account_balance1["capacity"], 16)
             - int(before_account_balance1["capacity"], 16)

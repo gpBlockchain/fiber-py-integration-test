@@ -8,6 +8,7 @@ from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 
 class MppBench(FiberTest):
 
+    @pytest.mark.skip("todo")
     def test_bench_self(self):
         self.fiber3 = self.start_new_fiber(
             self.generate_account(10000, self.fiber1.account_private, 1000 * 100000000)

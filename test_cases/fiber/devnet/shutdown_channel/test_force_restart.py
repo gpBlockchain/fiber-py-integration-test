@@ -1,5 +1,6 @@
 import time
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 
 
 class TestForceRestart(FiberTest):
@@ -90,5 +91,5 @@ class TestForceRestart(FiberTest):
         print("after_balance1:", after_balance1)
         print("after_balance2:", after_balance2)
         # 3.检查关闭后balance被正常返还
-        assert after_balance2 - before_balance2 == 98.0
+        assert after_balance2 - before_balance2 == DEFAULT_MIN_DEPOSIT_CKB / 100000000
         # todo check channel state

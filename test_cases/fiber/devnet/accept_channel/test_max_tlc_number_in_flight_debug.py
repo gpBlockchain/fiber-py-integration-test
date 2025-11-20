@@ -3,23 +3,21 @@ import time
 import pytest
 
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 from framework.test_fiber import FiberConfigPath
 
 
 class TestMaxTlcNumberInFlightDebug(FiberTest):
-    fiber_version = FiberConfigPath.CURRENT_DEV_DEBUG
 
     def test_max_tlc_number_in_flight(self):
         """
-
         Returns:
-
         """
         # 1. Open a new channel with fiber1 as the client and fiber2 as the peer
         temporary_channel = self.fiber1.get_client().open_channel(
             {
                 "peer_id": self.fiber2.get_peer_id(),
-                "funding_amount": hex(98 * 100000000),
+                "funding_amount": hex(DEFAULT_MIN_DEPOSIT_CKB),
                 "public": True,
             }
         )
@@ -37,35 +35,30 @@ class TestMaxTlcNumberInFlightDebug(FiberTest):
             self.fiber2.get_client(), self.fiber1.get_peer_id(), "CHANNEL_READY"
         )
         # node1 send_payment to node2
-        self.fiber2.get_client().add_tlc(
+        fiber1_invoices = self.fiber1.get_client().new_invoice(
             {
-                "channel_id": self.fiber2.get_client().list_channels({})["channels"][0][
-                    "channel_id"
-                ],
-                "amount": hex(100),
-                # "payment_hash": invoice_list[i]['invoice']['data']['payment_hash'],
+                "amount": hex(1),
+                "currency": "Fibd",
+                "description": "test invoice",
                 "payment_hash": self.generate_random_preimage(),
-                "expiry": hex((int(time.time()) + 40) * 1000),
-                "hash_algorithm": "sha256",
             }
         )
-
-        with pytest.raises(Exception) as exc_info:
-            self.fiber2.get_client().add_tlc(
-                {
-                    "channel_id": self.fiber2.get_client().list_channels({})[
-                        "channels"
-                    ][0]["channel_id"],
-                    "amount": hex(100),
-                    # "payment_hash": invoice_list[i]['invoice']['data']['payment_hash'],
-                    "payment_hash": self.generate_random_preimage(),
-                    "expiry": hex((int(time.time()) + 40) * 1000),
-                    "hash_algorithm": "sha256",
-                }
-            )
-
-        expected_error_message = "TemporaryChannelFailure"
-        assert expected_error_message in exc_info.value.args[0], (
-            f"Expected substring '{expected_error_message}' "
-            f"not found in actual string '{exc_info.value.args[0]}'"
+        self.fiber2.get_client().send_payment(
+            {
+                "invoice": fiber1_invoices["invoice_address"],
+            }
         )
+        fiber1_invoices = self.fiber1.get_client().new_invoice(
+            {
+                "amount": hex(1),
+                "currency": "Fibd",
+                "description": "test invoice",
+                "payment_hash": self.generate_random_preimage(),
+            }
+        )
+        payment = self.fiber2.get_client().send_payment(
+            {
+                "invoice": fiber1_invoices["invoice_address"],
+            }
+        )
+        self.wait_payment_state(self.fiber2, payment["payment_hash"], "Failed")

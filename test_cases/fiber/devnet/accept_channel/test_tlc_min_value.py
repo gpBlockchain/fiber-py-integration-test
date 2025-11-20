@@ -3,6 +3,7 @@ import time
 import pytest
 
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 
 
 class TestTlcMinValue(FiberTest):
@@ -12,7 +13,7 @@ class TestTlcMinValue(FiberTest):
         temporary_channel = self.fiber1.get_client().open_channel(
             {
                 "peer_id": self.fiber2.get_peer_id(),
-                "funding_amount": hex(98 * 100000000),
+                "funding_amount": hex(DEFAULT_MIN_DEPOSIT_CKB),
                 "public": True,
             }
         )

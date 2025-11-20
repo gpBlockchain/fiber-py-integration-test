@@ -397,7 +397,7 @@ class TestWatchTower(FiberTest):
         first_tx_message = self.get_tx_message(tx_hash)
 
         # Step 12: Assert the capacity and arguments of input and output cells in the transaction message
-        assert first_tx_message["input_cells"][0]["capacity"] == 29799999545
+        assert first_tx_message["input_cells"][0]["capacity"] == 29899999544
         assert (
             first_tx_message["input_cells"][0]["capacity"]
             - first_tx_message["output_cells"][0]["capacity"]
@@ -500,7 +500,7 @@ class TestWatchTower(FiberTest):
         tx_message = self.get_tx_message(tx_hash)
 
         # Step 13: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 29799999545
+        assert tx_message["input_cells"][0]["capacity"] == 29899999544
         assert (
             tx_message["input_cells"][1]["args"]
             == self.get_account_script(self.fiber1.account_private)["args"]
@@ -599,7 +599,7 @@ class TestWatchTower(FiberTest):
         tx_message = self.get_tx_message(tx_hash)
 
         # Step 13: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 29799999545
+        assert tx_message["input_cells"][0]["capacity"] == 29899999544
         assert (
             tx_message["input_cells"][1]["args"]
             == self.get_account_script(self.fiber2.account_private)["args"]
@@ -699,7 +699,7 @@ class TestWatchTower(FiberTest):
         tx_message = self.get_tx_message(tx_hash)
 
         # Step 13: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 29799999545
+        assert tx_message["input_cells"][0]["capacity"] == 29899999544
         assert (
             tx_message["input_cells"][1]["args"]
             == self.get_account_script(self.fiber1.account_private)["args"]
@@ -797,7 +797,7 @@ class TestWatchTower(FiberTest):
         tx_message = self.get_tx_message(tx_hash)
         print(tx_message)
         # Step 13: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 29799999545
+        assert tx_message["input_cells"][0]["capacity"] == 29899999544
         assert (
             tx_message["input_cells"][1]["args"]
             == self.get_account_script(self.fiber2.account_private)["args"]
@@ -901,7 +901,7 @@ class TestWatchTower(FiberTest):
         # todo add assert cap
 
         # Step 13: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 29799999545
+        assert tx_message["input_cells"][0]["capacity"] == 29899999544
         assert (
             tx_message["input_cells"][1]["args"]
             == self.get_account_script(self.fiber1.account_private)["args"]
@@ -1001,7 +1001,7 @@ class TestWatchTower(FiberTest):
         tx_message = self.get_tx_message(tx_hash)
 
         # Step 13: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 29799999545
+        assert tx_message["input_cells"][0]["capacity"] == 29899999544
         assert (
             tx_message["input_cells"][1]["args"]
             == self.get_account_script(self.fiber2.account_private)["args"]
@@ -1103,7 +1103,7 @@ class TestWatchTower(FiberTest):
         tx_message = self.get_tx_message(tx_hash)
 
         # Step 13: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 29799999545
+        assert tx_message["input_cells"][0]["capacity"] == 29899999544
         assert (
             tx_message["input_cells"][1]["args"]
             == self.get_account_script(self.fiber2.account_private)["args"]
@@ -1204,7 +1204,7 @@ class TestWatchTower(FiberTest):
         tx_message = self.get_tx_message(tx_hash)
 
         # Step 13: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 29799999545
+        assert tx_message["input_cells"][0]["capacity"] == 29899999544
         assert (
             tx_message["input_cells"][1]["args"]
             == self.get_account_script(self.fiber2.account_private)["args"]
@@ -1304,7 +1304,7 @@ class TestWatchTower(FiberTest):
         tx_message = self.get_tx_message(tx_hash)
 
         # Step 13: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 29799999545
+        assert tx_message["input_cells"][0]["capacity"] == 29899999544
         assert (
             tx_message["input_cells"][1]["args"]
             == self.get_account_script(self.fiber1.account_private)["args"]
@@ -1406,7 +1406,7 @@ class TestWatchTower(FiberTest):
         tx_message = self.get_tx_message(tx_hash)
 
         # Step 13: Assert the capacity and arguments of input and output cells in the transaction message
-        assert tx_message["input_cells"][0]["capacity"] == 29799999545
+        assert tx_message["input_cells"][0]["capacity"] == 29899999544
         assert (
             tx_message["input_cells"][1]["args"]
             == self.get_account_script(self.fiber2.account_private)["args"]

@@ -3,6 +3,7 @@ import time
 import pytest
 
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 
 
 class TestAcceptMutilChannelsSameTime(FiberTest):
@@ -24,7 +25,7 @@ class TestAcceptMutilChannelsSameTime(FiberTest):
         temporary_channel = self.fiber1.get_client().open_channel(
             {
                 "peer_id": self.fiber2.get_peer_id(),
-                "funding_amount": hex(98 * 100000000),
+                "funding_amount": hex(DEFAULT_MIN_DEPOSIT_CKB),
                 "public": True,
             }
         )
@@ -93,7 +94,7 @@ class TestAcceptMutilChannelsSameTime(FiberTest):
         temporary_channel1 = self.fiber1.get_client().open_channel(
             {
                 "peer_id": self.fiber2.get_peer_id(),
-                "funding_amount": hex(98 * 100000000),
+                "funding_amount": hex(DEFAULT_MIN_DEPOSIT_CKB),
                 "public": True,
             }
         )
@@ -102,7 +103,7 @@ class TestAcceptMutilChannelsSameTime(FiberTest):
         temporary_channel2 = fiber3.get_client().open_channel(
             {
                 "peer_id": self.fiber2.get_peer_id(),
-                "funding_amount": hex(98 * 100000000),
+                "funding_amount": hex(DEFAULT_MIN_DEPOSIT_CKB),
                 "public": True,
             }
         )
@@ -113,7 +114,7 @@ class TestAcceptMutilChannelsSameTime(FiberTest):
                 fiber3.get_client().open_channel(
                     {
                         "peer_id": self.fiber2.get_peer_id(),
-                        "funding_amount": hex(98 * 100000000),
+                        "funding_amount": hex(DEFAULT_MIN_DEPOSIT_CKB),
                         "public": True,
                     }
                 )
@@ -123,7 +124,7 @@ class TestAcceptMutilChannelsSameTime(FiberTest):
         self.fiber2.get_client().accept_channel(
             {
                 "temporary_channel_id": temporary_channel1["temporary_channel_id"],
-                "funding_amount": hex(98 * 100000000),
+                "funding_amount": hex(DEFAULT_MIN_DEPOSIT_CKB),
             }
         )
         time.sleep(0.1)
@@ -132,7 +133,7 @@ class TestAcceptMutilChannelsSameTime(FiberTest):
         self.fiber2.get_client().accept_channel(
             {
                 "temporary_channel_id": temporary_channel2["temporary_channel_id"],
-                "funding_amount": hex(98 * 100000000),
+                "funding_amount": hex(DEFAULT_MIN_DEPOSIT_CKB),
             }
         )
         time.sleep(0.1)
@@ -142,7 +143,7 @@ class TestAcceptMutilChannelsSameTime(FiberTest):
                     "temporary_channel_id": temporary_other_channels[i][
                         "temporary_channel_id"
                     ],
-                    "funding_amount": hex(98 * 100000000),
+                    "funding_amount": hex(DEFAULT_MIN_DEPOSIT_CKB),
                 }
             )
             time.sleep(0.1)
@@ -163,7 +164,7 @@ class TestAcceptMutilChannelsSameTime(FiberTest):
         temporary_channel2 = fiber3.get_client().open_channel(
             {
                 "peer_id": self.fiber2.get_peer_id(),
-                "funding_amount": hex(98 * 100000000),
+                "funding_amount": hex(DEFAULT_MIN_DEPOSIT_CKB),
                 "public": True,
             }
         )
@@ -173,7 +174,7 @@ class TestAcceptMutilChannelsSameTime(FiberTest):
         self.fiber2.get_client().accept_channel(
             {
                 "temporary_channel_id": temporary_channel2["temporary_channel_id"],
-                "funding_amount": hex(98 * 100000000),
+                "funding_amount": hex(DEFAULT_MIN_DEPOSIT_CKB),
             }
         )
 

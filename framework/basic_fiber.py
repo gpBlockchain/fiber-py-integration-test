@@ -17,7 +17,10 @@ import subprocess
 # FIBER_TAR_GZ = "ckb-py-integration-test/source/fiber/data.fiber.tar.gz"
 XUDT_TX_HASH = "0x03c4475655a46dc4984c49fce03316f80bf666236bd95118112731082758d686"
 XUDT_CODE_HASH = "0x102583443ba6cfe5a3ac268bbb4475fb63eb497dce077f126ad3b148d4f4f8f8"
-COMMIT_LOCK_CODE_HASH = "0xf3775d5328de71717f2c5614fa06b9b93c48b7d90c1e135c0812c74ee3126453"
+COMMIT_LOCK_CODE_HASH = (
+    "0xf3775d5328de71717f2c5614fa06b9b93c48b7d90c1e135c0812c74ee3126453"
+)
+
 
 class FiberTest(CkbTest):
     # deploy
@@ -546,10 +549,7 @@ class FiberTest(CkbTest):
             if tx is None:
                 continue
             tx_trace.append({"tx_hash": tx, "msg": self.get_tx_message(tx)})
-            if (
-                new_code_hash
-                != COMMIT_LOCK_CODE_HASH
-            ):
+            if new_code_hash != COMMIT_LOCK_CODE_HASH:
                 # print("code_hash changed, stop trace")
                 # print("old code_hash:", code_hash, "new code_hash:", new_code_hash)
                 tx = None
@@ -1073,6 +1073,15 @@ class FiberTest(CkbTest):
         print(
             "median_time datetime:", datetime.fromtimestamp(int(median_time, 16) / 1000)
         )
+
+    def get_latest_commit_tx_number(self):
+        cells = self.get_commit_cells()
+        if len(cells) == 0:
+            return -1
+        numbers1 = []
+        for cell in cells:
+            numbers1.append(int(cell["block_number"], 16))
+        return sorted(numbers1)[-1]
 
     def get_commit_cells(self):
         #         code_hash: 0x4d937548b31beb7e6919e05e3f5c8d6f46b13a7db49254e6867bfb0d4bc7c748

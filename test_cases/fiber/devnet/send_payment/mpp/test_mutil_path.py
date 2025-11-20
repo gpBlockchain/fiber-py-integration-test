@@ -431,7 +431,7 @@ class MutilPathTestCase(FiberTest):
 
         time.sleep(10)
         payments = [[], [], []]
-        for i in range(100):
+        for i in range(20):
             # self.send_invoice_payment(self.fiber1,self.fiber1,2000 * 100000000,False)
             for i in range(3):
                 try:

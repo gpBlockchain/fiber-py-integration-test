@@ -272,4 +272,4 @@ class TestCommitmentFeeRate(FiberTest):
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 100)
         self.Miner.miner_until_tx_committed(self.node, tx_hash)
         tx_message = self.get_tx_message(tx_hash)
-        assert tx_message["fee"] == 9999999
+        assert tx_message["fee"] == 10021977

@@ -5,20 +5,155 @@ from framework.util import ckb_hash
 
 
 class TestMutilToOneHandle(FiberTest):
-    start_fiber_config = {"fiber_watchtower_check_interval_seconds": 5}
+    start_fiber_config = {"fiber_watchtower_check_interval_seconds": 2}
 
     def teardown_method(self, method):
         super().teardown_method(method)
 
     def teardown_class(cls):
-        cls.restore_time()
+        # cls.restore_time()
         super().teardown_class()
+
+    def test_mutil_to_only_c_shutdown(self):
+        """
+        aN->b->c
+        Returns:
+        """
+        for i in range(10):
+            self.start_new_fiber(self.generate_account(10000))
+        before_balance = self.get_fibers_balance()
+
+        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0)
+        for i in range(len(self.new_fibers)):
+            self.open_channel(self.new_fibers[i], self.fiber1, 1000 * 100000000, 0)
+
+        fiber2_preimages = []
+        fiber2_invoices = []
+        N = 8
+        for i in range(N):
+            fiber2_preimage = self.generate_random_preimage()
+            fiber2_preimages.append(fiber2_preimage)
+            fiber2_invoice = self.fiber2.get_client().new_invoice(
+                {
+                    "amount": hex(100000000),
+                    "currency": "Fibd",
+                    "description": "test invoice",
+                    "payment_hash": ckb_hash(fiber2_preimage),
+                }
+            )
+            fiber2_invoices.append(fiber2_invoice)
+        for i in range(N):
+            self.new_fibers[i % len(self.new_fibers)].get_client().send_payment(
+                {
+                    "invoice": fiber2_invoices[i]["invoice_address"],
+                }
+            )
+            time.sleep(1)
+        self.fiber2.get_client().disconnect_peer(
+            {
+                "peer_id": self.fiber1.get_peer_id(),
+            }
+        )
+        self.add_time_and_generate_block(22, 100)
+        while len(self.get_commit_cells()) == 0:
+            self.add_time_and_generate_block(1, 100)
+            time.sleep(20)
+        for i in range(N):
+            preimage = fiber2_preimages[i]
+            self.fiber2.get_client().settle_invoice(
+                {"payment_hash": ckb_hash(preimage), "payment_preimage": preimage}
+            )
+        while len(self.get_commit_cells()) > 0:
+            self.add_time_and_generate_block(1, 450)
+            time.sleep(60)
+
+        after_balance = self.get_fibers_balance()
+        result = self.get_balance_change(before_balance, after_balance)
+        assert abs(result[1]["ckb"] + 8 * 100000000) < 20000
+        for fiber in self.new_fibers:
+            list_channel = fiber.get_client().list_channels({})
+            assert list_channel["channels"][0]["offered_tlc_balance"] == "0x0"
 
     def test_mutil_to_one(self):
         """
         aN->b->c
         Returns:
         """
+        for i in range(10):
+            self.start_new_fiber(self.generate_account(10000))
+        before_balance = self.get_fibers_balance()
+
+        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0)
+        for i in range(len(self.new_fibers)):
+            self.open_channel(self.new_fibers[i], self.fiber1, 1000 * 100000000, 0)
+
+        fiber2_preimages = []
+        fiber2_invoices = []
+        N = 130
+        for i in range(N):
+            fiber2_preimage = self.generate_random_preimage()
+            fiber2_preimages.append(fiber2_preimage)
+            fiber2_invoice = self.fiber2.get_client().new_invoice(
+                {
+                    "amount": hex(100000000),
+                    "currency": "Fibd",
+                    "description": "test invoice",
+                    "payment_hash": ckb_hash(fiber2_preimage),
+                }
+            )
+            fiber2_invoices.append(fiber2_invoice)
+        for i in range(N):
+            self.new_fibers[i % len(self.new_fibers)].get_client().send_payment(
+                {
+                    "invoice": fiber2_invoices[i]["invoice_address"],
+                }
+            )
+            time.sleep(1)
+        self.fiber2.get_client().disconnect_peer(
+            {
+                "peer_id": self.fiber1.get_peer_id(),
+            }
+        )
+        self.add_time_and_generate_block(22, 100)
+
+        while len(self.get_commit_cells()) == 0:
+            # self.add_time_and_generate_block(1, 100)
+            time.sleep(20)
+        for channels in self.fiber1.get_client().list_channels({})["channels"]:
+            try:
+                self.fiber1.get_client().shutdown_channel(
+                    {"channel_id": channels["channel_id"], "force": True}
+                )
+            except Exception as e:
+                pass
+        time.sleep(10)
+        for i in range(N):
+            preimage = fiber2_preimages[i]
+            self.fiber2.get_client().settle_invoice(
+                {"payment_hash": ckb_hash(preimage), "payment_preimage": preimage}
+            )
+        while len(self.get_commit_cells()) > 0:
+            self.add_time_and_generate_block(1, 600)
+            time.sleep(5)
+            current_get_latest_commit_tx_number = self.get_latest_commit_tx_number()
+            current_tip_block_number = self.node.getClient().get_tip_block_number()
+            while current_tip_block_number - current_get_latest_commit_tx_number < 10:
+                print(
+                    f"current_get_latest_commit_tx_number:{current_get_latest_commit_tx_number},current_tip_block_number:{current_tip_block_number}"
+                )
+                time.sleep(5)
+                current_get_latest_commit_tx_number = self.get_latest_commit_tx_number()
+                current_tip_block_number = self.node.getClient().get_tip_block_number()
+        after_balance = self.get_fibers_balance()
+        result = self.get_balance_change(before_balance, after_balance)
+        assert result[0]["ckb"] < 0
+        assert abs(result[1]["ckb"] + 125 * 100000000) < 1 * 100000000
+        ckb_fee = 0
+        for rt in result:
+            ckb_fee += rt["ckb"]
+        assert ckb_fee < 1 * 100000000
+
+    def test_mutil_to_one_after_23h_settle(self):
         for i in range(10):
             self.start_new_fiber(self.generate_account(10000))
         before_balance = self.get_fibers_balance()
@@ -49,11 +184,17 @@ class TestMutilToOneHandle(FiberTest):
                 }
             )
             time.sleep(1)
-        self.add_time_and_generate_block(16, 100)
-
+        self.fiber2.get_client().disconnect_peer(
+            {
+                "peer_id": self.fiber1.get_peer_id(),
+            }
+        )
+        add_time = 0
+        # 等待强制触发 强制shutdown
         while len(self.get_commit_cells()) == 0:
             self.add_time_and_generate_block(1, 100)
-            time.sleep(10)
+            add_time += 1
+            time.sleep(20)
         for channels in self.fiber1.get_client().list_channels({})["channels"]:
             try:
                 self.fiber1.get_client().shutdown_channel(
@@ -61,6 +202,11 @@ class TestMutilToOneHandle(FiberTest):
                 )
             except Exception as e:
                 pass
+        # 等到23h的时候再 settle_invoice
+        while add_time < 23:
+            self.add_time_and_generate_block(1, 600)
+            time.sleep(10)
+            add_time += 1
         time.sleep(10)
         for i in range(N):
             preimage = fiber2_preimages[i]
@@ -68,7 +214,7 @@ class TestMutilToOneHandle(FiberTest):
                 {"payment_hash": ckb_hash(preimage), "payment_preimage": preimage}
             )
         while len(self.get_commit_cells()) > 0:
-            self.add_time_and_generate_block(1, 450)
+            self.add_time_and_generate_block(1, 600)
             time.sleep(10)
 
         after_balance = self.get_fibers_balance()

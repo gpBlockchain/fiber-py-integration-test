@@ -9,6 +9,7 @@ import time
 import pytest
 
 from framework.basic_fiber import FiberTest
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 
 
 class TestWatchTower(FiberTest):
@@ -139,7 +140,7 @@ class TestWatchTower(FiberTest):
         self.Miner.miner_until_tx_committed(self.node, tx)
         after_balance = self.get_fiber_balance(self.fiber3)
         result = self.get_balance_change([before_balance], [after_balance])
-        assert abs(result[0]['ckb'] + 98*100000000) <10000
+        assert abs(result[0]["ckb"] + DEFAULT_MIN_DEPOSIT_CKB) < 10000
 
     def test_standalone_watchtower_rpc_url(self):
         """
@@ -173,8 +174,8 @@ class TestWatchTower(FiberTest):
         after_balance = self.get_fibers_balance()
         result = self.get_balance_change(before_balance, after_balance)
         assert result[0]["ckb"] < 2000
-        assert 9800000000 < result[1]["ckb"] < 9800002000
-        assert abs(result[2]["ckb"] + 9800000000) < 10000
+        assert abs(result[1]["ckb"] - DEFAULT_MIN_DEPOSIT_CKB) < 2000
+        assert abs(result[2]["ckb"] + DEFAULT_MIN_DEPOSIT_CKB) < 10000
 
     def test_2_node(self):
         """
