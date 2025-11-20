@@ -3,7 +3,7 @@ import time
 import pytest
 
 from framework.basic_fiber import FiberTest
-from framework.config import DEFAULT_MIN_DEPOSIT_UDT
+from framework.config import DEFAULT_MIN_DEPOSIT_UDT, DEFAULT_MIN_DEPOSIT_CKB
 
 
 class MutilPathTestCase(FiberTest):
@@ -462,7 +462,7 @@ class MutilPathTestCase(FiberTest):
                         .get_client()
                         .get_payment({"payment_hash": payment_hash})
                     )
-                    assert payment["status"] == "Failed"
+                    self.wait_payment_state(self.fibers[i],payment['payment_hash'],"Failed")
                     try:
                         payment = (
                             self.fibers[i]
@@ -497,7 +497,7 @@ class MutilPathTestCase(FiberTest):
                 else:
                     assert (
                         balance[key]["local_balance"]
-                        == 200000000000 + DEFAULT_MIN_DEPOSIT_UDT
+                        == 200000000000 + DEFAULT_MIN_DEPOSIT_CKB*2
                     )
 
     def test_split(self):
