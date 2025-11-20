@@ -10,7 +10,7 @@ from framework.test_wasm_fiber import WasmFiber
 class TestWasmWatchTower(FiberTest):
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 5}
 
-    def test_wasm_watch_tower1(self):
+    def test_wasm_watch_tower12(self):
         """
         Test the watch tower functionality in the devnet environment.
         """
@@ -64,6 +64,7 @@ class TestWasmWatchTower(FiberTest):
                 message["output_cells"][1]["args"]
                 == self.fiber2.get_account()["lock_arg"]
             )
+            self.fiber1.start()
 
     @pytest.mark.skip("Musig2RoundFinalizeError")
     def test_watch_tower_restart(self):
