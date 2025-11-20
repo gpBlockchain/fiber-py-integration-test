@@ -55,8 +55,15 @@ class TestWasmWatchTower(FiberTest):
             # wasmFiberArgs = wasmFiber.get_client().node_info()[
             #     "default_funding_lock_script"
             # ]["args"]
-            assert message['input_cells'][0]['capacity'] - message['output_cells'][0]['capacity'] == 109900000000
-            assert message['output_cells'][1]['args'] == self.fiber2.get_account()['lock_arg']
+            assert (
+                message["input_cells"][0]["capacity"]
+                - message["output_cells"][0]["capacity"]
+                == 109900000000
+            )
+            assert (
+                message["output_cells"][1]["args"]
+                == self.fiber2.get_account()["lock_arg"]
+            )
 
     @pytest.mark.skip("Musig2RoundFinalizeError")
     def test_watch_tower_restart(self):
@@ -108,4 +115,3 @@ class TestWasmWatchTower(FiberTest):
         wasmFiberArgs = wasmFiber.get_client().node_info()[
             "default_funding_lock_script"
         ]["args"]
-
