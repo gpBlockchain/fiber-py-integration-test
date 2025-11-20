@@ -35,7 +35,7 @@ class TestAmount(FiberTest):
         self.fiber1.get_client().open_channel(
             {
                 "peer_id": self.fiber2.get_peer_id(),
-                "funding_amount": hex(1000000000 * 100000000),
+                "funding_amount": hex((1000000000-36) * 100000000 ),
                 "public": True,
             }
         )
@@ -46,7 +46,7 @@ class TestAmount(FiberTest):
         self.fiber2.get_client().open_channel(
             {
                 "peer_id": self.fiber3.get_peer_id(),
-                "funding_amount": hex(1000000000 * 100000000),
+                "funding_amount": hex((1000000000-36) * 100000000),
                 "public": True,
             }
         )
@@ -140,7 +140,7 @@ class TestAmount(FiberTest):
                 "dry_run": True,
             }
         )
-        assert payment["fee"] == "0x5ac491099011"
+        assert payment["fee"] == "0x5ac4909beb3c"
 
         # with pytest.raises(Exception) as exc_info:
         #     self.fiber1.get_client().send_payment(

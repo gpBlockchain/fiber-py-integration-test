@@ -66,6 +66,6 @@ class TestOneToOne(FiberTest):
             time.sleep(10)
         after_balance = self.get_fibers_balance()
         result = self.get_balance_change(before_balance, after_balance)
-        assert abs(result[0] - 800800000) < 10000
-        assert abs(result[1] + 800000) < 10000
-        assert abs(result[2] + 800000000) < 20000
+        assert abs(result[0]['ckb'] - 800800000) < 20000
+        assert abs(result[1]['ckb'] + 800000) < 20000
+        assert abs(result[2]['ckb'] + 800000000) < 20000

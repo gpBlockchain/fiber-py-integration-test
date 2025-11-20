@@ -250,7 +250,7 @@ class TestForceRestart(FiberTest):
         self.fiber1.get_client().open_channel(
             {
                 "peer_id": self.fiber2.get_peer_id(),
-                "funding_amount": hex(200 * 100000000),
+                "funding_amount": hex(2000 * 100000000),
                 "public": True,
             }
         )
@@ -261,7 +261,7 @@ class TestForceRestart(FiberTest):
         self.fiber2.get_client().open_channel(
             {
                 "peer_id": self.fiber3.get_peer_id(),
-                "funding_amount": hex(200 * 100000000),
+                "funding_amount": hex(2000 * 100000000),
                 "public": True,
             }
         )

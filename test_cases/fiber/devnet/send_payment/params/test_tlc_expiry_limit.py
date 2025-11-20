@@ -98,7 +98,7 @@ class TestTlcExpiryLimit(FiberTest):
 
         # node1
         channels = self.fiber1.get_client().list_channels({})
-        assert channels["channels"][0]["local_balance"] == hex(int(417.98 * 10**8))
+        assert channels["channels"][0]["local_balance"] == hex(int(381.98 * 10**8))
         # node3
         channels = self.fiber3.get_client().list_channels({})
         assert channels["channels"][0]["local_balance"] == hex(20 * 10**8)

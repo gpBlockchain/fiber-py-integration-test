@@ -39,7 +39,7 @@ class TestPaymentPreimage(FiberTest):
                     "hash_algorithm": "sha256",
                 }
             )
-        expected_error_message = "Duplicated invoice found"
+        expected_error_message = "invoice already exists"
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "
             f"not found in actual string '{exc_info.value.args[0]}'"

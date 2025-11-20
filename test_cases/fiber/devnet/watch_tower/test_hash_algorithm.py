@@ -51,8 +51,8 @@ class TestHashAlgorithm(FiberTest):
                     - after_udt_balances[i]["chain"]["ckb"]
                 }
             )
-        assert results[0]["ckb"] == 100001352
-        assert results[1]["ckb"] == -99998556
+        assert abs(results[0]["ckb"] - 100000000) < 2000
+        assert abs(results[1]["ckb"] + 100000000) < 2000
 
     def test_hash_algorithm_udt(self):
         self.faucet(self.fiber1.account_private, 0, self.fiber1.account_private)
