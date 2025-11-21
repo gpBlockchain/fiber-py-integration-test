@@ -417,6 +417,7 @@ jobs:
         run: |
           git clone https://github.com/gpBlockchain/fiber-wasm-demo.git
           cd fiber-wasm-demo
+          git checkout new_contract
           bash prepare.sh
           cd ../
         env:
