@@ -20,7 +20,7 @@ prepare_develop_testnet:
 
 	echo "install fiber"
 	python3 -m download_fiber
-	cp download/0.201.0/ckb-cli ./source/ckb-cli
+	cp download/0.202.0/ckb-cli ./source/ckb-cli
 	bash develop_fiber.sh
 
 
