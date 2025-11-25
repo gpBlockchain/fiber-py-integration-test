@@ -69,4 +69,3 @@ class TestWatchToerWitMpp(FiberTest):
         result = self.get_balance_change(before_balance, after_balance)
         for rt in result:
             assert rt["ckb"] < 100000000
-
