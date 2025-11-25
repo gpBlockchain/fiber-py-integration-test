@@ -31,8 +31,6 @@ class TestHashAlgorithm(FiberTest):
         self.node.getClient().generate_epochs("0x1", wait_time=0)
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False)
         self.Miner.miner_until_tx_committed(self.node, tx_hash)
-
-        self.node.getClient().generate_epochs("0x1", wait_time=0)
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False)
         self.Miner.miner_until_tx_committed(self.node, tx_hash)
         after_udt_balances = []
@@ -88,8 +86,6 @@ class TestHashAlgorithm(FiberTest):
         self.node.getClient().generate_epochs("0x1", wait_time=0)
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False)
         self.Miner.miner_until_tx_committed(self.node, tx_hash)
-
-        self.node.getClient().generate_epochs("0x1", wait_time=0)
         tx_hash = self.wait_and_check_tx_pool_fee(1000, False)
         self.Miner.miner_until_tx_committed(self.node, tx_hash)
         after_udt_balances = []
