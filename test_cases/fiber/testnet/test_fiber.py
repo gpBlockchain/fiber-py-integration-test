@@ -47,82 +47,74 @@ class TestFiber(CkbTest):
             "8230",
         )
 
-        # cls.fiber1.prepare()
-        # cls.fiber1.start()
-        #
-        # cls.fiber2.prepare()
-        # cls.fiber2.start()
+        cls.fiber1.prepare()
+        cls.fiber1.start()
 
-        # cls.fiber1.get_client().connect_peer(
-        #     {"address": cls.cryptapeFiber1.node_info()["addresses"][0]}
-        # )
-        #
-        # cls.fiber2.get_client().connect_peer(
-        #     {"address": cls.cryptapeFiber2.node_info()["addresses"][0]}
-        # )
-        # time.sleep(10)
+        cls.fiber2.prepare()
+        cls.fiber2.start()
+
+        cls.fiber1.get_client().connect_peer(
+            {"address": cls.cryptapeFiber1.node_info()["addresses"][0]}
+        )
+
+        cls.fiber2.get_client().connect_peer(
+            {"address": cls.cryptapeFiber2.node_info()["addresses"][0]}
+        )
+        time.sleep(10)
 
     @classmethod
     def teardown_class(cls):
-        pass
-        # channels = cls.fiber1.get_client().list_channels({})
-        # for i in range(len(channels["channels"])):
-        #     channel = channels["channels"][i]
-        #     if channel["state"]["state_name"] != "CHANNEL_READY":
-        #         continue
-        #     cls.fiber1.get_client().shutdown_channel(
-        #         {
-        #             "channel_id": channel["channel_id"],
-        #             "close_script": {
-        #                 "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
-        #                 "hash_type": "type",
-        #                 "args": cls.fiber1.get_account()["lock_arg"],
-        #             },
-        #             "fee_rate": "0x3FC",
-        #         }
-        #     )
-        #     status = self.ckbClient.get_live_cell(
-        #         index="0x0", tx_hash=channels["channels"][i]["channel_outpoint"][:-8]
-        #     )
-        #     cells.append(
-        #         {
-        #             "tx": channels["channels"][i]["channel_outpoint"],
-        #             "status": status["status"],
-        #         }
-        #     )
-        # for cell in cells:
-        #     print(cell)
+        channels = cls.fiber1.get_client().list_channels({})
+        for i in range(len(channels["channels"])):
+            channel = channels["channels"][i]
+            if channel["state"]["state_name"] != "CHANNEL_READY":
+                continue
+            cls.fiber1.get_client().shutdown_channel(
+                {
+                    "channel_id": channel["channel_id"],
+                    "close_script": {
+                        "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+                        "hash_type": "type",
+                        "args": cls.fiber1.get_account()["lock_arg"],
+                    },
+                    "fee_rate": "0x3FC",
+                }
+            )
+            wait_for_channel_state(
+                cls.fiber1.get_client(), cls.cryptapeFiber1.get_peer_id(), "CLOSED", 120
+            )
 
-    def test_fiber2(self):
-        self.fiber2.stop()
-        self.fiber2.start()
+        channels = cls.fiber2.get_client().list_channels({})
+        for i in range(len(channels["channels"])):
+            channel = channels["channels"][i]
+            if channel["state"]["state_name"] != "CHANNEL_READY":
+                continue
+            cls.fiber2.get_client().shutdown_channel(
+                {
+                    "channel_id": channel["channel_id"],
+                    "close_script": {
+                        "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+                        "hash_type": "type",
+                        "args": cls.fiber2.get_account()["lock_arg"],
+                    },
+                    "fee_rate": "0x3FC",
+                }
+            )
+            wait_for_channel_state(
+                cls.fiber2.get_client(), cls.cryptapeFiber2.get_peer_id(), "CLOSED", 120
+            )
 
-    def test_fiber2_message(self):
-        self.fiber2.get_client().list_peers()
-        peers = self.fiber2.get_client().graph_nodes({})
-        for peer in peers["nodes"]:
-            print(peer)
-
-        channels = self.fiber2.get_client().graph_channels({})
-        for channel in channels["channels"]:
-            print(channel)
-
-    def test_0000(self):
-        self.fiber1.get_client().list_peers()
-        peers = self.fiber1.get_client().graph_nodes({})
-        for peer in peers["nodes"]:
-            print(peer)
-
-        channels = self.fiber1.get_client().graph_channels({})
-        for channel in channels["channels"]:
-            print(channel)
+        cls.fiber1.stop()
+        cls.fiber1.clean()
+        cls.fiber2.stop()
+        cls.fiber2.clean()
 
     def test_ckb_01(self):
         # open_channel
         temporary_channel_id = self.fiber1.get_client().open_channel(
             {
                 "peer_id": self.cryptapeFiber1.get_peer_id(),
-                "funding_amount": hex(500 * 100000000),
+                "funding_amount": hex(1000 * 100000000),
                 "public": True,
                 # "tlc_fee_proportional_millionths": "0x4B0",
             }
@@ -131,7 +123,7 @@ class TestFiber(CkbTest):
         temporary_channel_id = self.fiber2.get_client().open_channel(
             {
                 "peer_id": self.cryptapeFiber2.get_peer_id(),
-                "funding_amount": hex(500 * 100000000),
+                "funding_amount": hex(1000 * 100000000),
                 "public": True,
                 # "tlc_fee_proportional_millionths": "0x4B0",
             }
@@ -169,7 +161,7 @@ class TestFiber(CkbTest):
         self.fiber2.stop()
         self.fiber1.start()
         self.fiber2.start()
-        time.sleep(5)
+        time.sleep(15)
         begin = time.time()
         send_payment(
             self.fiber1.get_client(), self.fiber2.get_client(), 1000, None, 20 * 60
@@ -269,7 +261,7 @@ class TestFiber(CkbTest):
         self.fiber2.stop()
         self.fiber1.start()
         self.fiber2.start()
-        time.sleep(5)
+        time.sleep(15)
         begin = time.time()
         # wait dry_run success
 

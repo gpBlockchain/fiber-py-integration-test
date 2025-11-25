@@ -10,20 +10,6 @@ prepare:
 	python3 -m download_fiber
 	sh prepare.sh
 
-prepare_fiber_testnet:
-	python3 -m venv venv
-	. venv/bin/activate
-	python3 -m pip install --upgrade pip
-	pip install -r requirements.txt
-	echo "install ckb"
-	python3 -m download
-
-	python3 -m download_ckb_light_client
-	echo "install ckb cli"
-	python3 -m download_fiber
-	cp download/0.201.0/ckb-cli ./source/ckb-cli
-	cp download/0.110.2/ckb-cli ./source/ckb-cli-old
-
 prepare_develop_testnet:
 	python3 -m venv venv
 	. venv/bin/activate
@@ -35,7 +21,6 @@ prepare_develop_testnet:
 	echo "install fiber"
 	python3 -m download_fiber
 	cp download/0.201.0/ckb-cli ./source/ckb-cli
-	cp download/0.110.2/ckb-cli ./source/ckb-cli-old
 	bash develop_fiber.sh
 
 
