@@ -17,14 +17,12 @@ from framework.config import get_tmp_path
 class FiberConfigPath(Enum):
     CURRENT_DEV = (
         "/source/fiber/dev_config_3.yml.j2",
-        # "download/fiber/0.5.0/fnn",
-        # "download/fiber/current/fnn",
-        "download/fiber/cf74b42/fnn",
+        "download/fiber/current/fnn",
     )
 
     CURRENT_DEV_DEBUG = (
         "/source/fiber/dev_config_3.yml.j2",
-        "download/fiber/quake/fnn.debug",
+        "download/fiber/current/fnn.debug",
     )
 
     CURRENT_TESTNET = (
