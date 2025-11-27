@@ -11,6 +11,20 @@ class TestMutilToOne(FiberTest):
         cls.restore_time()
         super().teardown_class()
 
+
+    # def test_002(self):
+    #     channels = self.fiber1.get_client().list_channels({"include_closed": True})
+    #     fiber2_channels = self.fiber2.get_client().list_channels({"include_closed": True})
+    #
+    #     for channel in channels['channels']:
+    #         for tlc in channel['pending_tlcs']:
+    #             print(f"hash:{tlc['payment_hash']}, tlc type:{tlc['status']},expiry time:{hex_timestamp_to_datetime(tlc['expiry'])}")
+    #     print("---fiber2-----")
+    #     for channel in fiber2_channels['channels']:
+    #         for tlc in channel['pending_tlcs']:
+    #             print(f"hash:{tlc['payment_hash']}, tlc type:{tlc['status']},expiry time:{hex_timestamp_to_datetime(tlc['expiry'])}")
+
+
     def test_mutil_to_one(self):
         """
         aN->b->c
@@ -26,12 +40,17 @@ class TestMutilToOne(FiberTest):
             self.open_channel(self.new_fibers[i], self.fiber1, 1000 * 100000000, 0)
         for i in range(10):
             for j in range(len(self.new_fibers)):
-                self.send_payment(self.new_fibers[i], self.fiber2, 1 * 100000000, False)
+                self.send_invoice_payment(self.new_fibers[i], self.fiber2, 1 * 100000000, False)
         self.fiber1.get_client().disconnect_peer({"peer_id": self.fiber2.get_peer_id()})
-        self.add_time_and_generate_block(22, 20)
-        while len(self.get_commit_cells()) == 0:
-            self.add_time_and_generate_block(1, 20)
-            time.sleep(15)
+        for channel in self.fiber1.get_client().list_channels({})['channels']:
+            try:
+                self.fiber1.get_client().shutdown_channel({
+                    "channel_id": channel["channel_id"],
+                    "force":True
+                })
+            except Exception as e:
+                pass
+        time.sleep(10)
         self.add_time_and_generate_block(1, 600)
         time.sleep(10)
         while (
@@ -41,27 +60,8 @@ class TestMutilToOne(FiberTest):
         ):
             time.sleep(5)
         while len(self.get_commit_cells()) > 0:
-            # cells = self.get_commit_cells()
-            self.add_time_and_generate_block(24, 600)
+            self.add_time_and_generate_block(24*3, 600)
             time.sleep(10)
-        channels = self.fiber1.get_client().list_channels({})
-        for channel in channels["channels"]:
-            try:
-                self.fiber1.get_client().shutdown_channel(
-                    {
-                        "channel_id": channel["channel_id"],
-                        "close_script": self.get_account_script(
-                            self.fiber1.account_private
-                        ),
-                        "fee_rate": "0x3FC",
-                    }
-                )
-                shutdown_tx = self.wait_and_check_tx_pool_fee(1000, False, 200)
-                self.Miner.miner_until_tx_committed(self.node, shutdown_tx)
-            except Exception as e:
-                pass
-
-        time.sleep(10)
         after_fibers_balance = []
         for i in range(len(self.fibers)):
             balance = self.get_fiber_balance(self.fibers[i])
@@ -126,10 +126,15 @@ class TestMutilToOne(FiberTest):
                 )
 
         self.fiber1.get_client().disconnect_peer({"peer_id": self.fiber2.get_peer_id()})
-        self.add_time_and_generate_block(22, 20)
-        while len(self.get_commit_cells()) == 0:
-            self.add_time_and_generate_block(1, 20)
-            time.sleep(15)
+        for channel in self.fiber1.get_client().list_channels({})['channels']:
+            try:
+                self.fiber1.get_client().shutdown_channel({
+                    "channel_id": channel["channel_id"],
+                    "force":True
+                })
+            except Exception as e:
+                pass
+        time.sleep(10)
         self.add_time_and_generate_block(1, 600)
         time.sleep(10)
         while (
@@ -141,24 +146,6 @@ class TestMutilToOne(FiberTest):
         while len(self.get_commit_cells()) > 0:
             self.add_time_and_generate_block(24, 600)
             time.sleep(10)
-        channels = self.fiber1.get_client().list_channels({})
-        for channel in channels["channels"]:
-            try:
-                self.fiber1.get_client().shutdown_channel(
-                    {
-                        "channel_id": channel["channel_id"],
-                        "close_script": self.get_account_script(
-                            self.fiber1.account_private
-                        ),
-                        "fee_rate": "0x3FC",
-                    }
-                )
-                shutdown_tx = self.wait_and_check_tx_pool_fee(1000, False, 200)
-                self.Miner.miner_until_tx_committed(self.node, shutdown_tx)
-            except Exception as e:
-                pass
-
-        time.sleep(10)
         after_fibers_balance = []
         for i in range(len(self.fibers)):
             balance = self.get_fiber_balance(self.fibers[i])
