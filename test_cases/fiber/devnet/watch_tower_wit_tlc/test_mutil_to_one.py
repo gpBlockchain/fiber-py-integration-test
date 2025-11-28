@@ -11,7 +11,6 @@ class TestMutilToOne(FiberTest):
         cls.restore_time()
         super().teardown_class()
 
-
     # def test_002(self):
     #     channels = self.fiber1.get_client().list_channels({"include_closed": True})
     #     fiber2_channels = self.fiber2.get_client().list_channels({"include_closed": True})
@@ -23,7 +22,6 @@ class TestMutilToOne(FiberTest):
     #     for channel in fiber2_channels['channels']:
     #         for tlc in channel['pending_tlcs']:
     #             print(f"hash:{tlc['payment_hash']}, tlc type:{tlc['status']},expiry time:{hex_timestamp_to_datetime(tlc['expiry'])}")
-
 
     def test_mutil_to_one(self):
         """
@@ -40,14 +38,15 @@ class TestMutilToOne(FiberTest):
             self.open_channel(self.new_fibers[i], self.fiber1, 1000 * 100000000, 0)
         for i in range(10):
             for j in range(len(self.new_fibers)):
-                self.send_invoice_payment(self.new_fibers[i], self.fiber2, 1 * 100000000, False)
+                self.send_invoice_payment(
+                    self.new_fibers[i], self.fiber2, 1 * 100000000, False
+                )
         self.fiber1.get_client().disconnect_peer({"peer_id": self.fiber2.get_peer_id()})
-        for channel in self.fiber1.get_client().list_channels({})['channels']:
+        for channel in self.fiber1.get_client().list_channels({})["channels"]:
             try:
-                self.fiber1.get_client().shutdown_channel({
-                    "channel_id": channel["channel_id"],
-                    "force":True
-                })
+                self.fiber1.get_client().shutdown_channel(
+                    {"channel_id": channel["channel_id"], "force": True}
+                )
             except Exception as e:
                 pass
         time.sleep(10)
@@ -60,7 +59,7 @@ class TestMutilToOne(FiberTest):
         ):
             time.sleep(5)
         while len(self.get_commit_cells()) > 0:
-            self.add_time_and_generate_block(24*3, 600)
+            self.add_time_and_generate_block(24 * 3, 600)
             time.sleep(10)
         after_fibers_balance = []
         for i in range(len(self.fibers)):
@@ -126,12 +125,11 @@ class TestMutilToOne(FiberTest):
                 )
 
         self.fiber1.get_client().disconnect_peer({"peer_id": self.fiber2.get_peer_id()})
-        for channel in self.fiber1.get_client().list_channels({})['channels']:
+        for channel in self.fiber1.get_client().list_channels({})["channels"]:
             try:
-                self.fiber1.get_client().shutdown_channel({
-                    "channel_id": channel["channel_id"],
-                    "force":True
-                })
+                self.fiber1.get_client().shutdown_channel(
+                    {"channel_id": channel["channel_id"], "force": True}
+                )
             except Exception as e:
                 pass
         time.sleep(10)
