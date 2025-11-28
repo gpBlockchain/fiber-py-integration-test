@@ -125,4 +125,4 @@ class TestInvoiceStatus(FiberTest):
                 {"payment_hash": payment3["payment_hash"]}
             )
             # todo 目前会有双花
-            # assert payment2["status"] != payment3["status"]
+            assert payment2["status"] != payment3["status"]

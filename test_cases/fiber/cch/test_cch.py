@@ -55,7 +55,7 @@ class TestCch(FiberCchTest):
             == 100000000100
         )
         lnd1Balance = self.LNDs[1].ln_cli_with_cmd("channelbalance")
-        assert int(lnd1Balance["balance"]) - int(beforeLnd1Balance) == 100
+        assert int(lnd1Balance["balance"]) - int(beforeLnd1Balance["balance"]) == 100
         invoiceResponse = self.LNDs[1].ln_cli_with_cmd(
             f"lookupinvoice {lndInvoice['r_hash']}"
         )

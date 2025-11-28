@@ -52,7 +52,7 @@ class TestPaymentHash(FiberTest):
         )
         payment1 = self.fiber1.get_client().send_payment(
             {
-                "target_pubkey": parse_invoice["invoice"]["data"]["attrs"][3][
+                "target_pubkey": parse_invoice["invoice"]["data"]["attrs"][4][
                     "payee_public_key"
                 ],
                 "currency": parse_invoice["invoice"]["currency"],
@@ -105,7 +105,7 @@ class TestPaymentHash(FiberTest):
 
         payment1 = self.fiber1.get_client().send_payment(
             {
-                "target_pubkey": parse_invoice["invoice"]["data"]["attrs"][3][
+                "target_pubkey": parse_invoice["invoice"]["data"]["attrs"][4][
                     "payee_public_key"
                 ],
                 "currency": parse_invoice["invoice"]["currency"],
@@ -116,7 +116,7 @@ class TestPaymentHash(FiberTest):
         )
         payment1 = self.fiber1.get_client().send_payment(
             {
-                "target_pubkey": parse_invoice["invoice"]["data"]["attrs"][3][
+                "target_pubkey": parse_invoice["invoice"]["data"]["attrs"][4][
                     "payee_public_key"
                 ],
                 "currency": parse_invoice["invoice"]["currency"],
