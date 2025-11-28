@@ -135,7 +135,6 @@ class TestWatchTower(FiberTest):
         )
         self.faucet(self.fiber3.account_private, 1000)
         before_balance = self.get_fiber_balance(self.fiber3)
-        self.node.getClient().generate_epochs("0x1", 0)
         tx = self.wait_and_check_tx_pool_fee(1000, False, 120 * 5)
         self.Miner.miner_until_tx_committed(self.node, tx)
         after_balance = self.get_fiber_balance(self.fiber3)

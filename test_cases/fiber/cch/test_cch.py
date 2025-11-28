@@ -32,6 +32,8 @@ class TestCch(FiberCchTest):
             1000 * 100000000,
             udt=self.get_account_udt_script(self.fiber1.account_private),
         )
+
+        beforeLnd1Balance = self.LNDs[1].ln_cli_with_cmd("channelbalance")
         self.fiber2.get_client().add_tlc(
             {
                 "channel_id": self.fiber2.get_client().list_channels({})["channels"][0][
@@ -53,7 +55,7 @@ class TestCch(FiberCchTest):
             == 100000000100
         )
         lnd1Balance = self.LNDs[1].ln_cli_with_cmd("channelbalance")
-        assert lnd1Balance["balance"] == "100"
+        assert int(lnd1Balance["balance"]) - int(beforeLnd1Balance["balance"]) == 100
         invoiceResponse = self.LNDs[1].ln_cli_with_cmd(
             f"lookupinvoice {lndInvoice['r_hash']}"
         )

@@ -203,8 +203,9 @@ class MutilPathTestCase(FiberTest):
         N = 30
         for i in range(1, N):
             self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0, 0, 0)
-            time.sleep(3)
+            time.sleep(5)
             self.send_invoice_payment(self.fiber1, self.fiber2, 1000 * 100000000 * i)
+            time.sleep(5)
             self.send_invoice_payment(self.fiber2, self.fiber1, 1000 * 100000000 * i)
 
     def test_one_mid_one_limit(self):
