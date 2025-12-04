@@ -92,7 +92,7 @@ jobs:
           name: jfoa-open_channel-reports-${{ runner.os }}
           path: ./report
 
-  fiber_test_accept_channel_cancel_invoice_connect_peer_disconnect_peer_backup:
+  fiber_test_accept_channel_cancel_invoice_connect_peer_disconnect_peer_backup_settle_invoice:
     needs: prepare
     runs-on: ubuntu-22.04
 
@@ -119,7 +119,7 @@ jobs:
           tar -xzf prepare-backup.tar.gz
 
       - name: Run fiber_test_demo
-        run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/accept_channel test_cases/fiber/devnet/cancel_invoice test_cases/fiber/devnet/connect_peer test_cases/fiber/devnet/disconnect_peer test_cases/fiber/devnet/backup"
+        run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/accept_channel test_cases/fiber/devnet/cancel_invoice test_cases/fiber/devnet/connect_peer test_cases/fiber/devnet/disconnect_peer test_cases/fiber/devnet/backup test_cases/fiber/devnet/settle_invoice"
 
       - name: Publish reports
         if: failure()
