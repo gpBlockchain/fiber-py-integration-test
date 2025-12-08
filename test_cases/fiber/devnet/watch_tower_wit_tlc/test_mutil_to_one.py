@@ -32,10 +32,18 @@ class TestMutilToOne(FiberTest):
         while len(self.get_commit_cells()) == 0:
             self.add_time_and_generate_block(1, 20)
             time.sleep(15)
+        self.add_time_and_generate_block(1, 600)
+        time.sleep(10)
+        while (
+            self.node.getClient().get_tip_block_number()
+            - self.get_latest_commit_tx_number()
+            < 20
+        ):
+            time.sleep(5)
         while len(self.get_commit_cells()) > 0:
             # cells = self.get_commit_cells()
-            self.add_time_and_generate_block(1, 600)
-            time.sleep(20)
+            self.add_time_and_generate_block(24, 600)
+            time.sleep(10)
         channels = self.fiber1.get_client().list_channels({})
         for channel in channels["channels"]:
             try:
@@ -122,10 +130,17 @@ class TestMutilToOne(FiberTest):
         while len(self.get_commit_cells()) == 0:
             self.add_time_and_generate_block(1, 20)
             time.sleep(15)
+        self.add_time_and_generate_block(1, 600)
+        time.sleep(10)
+        while (
+            self.node.getClient().get_tip_block_number()
+            - self.get_latest_commit_tx_number()
+            < 20
+        ):
+            time.sleep(5)
         while len(self.get_commit_cells()) > 0:
-            # cells = self.get_commit_cells()
-            self.add_time_and_generate_block(1, 600)
-            time.sleep(20)
+            self.add_time_and_generate_block(24, 600)
+            time.sleep(10)
         channels = self.fiber1.get_client().list_channels({})
         for channel in channels["channels"]:
             try:
@@ -166,3 +181,7 @@ class TestMutilToOne(FiberTest):
             )
         print("discard_ckb_balance:", discard_ckb_balance)
         assert discard_ckb_balance == 0
+        assert (
+            fibers_balance[0]["chain"]["udt"] - after_fibers_balance[0]["chain"]["udt"]
+            < 1 * 100000000
+        )
