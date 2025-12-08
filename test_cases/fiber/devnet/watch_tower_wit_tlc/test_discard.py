@@ -55,9 +55,15 @@ class TestDiscard(FiberTest):
         self.Miner.miner_until_tx_committed(self.node, tx_hash)
         for i in range(5):
             self.Miner.miner_with_version(self.node, "0x0")
-
+        self.node.getClient().generate_epochs("0x1", 0)
+        while (
+            self.node.getClient().get_tip_block_number()
+            - self.get_latest_commit_tx_number()
+            < 20
+        ):
+            time.sleep(5)
         while len(self.get_commit_cells()) > 0:
-            self.add_time_and_generate_epoch(4, 1)
+            self.add_time_and_generate_epoch(24, 1)
             time.sleep(10)
 
         after_udt_balances = self.get_fibers_balance()
@@ -104,8 +110,16 @@ class TestDiscard(FiberTest):
         for i in range(5):
             self.Miner.miner_with_version(self.node, "0x0")
 
+        self.node.getClient().generate_epochs("0x1", 0)
+        while (
+            self.node.getClient().get_tip_block_number()
+            - self.get_latest_commit_tx_number()
+            < 20
+        ):
+            time.sleep(5)
+
         while len(self.get_commit_cells()) > 0:
-            self.add_time_and_generate_epoch(4, 1)
+            self.add_time_and_generate_epoch(24, 1)
             time.sleep(10)
 
         after_udt_balances = []
