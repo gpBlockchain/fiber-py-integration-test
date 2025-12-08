@@ -3,68 +3,70 @@
 # from framework.basic_fiber import FiberTest
 #
 #
-# class TestWatchToerWitMpp(FiberTest):
-#     debug = True
-#
-#     def test_watch_tower_with_pending_tlc(self):
-#         self.fiber3 = self.start_new_fiber(
-#             self.generate_account(10000, self.fiber1.account_private, 1000 * 100000000)
-#         )
-#         self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0, 0, 0)
-#         self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0, 0, 0)
-#         self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0, 0, 0)
-#         self.open_channel(self.fiber2, self.fiber3, 1500 * 100000000, 0, 0, 0)
-#         self.open_channel(self.fiber2, self.fiber3, 1500 * 100000000, 0, 0, 0)
-#
-#         # self.open_channel(self.fiber3, self.fiber1, 1000 * 100000000, 0, 0, 0)
-#         # self.open_channel(self.fiber3, self.fiber1, 1000 * 100000000, 0, 0, 0)
-#         payment_hash = self.send_invoice_payment(
-#             self.fiber1, self.fiber3, 3000 * 100000000, False
-#         )
-#         time.sleep(0.2)
-#         self.fiber1.get_client().disconnect_peer({"peer_id": self.fiber2.get_peer_id()})
-#         self.get_fiber_graph_balance()
-#
-#     def test_balance(self):
-#         self.start_new_mock_fiber("")
-#         self.get_fiber_graph_balance()
-#         # payment_hash = self.send_invoice_payment(
-#         #     self.fiber1, self.fibers[2], 3000 * 100000000, False
-#         # )
-#         # time.sleep(0.2)
-#         # self.fiber1.get_client().disconnect_peer({
-#         #     "peer_id": self.fiber2.get_peer_id()
-#         # })
-#         # self.get_fiber_graph_balance()
-#
-#     def test_addTime(self):
-#         self.add_time_and_generate_block(48, 10)
-#
-#     def test_shutdown(self):
-#         self.fiber3 = self.start_new_mock_fiber("")
-#         self.fiber2.get_client().shutdown_channel(
-#             {
-#                 "channel_id": "0x9772978425b1de2a90bb25f13ee7b7aef356c1ee1b16dd2cab5c50ea8ec01082",
-#                 # "close_script": self.get_account_script(self.Config.ACCOUNT_PRIVATE_1),
-#                 # "fee_rate": "0x3FC",
-#                 "force": True,
-#             }
-#         )
-#
-#     def test_timeout(self):
-#         # self.add_time_and_generate_block(1,600)
-#         self.node.getClient().get_transaction(
-#             "0x3ad37809b57ecd6763f3ebc389ed1f6c96f0360bc1e950d39610296df0c98460"
-#         )
-#
-#     def test_001234(self):
-#         # self.node.getClient().generate_epochs("0x4")
-#         msg = self.get_tx_message(
-#             "0xf11a6e77c9c19df48af2b3615e724d45f7bf693a84eac9dcea63033b26d34292"
-#         )
-#         print(msg)
-#
-#     def test_fiber2(self):
-#         self.fiber3 = self.start_new_mock_fiber("")
-#         self.fiber3.get_client().node_info()
-#         self.fiber2.get_client().list_channels({"include_closed": True})
+import datetime
+import time
+
+from framework.basic_fiber import FiberTest
+
+
+class TestWatchToerWitMpp(FiberTest):
+    start_fiber_config = {"fiber_watchtower_check_interval_seconds": 5}
+
+    def teardown_class(cls):
+        cls.restore_time()
+        super().teardown_class()
+
+    def test_watch_tower_with_bench_pending_tlc(self):
+        self.fiber3 = self.start_new_fiber(
+            self.generate_account(10000, self.fiber1.account_private, 1000 * 100000000)
+        )
+        before_balance = self.get_fibers_balance()
+
+        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0, 0, 0)
+        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0, 0, 0)
+        self.open_channel(self.fiber2, self.fiber3, 1000 * 100000000, 0, 0, 0)
+        self.open_channel(self.fiber2, self.fiber3, 1000 * 100000000, 0, 0, 0)
+        self.open_channel(self.fiber3, self.fiber1, 1000 * 100000000, 0, 0, 0)
+        self.open_channel(self.fiber3, self.fiber1, 1000 * 100000000, 0, 0, 0)
+
+        self.open_channel(self.fiber3, self.fiber1, 1000 * 100000000, 0, 0, 0)
+        self.open_channel(self.fiber3, self.fiber1, 1000 * 100000000, 0, 0, 0)
+        for i in range(60):
+            for fiber in self.fibers:
+                try:
+                    payment_hash = self.send_invoice_payment(
+                        fiber, fiber, 1001 * 100000000, False, None, 0
+                    )
+                except Exception as e:
+                    pass
+        self.fiber1.get_client().disconnect_peer({"peer_id": self.fiber2.get_peer_id()})
+
+        for fiber in self.fibers:
+            try:
+                for channel in fiber.get_client().list_channels({})["channels"]:
+                    fiber.get_client().shutdown_channel(
+                        {"channel_id": channel["channel_id"], "force": True}
+                    )
+            except Exception as e:
+                pass
+        time.sleep(20)
+        # for i in range(600):
+        #     self.Miner.miner_with_version(self.node, "0x0")
+        self.node.getClient().generate_epochs("0x1")
+        time.sleep(10)
+        while (
+            self.node.getClient().get_tip_block_number()
+            - self.get_latest_commit_tx_number()
+            < 50
+        ):
+            time.sleep(20)
+        self.add_time_and_generate_epoch(25, 2)
+        while len(self.get_commit_cells()) > 0:
+            self.add_time_and_generate_epoch(24, 1)
+            time.sleep(10)
+
+        after_balance = self.get_fibers_balance()
+        result = self.get_balance_change(before_balance, after_balance)
+        for rt in result:
+            assert rt["ckb"] < 100000000
+
