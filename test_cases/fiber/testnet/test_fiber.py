@@ -83,7 +83,7 @@ class TestFiber(CkbTest):
                 }
             )
             wait_for_channel_state(
-                cls.fiber1.get_client(), cls.cryptapeFiber1.get_pubkey(), "Closed", 200
+                cls.fiber1.get_client(), cls.cryptapeFiber1.get_pubkey(), "Closed", 120
             )
 
         channels = cls.fiber2.get_client().list_channels({})
@@ -103,7 +103,7 @@ class TestFiber(CkbTest):
                 }
             )
             wait_for_channel_state(
-                cls.fiber2.get_client(), cls.cryptapeFiber2.get_pubkey(), "Closed", 200
+                cls.fiber2.get_client(), cls.cryptapeFiber2.get_pubkey(), "Closed", 120
             )
 
         cls.fiber1.stop()
@@ -130,7 +130,7 @@ class TestFiber(CkbTest):
                 # "tlc_fee_proportional_millionths": "0x4B0",
             }
         )
-        time.sleep(15)
+        time.sleep(10)
         wait_for_channel_state(
             self.fiber1.get_client(),
             self.cryptapeFiber1.get_pubkey(),
@@ -178,11 +178,18 @@ class TestFiber(CkbTest):
     def test_ckb_02(self):
         self.fiber1.stop()
         self.fiber2.stop()
-        time.sleep(15)
         self.fiber1.start()
         self.fiber2.start()
         time.sleep(15)
         begin = time.time()
+        # wait pubkey sync
+        wait_pubkey_connected(
+            self.fiber1.get_client(), self.cryptapeFiber1.get_pubkey()
+        )
+        wait_pubkey_connected(
+            self.fiber2.get_client(), self.cryptapeFiber2.get_pubkey()
+        )
+        time.sleep(10)
         send_payment(
             self.fiber1.get_client(), self.fiber2.get_client(), 1000, None, 20 * 60
         )
@@ -224,14 +231,14 @@ class TestFiber(CkbTest):
             self.fiber1.get_client(),
             self.cryptapeFiber1.get_pubkey(),
             "ChannelReady",
-            200,
+            120,
         )
 
         wait_for_channel_state(
             self.fiber2.get_client(),
             self.cryptapeFiber2.get_pubkey(),
             "ChannelReady",
-            200,
+            120,
         )
         fiber1_channel_outpoint = self.fiber1.get_client().list_channels({})[
             "channels"
@@ -387,6 +394,23 @@ def wait_graph_channel_ready(client, channel_outpoint, timeout=3600):
     )
 
 
+def wait_pubkey_connected(client, pubkey, timeout=3600):
+    for i in range(timeout):
+        try:
+            peers = client.list_peers().get("peers", [])
+            if any(peer["pubkey"] == pubkey for peer in peers):
+                print(f"Peer {pubkey} is connected")
+                return
+            print(f"Waiting for peer {pubkey} to connect, try count: {i}")
+            time.sleep(1)
+        except Exception as e:
+            print(e)
+            print(f"wait pubkey try count: {i}")
+            time.sleep(1)
+            continue
+    raise TimeoutError(f"Peer {pubkey} did not connect within timeout period.")
+
+
 def wait_payment_finished(client, payment_hash, timeout=300):
     for i in range(timeout):
         try:
@@ -402,7 +426,7 @@ def wait_payment_finished(client, payment_hash, timeout=300):
     raise TimeoutError("payment status did not become final within timeout period.")
 
 
-def wait_for_channel_state(client, pubkey, expected_state, timeout=200):
+def wait_for_channel_state(client, pubkey, expected_state, timeout=120):
     """Wait for a channel to reach a specific state."""
     for _ in range(timeout):
         channels = client.list_channels({"pubkey": pubkey, "include_closed": True})
