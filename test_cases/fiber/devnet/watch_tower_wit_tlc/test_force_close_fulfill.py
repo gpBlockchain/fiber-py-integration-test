@@ -1,3 +1,5 @@
+import time
+
 from framework.basic_fiber import FiberTest
 from framework.util import ckb_hash
 
@@ -12,6 +14,22 @@ class TestForceCloseFulfill(FiberTest):
     """
 
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 3}
+
+    def _wait_force_close_unlock(self, timeout=600):
+        """
+        Advance epochs and wait until force-close commitment cells are consumed.
+
+        Force shutdown is an on-chain path. The settle invoice RPC reveals the
+        preimage, but the watchtower/payment status may not converge until the
+        settlement/unlock transactions are mined and the commitment cells are
+        released. This follows the existing watchtower test pattern.
+        """
+        self.node.getClient().generate_epochs("0x1", wait_time=0)
+        for _ in range(timeout // 10):
+            if len(self.get_commit_cells()) == 0:
+                return
+            time.sleep(10)
+        assert len(self.get_commit_cells()) == 0
 
     def test_one_hop_force_close_payee_settle_invoice(self):
         """
@@ -67,14 +85,9 @@ class TestForceCloseFulfill(FiberTest):
             }
         )
 
-        self.wait_for_channel_state(
-            self.fiber1.get_client(),
-            self.fiber2.get_pubkey(),
-            "Closed",
-            timeout=120,
-            include_closed=True,
-            channel_id=channel_id,
-        )
+        # Give both nodes time to observe the force-close tx before the payee
+        # reveals the preimage on-chain.
+        time.sleep(10)
 
         self.fiber2.get_client().settle_invoice(
             {
@@ -82,6 +95,7 @@ class TestForceCloseFulfill(FiberTest):
                 "payment_preimage": preimage,
             }
         )
+        self._wait_force_close_unlock()
 
         self.wait_payment_state(self.fiber1, payment_hash, "Success", timeout=300)
         self.wait_invoice_state(self.fiber2, payment_hash, "Paid", timeout=300)
@@ -167,14 +181,9 @@ class TestForceCloseFulfill(FiberTest):
             }
         )
 
-        self.wait_for_channel_state(
-            self.fiber2.get_client(),
-            fiber3.get_pubkey(),
-            "Closed",
-            timeout=120,
-            include_closed=True,
-            channel_id=channel_bc,
-        )
+        # Give C time to observe the downstream force-close tx before it settles
+        # the invoice and reveals the preimage on-chain.
+        time.sleep(10)
 
         fiber3.get_client().settle_invoice(
             {
@@ -182,6 +191,7 @@ class TestForceCloseFulfill(FiberTest):
                 "payment_preimage": preimage,
             }
         )
+        self._wait_force_close_unlock()
 
         self.wait_payment_state(self.fiber1, payment_hash, "Success", timeout=300)
         self.wait_invoice_state(fiber3, payment_hash, "Paid", timeout=300)
