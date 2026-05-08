@@ -1,324 +1,243 @@
-# Fiber Network Integration Test
+# Fiber Python Integration Test - AI Development Guide
 
-## Project Overview
+This repository contains Python integration tests for Fiber Network Node (FNN), a Lightning-style payment network on Nervos CKB.
 
-Fiber Network Node (FNN) is a Lightning Network implementation on Nervos CKB blockchain. This test project provides Python integration tests covering channel lifecycle, payments, invoices, watchtower, cross-chain hub (CCH), and more.
+This file is the primary development guide for AI agents working in this repository. Treat it as a living playbook: when a test fails because of a wrong assumption or missing domain knowledge, update this guide with the lesson learned so future AI development can avoid repeating the same mistake.
 
-For detailed Lightning Network concepts mapped to Fiber, see [docs/references/lightning-concepts.md](docs/references/lightning-concepts.md).
+## Core Rule for AI Agents
 
-## Test Framework Architecture
+Before adding or changing tests, always follow this loop:
 
-```
+1. Understand the product behavior or upstream PR being tested.
+2. Search existing tests for similar flows.
+3. Reuse existing helper methods and test patterns first.
+4. Write the smallest clear regression test that proves the behavior.
+5. If the test fails, diagnose whether the failure is product behavior, test timing, missing chain progress, wrong topology, or wrong assertion.
+6. Update this guide with any reusable lesson.
+
+Do not guess complex Fiber or CKB on-chain behavior. Look for an existing passing test and copy the proven flow.
+
+## Project Structure
+
+```text
 framework/
-├── basic.py              # CkbTest base (unittest.TestCase → CKB node)
-├── basic_fiber.py        # FiberTest base (2 Fiber nodes + helpers)
-├── basic_share_fiber.py  # SharedFiberTest base (shared env across methods)
-├── basic_fiber_with_cch.py  # FiberCchTest (+ BTC + LND for cross-chain)
-├── fiber_rpc.py          # FiberRPCClient (JSON-RPC 2.0)
-├── fnn_cli.py            # FNN CLI wrapper used by fnn-cli integration tests
-├── rpc.py                # RPCClient for CKB
-├── test_cluster.py       # Cluster lifecycle helpers for multi-node tests
-├── test_btc.py           # Bitcoin node lifecycle helpers (CCH)
-├── test_fiber.py         # Fiber node lifecycle
-├── test_lnd.py           # LND node lifecycle helpers (CCH)
-├── test_node.py          # CKB node lifecycle
-├── test_wasm_fiber.py    # WASM Fiber service lifecycle helpers
-├── config.py             # Constants (DEFAULT_MIN_DEPOSIT_CKB = 99 * 100000000)
-├── util.py               # Utilities (run_command, generate_account, change_time)
-└── helper/               # miner.py, ckb_cli.py, contract.py, udt_contract.py, tx.py
+├── basic.py                  # CkbTest base, CKB node lifecycle
+├── basic_fiber.py            # FiberTest base, 2 Fiber nodes + common helpers
+├── basic_share_fiber.py      # SharedFiberTest base, shared env across tests
+├── basic_fiber_with_cch.py   # FiberCchTest, CCH/BTC/LND helpers
+├── fiber_rpc.py              # JSON-RPC Fiber client
+├── fnn_cli.py                # fnn-cli wrapper
+├── test_fiber.py             # Fiber node lifecycle
+├── test_node.py              # CKB node lifecycle
+└── helper/                   # miner, ckb-cli, contract, UDT, tx helpers
+
+test_cases/fiber/devnet/
+├── open_channel/
+├── shutdown_channel/
+├── send_payment/
+├── watch_tower/
+├── watch_tower_wit_tlc/
+├── cch/
+└── ...
 ```
 
-**Inheritance**:
+## Base Test Classes
 
+Use `FiberTest` for most new regression tests. It creates a fresh environment for each test method and is safer for destructive scenarios such as force close, revoke, shutdown, restart, and on-chain settlement.
+
+Use `SharedFiberTest` only when several tests intentionally share the same topology and state. Shared tests are faster but can become order-dependent.
+
+## Common Helpers
+
+| Helper | Purpose |
+|---|---|
+| `self.open_channel(f1, f2, bal1, bal2, udt=None)` | Open channel and wait until ready |
+| `self.send_payment(f1, f2, amount, wait=True, udt=None)` | Keysend payment with retry |
+| `self.send_invoice_payment(f1, f2, amount, wait=True, udt=None)` | Invoice payment with retry |
+| `self.wait_for_channel_state(client, pubkey, state, include_closed=False, channel_id=None)` | Wait channel state |
+| `self.wait_payment_state(fiber, payment_hash, status)` | Wait payment state |
+| `self.wait_invoice_state(fiber, payment_hash, status)` | Wait invoice state |
+| `self.generate_account(ckb_balance, udt_owner_private_key=None, udt_balance=...)` | Create funded account |
+| `self.start_new_fiber(private_key)` | Start extra Fiber node |
+| `self.generate_random_preimage()` | Generate payment preimage |
+| `self.get_commit_cells()` | Inspect force-close commitment cells |
+| `self.node.getClient().generate_epochs("0x1", wait_time=0)` | Advance CKB epochs |
+
+Amounts are in Shannon. Use `hex()` for RPC amount fields.
+
+## State Names
+
+Channel states commonly used in tests:
+
+```text
+NegotiatingFunding / ChannelReady / ShuttingDown / Closed
 ```
-unittest.TestCase → CkbTest → FiberTest → FiberCchTest
-                                  ↓
-                            SharedFiberTest
+
+Payment states:
+
+```text
+Created / Inflight / Success / Failed
 ```
 
-- **FiberTest**: Each test method (`setup_method`) starts fresh Fiber nodes, issues UDT, connects peers, then tears down everything in `teardown_method`. Isolated but slow.
-- **SharedFiberTest**: Fiber environment is initialized once in `setup_class` and shared across all test methods. Only `teardown_class` cleans up. Much faster for multi-test classes that build on the same topology.
+Invoice states:
 
-Each test method auto-gets: CKB dev node (`self.node`), two connected Fiber nodes (`self.fiber1`, `self.fiber2`), UDT contract (`self.udtContract`).
+```text
+Open / Received / Paid / Cancelled / Expired
+```
 
-### Choosing FiberTest vs SharedFiberTest
+Always confirm the exact state string from existing tests or RPC output before asserting.
 
-| Criteria | FiberTest | SharedFiberTest |
-|----------|-----------|-----------------|
-| **Environment lifecycle** | Per-method (fresh each test) | Per-class (shared across tests) |
-| **Speed** | Slow (full setup/teardown per test) | Fast (one-time setup, reused) |
-| **Test isolation** | Full isolation | Tests share state — order may matter |
-| **Use when** | Tests need clean state, destructive ops (force close, revoke) | Multiple tests build on same topology (routing, fee, payment params) |
-| **Extra nodes** | `self.start_new_fiber(key)` in test method | `self.start_new_fiber(key)` in `setUp()` with `_channel_inited` guard |
-| **Cleanup** | Automatic per-method | Automatic per-class |
+## Test Writing Rules
 
-## Writing Tests - Quick Templates
+Keep tests simple and linear. A future developer should be able to read the test from top to bottom and understand the scenario without jumping through many helper layers.
 
-### Template A: FiberTest (isolated per-method environment)
+Preferred pattern:
 
 ```python
-import time
-import pytest
-from framework.basic_fiber import FiberTest
-
-class TestMyFeature(FiberTest):
-    # Optional config override
-    # start_fiber_config = {"fiber_auto_accept_amount": "0"}
-
-    def test_basic_scenario(self):
-        self.open_channel(self.fiber1, self.fiber2, 200 * 100000000, 100 * 100000000)
-        payment_hash = self.send_payment(self.fiber1, self.fiber2, 10 * 100000000)
-        result = self.fiber1.get_client().get_payment({"payment_hash": payment_hash})
-        assert result["status"] == "Success"
-
-    def test_error_scenario(self):
-        with pytest.raises(Exception) as exc_info:
-            self.fiber1.get_client().open_channel({
-                "pubkey": self.fiber2.get_pubkey(),
-                "funding_amount": hex(0), "public": True,
-            })
-        assert "should be greater than or equal to" in exc_info.value.args[0]
+class TestFeature(FiberTest):
+    def test_specific_behavior(self):
+        # 1. Build topology
+        # 2. Create invoice / payment / channel state
+        # 3. Trigger the behavior
+        # 4. Advance chain or wait for async work if needed
+        # 5. Assert final RPC-visible state
 ```
 
-### Template B: SharedFiberTest (shared environment, one-time topology setup)
+Rules:
 
-Use when multiple tests share the same channel topology (routing tests, fee tests, parameter boundary tests).
+- Put one regression feature in one file.
+- Prefer existing helpers in `FiberTest` before adding framework helpers.
+- Prefer direct RPC assertions: `get_payment`, `get_invoice`, `list_channels`, `list_peers`.
+- Do not assert too early after asynchronous or on-chain operations.
+- Use explicit waits with clear timeouts.
+- For PR regressions, mention the upstream PR or issue in the test class docstring.
 
-```python
-import pytest
-from framework.basic_share_fiber import SharedFiberTest
-from framework.test_fiber import Fiber
+## PR Regression Workflow
 
-class TestMySharedFeature(SharedFiberTest):
-    # Optional config override
-    # start_fiber_config = {"fiber_auto_accept_amount": "0"}
+When adding tests for a Fiber PR:
 
-    fiber3: Fiber
-    fiber4: Fiber
+1. Read the PR summary and changed files.
+2. Identify the changed component.
+3. Map the component to a test category.
+4. Search existing tests in that category.
+5. Copy the closest proven setup/chain-progress pattern.
+6. Add a focused regression test.
+7. Update this guide if the PR exposes a new testing pitfall.
 
-    def setUp(self):
-        """One-time topology setup, guarded by _channel_inited flag."""
-        if getattr(TestMySharedFeature, "_channel_inited", False):
-            return
-        TestMySharedFeature._channel_inited = True
+Component mapping:
 
-        # Create extra nodes
-        self.__class__.fiber3 = self.start_new_fiber(self.generate_account(10000))
-        self.__class__.fiber4 = self.start_new_fiber(self.generate_account(10000))
-
-        # Build topology: fiber1 -- fiber2 -- fiber3 -- fiber4
-        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0)
-        self.open_channel(self.fiber2, self.fiber3, 1000 * 100000000, 0)
-        self.open_channel(self.fiber3, self.fiber4, 1000 * 100000000, 0)
-
-    def test_multi_hop_payment(self):
-        payment_hash = self.send_payment(self.fiber1, self.fiber4, 1 * 100000000)
-        result = self.fiber1.get_client().get_payment({"payment_hash": payment_hash})
-        assert result["status"] == "Success"
-
-    def test_dry_run_fee(self):
-        payment = self.fiber1.get_client().send_payment({
-            "target_pubkey": self.fiber4.get_client().node_info()["pubkey"],
-            "amount": hex(1 * 100000000),
-            "keysend": True,
-            "dry_run": True,
-        })
-        assert int(payment["fee"], 16) > 0
-```
-
-**Key pattern**: `setUp()` (unittest-style, called before each test) + `_channel_inited` class-level flag ensures topology is built only once. Use `self.__class__.fiberN` to store extra nodes on the class.
-
-## Key Helper Methods
-
-| Method | Purpose |
-|--------|---------|
-| `self.open_channel(f1, f2, bal1, bal2, udt=None)` | Open channel with balances |
-| `self.send_payment(f1, f2, amount)` | Keysend with retry |
-| `self.send_invoice_payment(f1, f2, amount)` | Invoice payment with retry |
-| `self.wait_for_channel_state(client, pubkey, state)` | Wait channel state |
-| `self.wait_payment_state(fiber, hash, status)` | Wait payment Success/Failed |
-| `self.wait_invoice_state(client, hash, status)` | Wait invoice status |
-| `self.generate_account(ckb_balance)` | Create funded account |
-| `self.start_new_fiber(private_key)` | Start fiber3, fiber4, ... |
-| `self.generate_random_preimage()` | Random 32-byte hex |
-| `self.get_fiber_balance(fiber)` | Chain + channel balances |
-| `self.wait_and_check_tx_pool_fee(rate, check)` | Wait for tx in pool |
-| `self.get_ln_tx_trace(tx_hash)` | Trace on-chain LN txs |
-
-**Amounts**: All in Shannon (1 CKB = 100000000). Use `hex()` for RPC.
-
-**States**: Channel: `NEGOTIATING_FUNDING → CHANNEL_READY → SHUTTING_DOWN → CLOSED`. Payment: `Created → Inflight → Success/Failed`. Invoice: `Open → Received → Paid/Cancelled/Expired`.
-
-For complete API reference, see [docs/references/api-reference.md](docs/references/api-reference.md).
-For detailed test patterns, see [docs/references/test-patterns.md](docs/references/test-patterns.md).
-
-## Test style: simple, obvious, easy to maintain
-
-New and refactored integration tests should be **straightforward** (“stupid” is good): a reader should follow the flow without hunting through helpers or clever abstractions.
-
-- **Linear setup and assertions**: Put steps in `setUp` / test methods in order. Avoid one-off private helpers unless the same logic is reused across tests or files.
-- **Obvious waits**: Prefer a plain `for` loop with `time.sleep(1)` and a clear timeout / `assert False, "…"` message over nested wait utilities when the condition is local to one test file.
-- **Assert behavior, not prose**: Prefer checks on RPC results (e.g. `list_peers`, channel state, payment status). Do not assert on many alternate error substrings unless the product contract requires it; `pytest.raises(Exception)` is acceptable when only “must fail” matters.
-- **Reuse the framework first**: Use `FiberTest` / `SharedFiberTest` helpers (`open_channel`, `send_payment`, `wait_*`, etc.) before adding new shared utilities in `framework/`.
-- **Scope**: One file (or class) per feature or PR regression; a short top-of-file comment naming the PR or behavior is enough—no long essays.
-
----
-
-## Test Coverage Gap Analysis: Fiber vs Bitcoin LND
-
-The following is a systematic comparison between LND's integration test suite (160+ test cases) and Fiber's current coverage (500+ test methods). Gaps are categorized by priority.
-
-For the complete gap analysis with recommended test cases, see [docs/references/gap-analysis.md](docs/references/gap-analysis.md).
-
-### Critical Gaps (P0 - Must Fix)
-
-| Gap Area | LND Coverage | Fiber Status | Impact |
-|----------|-------------|--------------|--------|
-| **Cooperative close with pending TLCs** | `testCoopCloseWithHtlcs`, `testCoopCloseWithHtlcsWithRestart` | `shutdown_channel/` has close-path tests, but pending-TLC coop-close remains only in commented `test_pending_tlc.py` | Fund loss risk |
-| **Channel update tests** | `testUpdateChanStatus`, `testSendUpdateDisableChannel` | `update_channel/` has baseline tests (e.g. `test_update_channel.py`, `test_enabled.py`), but disable/propagation coverage is still limited | Routing broken |
-| **Offline payment delivery** | `testSwitchOfflineDelivery*` (4 tests) | `send_payment/offline/` has restart suites, but some cases are still stubs (`test_disconnect.py` empty, `test_send_payment_with_stop.py` pass) | Payment loss |
-| **Payment error propagation** | `testHtlcErrorPropagation`, `testSendToRouteErrorPropagation` | No dedicated error propagation test | Silent failures |
-| **Channel reestablishment** | `testDataLossProtection` | No channel reestablish test after disconnect | State corruption |
-
-### High Priority Gaps (P1)
-
-| Gap Area | LND Coverage | Fiber Status | Recommended Tests |
-|----------|-------------|--------------|-------------------|
-| **Gossip protocol sync** | `testGraphTopologyNotifications`, `testNodeAnnouncement` | No gossip sync validation tests | Test gossip message propagation, stale message handling |
-| **Payment retry & backoff** | Built-in retry logic (DEFAULT_PAYMENT_TRY_LIMIT=5) | No explicit retry behavior test | Test retry after transient failures, backoff timing |
-| **Max pending channels** | `testMaxPendingChannels` | No test | Test concurrent channel opens exceed limit |
-| **Channel balance accounting** | `testChannelBalance`, `testChannelUnsettledBalance` | Balance checked incidentally, no dedicated test | Test balance accuracy during TLC lifecycle |
-| **Invoice subscription/streaming** | `testInvoiceSubscriptions` | No subscription test | Test real-time invoice state notifications |
-| **List payments query** | `testListPayments` | Only `get_payment` tested | Test payment history query, filtering |
-| **Connection timeout** | `testNetworkConnectionTimeout` | No timeout test | Test peer connection timeout behavior |
-| **Reconnect after address change** | `testReconnectAfterIPChange` | No IP change test | Test node reconnection after address update |
-
-### Medium Priority Gaps (P2)
-
-| Gap Area | LND Coverage | Fiber Status | Recommended Tests |
-|----------|-------------|--------------|-------------------|
-| **Revoked close retribution (remote hodl)** | `testRevokedCloseRetributionRemoteHodl` | `test_revert_tx.py` covers basic case only | Test with pending TLCs during revoked close |
-| **Circuit persistence** | `testSwitchCircuitPersistence` | No test | Test payment circuit survives node restart |
-| **Payment address mismatch** | `testWrongPaymentAddr` | No test | Test payment with wrong payment secret |
-| **Funding expiry edge cases** | `testFundingExpiryBlocksOnPending`, `testFundingManagerFundingTimeout` | `test_funding_timeout.py` basic only | Test various funding timeout scenarios |
-| **Max channel size** | `testMaxChannelSize`, `testWumboChannels` | No max size test | Test channel size limits |
-| **Hold invoice persistence** | `testHoldInvoicePersistence` | `test_settle_invoice.py` has restart test | Enhance with multi-hop hold persistence |
-| **Sphinx replay persistence** | `testSphinxReplayPersistence` | No test | Test onion packet replay protection |
-| **Async bidirectional payments** | `testBidirectionalAsyncPayments` | `test_send_payment_each_other` partial | Test high-throughput bidirectional stress |
-| **Fee estimation (route)** | `testEstimateRouteFee` | `test_dry_run.py` basic | Enhance dry_run with multi-hop fee estimation |
-
-### Fiber-Specific Gaps (Features in code but not tested)
-
-| Feature | Source Location | Current Test Status |
-|---------|----------------|-------------------|
-| `max_tlc_number_in_flight` enforcement | channel.rs (max 125, system 253) | open_channel test only, no enforcement test during payment |
-| `max_tlc_value_in_flight` enforcement | channel.rs | open_channel test only, no enforcement test during payment |
-| Custom records (max 2KB) | payment.rs | `test_custom_records.py` basic, no overflow test |
-| Trampoline MPP restriction | payment.rs (only 1 hop with MPP) | No test for this constraint |
-| Payment `max_parts` limit | payment.rs (PAYMENT_MAX_PARTS_LIMIT) | `test_max_parts.py` is empty (pass) |
-| Gossip message ordering | gossip.rs | No test |
-| Gossip stale message handling | gossip.rs (SOFT_BROADCAST_MESSAGES_CONSIDERED_STALE_DURATION) | No test |
-| Watchtower external (standalone) | config: standalone_watchtower_rpc_url | No test |
-| CCH order expiry | cch/ (DEFAULT_ORDER_EXPIRY_DELTA_SECONDS) | No test |
-| CCH order pruning | cch/ (PRUNE_DELAY_SECONDS = 21 days) | No test |
-| CCH fee calculation | cch/ (base_fee_sats, fee_rate_per_million_sats) | No test |
-| Biscuit token time-based validation | rpc/biscuit.rs | No time-based auth test |
-| Channel funding_timeout_seconds | channel.rs | Basic test, no edge cases |
-| TLC waiting ACK timeout (30s) | channel.rs | No test |
-| Commitment number sequence validation | channel.rs | No test |
-| Network max_service_protocol_data_size (130KB) | network.rs | No test |
-| Payment session retry from Failed state | payment.rs | No test |
-| Graph cursor pagination | graph.rs (default 500) | `test_graph_nodes.py` tests pagination, graph_channels not tested |
-
----
-
-## Writing New Tests for PR Regression
-
-When a new PR lands, follow this workflow:
-
-### 1. Identify Changed Components
-
-```bash
-# Check what changed
-git diff develop..PR_BRANCH --stat
-# Focus on fiber-lib/src/ changes
-git diff develop..PR_BRANCH -- fiber/fiber-lib/src/
-```
-
-### 2. Map Changes to Test Categories
-
-| Changed File | Test Directory |
-|-------------|---------------|
-| `fiber/channel.rs` | `open_channel/`, `shutdown_channel/`, `update_channel/`, `list_channels/` |
+| Changed area | Preferred test directory |
+|---|---|
+| `fiber/channel.rs` | `open_channel/`, `shutdown_channel/`, `list_channels/` |
 | `fiber/payment.rs` | `send_payment/`, `send_payment_with_router/` |
-| `fiber/network.rs` | `connect_peer/`, `disconnect_peer/`, general integration |
+| `fiber/network.rs` | `connect_peer/`, `disconnect_peer/` |
 | `fiber/invoice.rs` | `new_invoice/`, `get_invoice/`, `settle_invoice/`, `cancel_invoice/` |
-| `fiber/graph.rs` | `graph_channels/`, `graph_nodes/`, `build_router/`, `send_payment/path/` |
-| `fiber/gossip.rs` | `graph_channels/`, `graph_nodes/` (gossip sync) |
-| `watchtower/` | `watch_tower/`, `watch_tower_wit_tlc/`, `watch_tower_debug/` |
-| `cch/` | `cch/` |
-| `rpc/` | Corresponding feature directory |
+| `fiber/graph.rs`, `fiber/gossip.rs` | `graph_channels/`, `graph_nodes/`, `send_payment/path/` |
+| watchtower / on-chain settlement | `watch_tower/`, `watch_tower_wit_tlc/` |
+| CCH | `cch/` |
 
-### 3. Test Template for New PR
+## Critical Lesson: Force Shutdown Is an On-Chain Settlement Flow
+
+Do not treat `shutdown_channel({"force": True})` as a simple RPC state transition.
+
+Force shutdown creates on-chain commitment/settlement transactions. If a test involves force close, pending TLCs, watchtower, or `settle_invoice` after force close, final payment/invoice/channel states may not converge until:
+
+1. peers/watchtower observe the force-close transaction,
+2. the preimage or settlement transaction is submitted,
+3. CKB epochs advance far enough for the settlement/unlock path,
+4. commitment cells are consumed.
+
+Wrong pattern:
 
 ```python
-import time
-import pytest
-from framework.basic_fiber import FiberTest
-
-class TestPR<number>(FiberTest):
-    """
-    PR-<number>: <title>
-    Test coverage for: <brief description of changes>
-    """
-
-    def test_<feature>_happy_path(self):
-        """Test the normal/expected behavior introduced by this PR."""
-        # Setup
-        self.open_channel(self.fiber1, self.fiber2, 200 * 100000000, 100 * 100000000)
-        # Execute the new feature
-        # Assert expected behavior
-
-    def test_<feature>_edge_case(self):
-        """Test boundary conditions."""
-        pass
-
-    def test_<feature>_error_handling(self):
-        """Test error cases."""
-        with pytest.raises(Exception) as exc_info:
-            # Trigger error condition
-            pass
-        assert "expected error" in exc_info.value.args[0]
-
-    def test_<feature>_backward_compatible(self):
-        """Ensure existing functionality still works."""
-        pass
+fiber.get_client().shutdown_channel({"channel_id": channel_id, "force": True})
+payee.get_client().settle_invoice({"payment_hash": payment_hash, "payment_preimage": preimage})
+self.wait_payment_state(payer, payment_hash, "Success")  # may be too early
 ```
 
-### 4. Test Naming Convention
+Correct pattern:
 
-- File: `test_cases/fiber/devnet/<category>/test_<feature>.py`
-- Class: `Test<Feature>(FiberTest)` or `<FeatureName>(FiberTest)`
-- Method: `test_<scenario_description>(self)`
+```python
+# 1. Force-close the channel.
+fiber.get_client().shutdown_channel({"channel_id": channel_id, "force": True})
 
-### 5. CI Integration
+# 2. Give peers/watchtower time to observe the force-close transaction.
+time.sleep(10)
 
-Add new test to `Makefile` test targets if new category. Existing categories auto-discover.
+# 3. Reveal the preimage / settle held invoice if needed.
+payee.get_client().settle_invoice({
+    "payment_hash": payment_hash,
+    "payment_preimage": preimage,
+})
 
----
+# 4. Advance epochs so settlement/unlock conditions can be reached.
+self.node.getClient().generate_epochs("0x1", wait_time=0)
+
+# 5. Wait until force-close commitment cells are consumed.
+while len(self.get_commit_cells()) != 0:
+    time.sleep(10)
+
+# 6. Now assert final states.
+self.wait_payment_state(payer, payment_hash, "Success")
+self.wait_invoice_state(payee, payment_hash, "Paid")
+```
+
+Use the existing watchtower tests as the source of truth for force-close flows. If a force-close regression test flakes or times out, first check whether the chain was advanced and commit cells were fully consumed before the final assertion.
+
+## AI Failure Recovery and Experience Summary
+
+When an AI-generated test fails, do not only patch the code. Also summarize the reusable lesson in this file.
+
+Use this checklist:
+
+```text
+Failure summary:
+- What failed?
+- Which assumption was wrong?
+- Was the failure caused by timing, topology, chain progress, RPC usage, or actual product behavior?
+- Which existing test shows the correct pattern?
+- What rule should future AI agents follow?
+```
+
+Then update the relevant section of this guide.
+
+Examples of lessons that should be recorded:
+
+- Force shutdown requires on-chain epoch advancement and commit-cell cleanup before final assertions.
+- Multi-hop payment tests may need explicit `trampoline_hops` or route hints.
+- Hold invoices should assert `Received` before force close or settlement.
+- UDT channel tests need correct `udt_type_script` and funded owner account.
+- Restart tests must distinguish persisted state from in-memory actor state.
 
 ## Running Tests
 
+Specific file:
+
 ```bash
-# Specific test
-pytest test_cases/fiber/devnet/open_channel/test_funding_amount.py -v -s
+pytest test_cases/fiber/devnet/watch_tower_wit_tlc/test_force_close_fulfill.py -v -s
+```
 
-# Specific method
-pytest test_cases/fiber/devnet/open_channel/test_funding_amount.py::FundingAmount::test_funding_amount_ckb_is_zero -v -s
+Specific method:
 
-# All devnet
+```bash
+pytest path/to/test_file.py::TestClass::test_method -v -s
+```
+
+All devnet tests:
+
+```bash
 make fiber_test
+```
 
-# With HTML report
+With HTML report:
+
+```bash
 python -m pytest test_cases/fiber/devnet/ --html=report/report.html
 ```
+
+## Documentation Links
+
+- API reference: `docs/references/api-reference.md`
+- Test patterns: `docs/references/test-patterns.md`
+- Lightning/Fiber concepts: `docs/references/lightning-concepts.md`
+- Gap analysis: `docs/references/gap-analysis.md`
