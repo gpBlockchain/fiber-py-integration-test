@@ -31,6 +31,41 @@ class TestForceCloseFulfill(FiberTest):
             time.sleep(10)
         assert len(self.get_commit_cells()) == 0
 
+    def _get_tlc_status(self, fiber, remote_pubkey, channel_id, payment_hash):
+        channels = fiber.get_client().list_channels(
+            {
+                "pubkey": remote_pubkey,
+                "include_closed": True,
+            }
+        )["channels"]
+        for channel in channels:
+            if channel["channel_id"] != channel_id:
+                continue
+            for tlc in channel.get("pending_tlcs", []):
+                if tlc["payment_hash"] == payment_hash:
+                    return tlc["status"]
+        raise AssertionError(
+            f"TLC {payment_hash} not found in channel {channel_id} on {fiber.get_pubkey()}"
+        )
+
+    def _assert_sender_remote_removed(self, sender, receiver, channel_id, payment_hash):
+        status = self._get_tlc_status(
+            sender,
+            receiver.get_pubkey(),
+            channel_id,
+            payment_hash,
+        )
+        assert status == {"Outbound": "RemoteRemoved"}
+
+    def _assert_receiver_local_removed(self, receiver, sender, channel_id, payment_hash):
+        status = self._get_tlc_status(
+            receiver,
+            sender.get_pubkey(),
+            channel_id,
+            payment_hash,
+        )
+        assert status == {"Inbound": "LocalRemoved"}
+
     def test_one_hop_force_close_payee_settle_invoice(self):
         """
         A -> B
@@ -38,7 +73,8 @@ class TestForceCloseFulfill(FiberTest):
         B creates a hold invoice. A sends payment and force-closes the channel
         while the payment is Inflight. B settles the invoice with the preimage.
         A should eventually mark the payment as Success and B should mark the
-        invoice as Paid.
+        invoice as Paid. The TLC status should become RemoteRemoved on the
+        sender side and LocalRemoved on the receiver side.
         """
         self.open_channel(
             self.fiber1,
@@ -99,6 +135,18 @@ class TestForceCloseFulfill(FiberTest):
 
         self.wait_payment_state(self.fiber1, payment_hash, "Success", timeout=300)
         self.wait_invoice_state(self.fiber2, payment_hash, "Paid", timeout=300)
+        self._assert_sender_remote_removed(
+            self.fiber1,
+            self.fiber2,
+            channel_id,
+            payment_hash,
+        )
+        self._assert_receiver_local_removed(
+            self.fiber2,
+            self.fiber1,
+            channel_id,
+            payment_hash,
+        )
 
         payment_result = self.fiber1.get_client().get_payment(
             {"payment_hash": payment_hash}
@@ -118,6 +166,8 @@ class TestForceCloseFulfill(FiberTest):
         the downstream B-C channel while the payment is Inflight. C settles the
         invoice with the preimage. B should handle fulfill on the closed channel
         and relay it upstream, so A should eventually mark the payment as Success.
+        On the closed B-C channel, B's offered TLC should be RemoteRemoved and
+        C's received TLC should be LocalRemoved.
         """
         fiber3 = self.start_new_fiber(
             self.generate_account(
@@ -195,6 +245,18 @@ class TestForceCloseFulfill(FiberTest):
 
         self.wait_payment_state(self.fiber1, payment_hash, "Success", timeout=300)
         self.wait_invoice_state(fiber3, payment_hash, "Paid", timeout=300)
+        self._assert_sender_remote_removed(
+            self.fiber2,
+            fiber3,
+            channel_bc,
+            payment_hash,
+        )
+        self._assert_receiver_local_removed(
+            fiber3,
+            self.fiber2,
+            channel_bc,
+            payment_hash,
+        )
 
         payment_result = self.fiber1.get_client().get_payment(
             {"payment_hash": payment_hash}
