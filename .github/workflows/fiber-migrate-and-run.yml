@@ -21,7 +21,7 @@ env:
 
 jobs:
   migrate-and-run:
-    name: Build → Migrate → Run
+    name: Build → Auto-Migrate(on start) → Run
     runs-on: ubuntu-22.04
     timeout-minutes: 360
 
@@ -53,11 +53,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             clang libclang-dev make curl ca-certificates
 
-      - name: Build fnn & fnn-migrate (portable)
+      - name: Build fnn (portable)
         run: |
           export BUILD_ROOT=$(pwd)
 
-          echo "▶ Building OpenSSL 1.1.1s (static) …"
+          echo "▶ Building OpenSSL 1.1.1s …"
           curl -sSLO https://www.openssl.org/source/openssl-1.1.1s.tar.gz
           tar -xzf openssl-1.1.1s.tar.gz
           cd openssl-1.1.1s
@@ -72,15 +72,10 @@ jobs:
           echo "▶ Building fnn (release, portable) …"
           cargo build --release --locked --features portable
 
-          echo "▶ Building fnn-migrate (release) …"
-          cd migrate && cargo build --release --locked && cd ..
-
-      - name: Print binary versions
+      - name: Print fnn version
         run: |
           echo "===== fnn version ====="
           ./target/release/fnn --version || true
-          echo "===== fnn-migrate version ====="
-          ./migrate/target/release/fnn-migrate --version || true
 
       - name: Create working directories
         run: mkdir -p ckb fiber
@@ -107,53 +102,43 @@ jobs:
           echo "▶ fiber/ directory after extraction:"
           ls -la fiber/
 
-      - name: Run fnn-migrate
-        run: |
-          BINARY="./migrate/target/release/fnn-migrate"
-
-          echo "▶ Running: $BINARY -d fiber/ …"
-
-          MIGRATE_OUTPUT=$(printf 'YES\n' | "$BINARY" -d fiber/ 2>&1) || true
-          echo "$MIGRATE_OUTPUT"
-
-          if echo "$MIGRATE_OUTPUT" | grep -q "no need to migrate"; then
-            echo "❌ DB reports no migration needed — the store DB may already be at this version. Aborting."
-            exit 1
-          elif echo "$MIGRATE_OUTPUT" | grep -q "db migrated successfully"; then
-            echo "✅ Migration completed successfully."
-          else
-            echo "❌ Migration did not complete as expected, please check the output above."
-            exit 1
-          fi
-
       - name: Copy testnet config
         run: |
           cp config/testnet/config.yml ./config.yml
           echo "Config copied."
 
-      - name: Start fiber node
+      - name: Start fiber node and verify migration
         env:
           FIBER_SECRET_KEY_PASSWORD: ${{ secrets.FIBER_SECRET_KEY_PASSWORD }}
           RUST_LOG: info
         run: |
-          echo "▶ Starting fnn, will run for 30 seconds then print logs and exit …"
+          set -euo pipefail
 
-          ./target/release/fnn -c config.yml -d . > /tmp/fnn.log 2>&1 &
+          echo "▶ Starting fnn with auto-confirm migration input …"
+          printf 'YES\n' | ./target/release/fnn -c config.yml -d . > /tmp/fnn.log 2>&1 &
           FNN_PID=$!
           echo "fnn PID: ${FNN_PID}"
 
           sleep 30
 
+          echo "===== fnn logs ====="
+          cat /tmp/fnn.log || true
+
           if ! kill -0 "$FNN_PID" 2>/dev/null; then
-            echo "❌ fnn process exited unexpectedly within 30 seconds, startup failed."
-            echo "===== fnn logs ====="
-            cat /tmp/fnn.log
+            echo "❌ fnn exited within 30 seconds."
             exit 1
           fi
 
-          echo "✅ fnn node is running normally (alive for 30 seconds)."
-          echo "===== fnn startup logs (first 30 seconds) ====="
-          cat /tmp/fnn.log
+          if grep -Eq "Migration .* complete" /tmp/fnn.log; then
+            echo "✅ Migration detected and completed."
+          else
+            echo "❌ Migration success log NOT found."
+            kill "$FNN_PID" 2>/dev/null || true
+            wait "$FNN_PID" 2>/dev/null || true
+            exit 1
+          fi
+
+          echo "✅ Validation passed."
 
           kill "$FNN_PID" 2>/dev/null || true
           wait "$FNN_PID" 2>/dev/null || true
