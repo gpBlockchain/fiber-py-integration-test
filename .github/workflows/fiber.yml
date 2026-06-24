@@ -5,8 +5,12 @@ name: fiber test
 on:
   push:
     branches: ["main"]
+    paths-ignore:
+      - ".github/workflows/**"
   pull_request:
     branches: ["main"]
+    paths-ignore:
+      - ".github/workflows/**"
   workflow_dispatch: # Allows the workflow to be manually triggered
     inputs:
       GitUrl:

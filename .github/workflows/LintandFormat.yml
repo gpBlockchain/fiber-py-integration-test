@@ -1,7 +1,13 @@
 name: Lint and Format
 
-on: [push, pull_request]
-
+on:
+  push:
+    paths-ignore:
+      - ".github/workflows/**"
+  pull_request:
+    paths-ignore:
+      - ".github/workflows/**"
+      
 jobs:
   lint_and_format:
     runs-on: ubuntu-latest
