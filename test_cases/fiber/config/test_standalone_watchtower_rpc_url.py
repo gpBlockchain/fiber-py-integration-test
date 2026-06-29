@@ -49,7 +49,7 @@ class TestWatchTower(FiberTest):
         self.node.getClient().generate_epochs("0x1", 0)
         with pytest.raises(Exception) as exc_info:
             tx = self.wait_and_check_tx_pool_fee(1000, False, 20 * 5)
-        expected_error_message = "expected_state"
+        expected_error_message = "tx pool pending size did not reach"
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "
             f"not found in actual string '{exc_info.value.args[0]}'"
@@ -90,7 +90,7 @@ class TestWatchTower(FiberTest):
         self.node.getClient().generate_epochs("0x1", 0)
         with pytest.raises(Exception) as exc_info:
             tx = self.wait_and_check_tx_pool_fee(1000, False, 20 * 5)
-        expected_error_message = "expected_state"
+        expected_error_message = "tx pool pending size did not reach"
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "
             f"not found in actual string '{exc_info.value.args[0]}'"
@@ -128,7 +128,7 @@ class TestWatchTower(FiberTest):
         self.node.getClient().generate_epochs("0x1", 0)
         with pytest.raises(Exception) as exc_info:
             tx = self.wait_and_check_tx_pool_fee(1000, False, 20 * 5)
-        expected_error_message = "expected_state"
+        expected_error_message = "tx pool pending size did not reach"
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "
             f"not found in actual string '{exc_info.value.args[0]}'"

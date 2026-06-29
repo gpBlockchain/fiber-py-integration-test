@@ -1,6 +1,6 @@
 set -ex
 
-DEFAULT_FIBER_BRANCH="v0.8.1"
+DEFAULT_FIBER_BRANCH="v0.9.0-rc4"
 DEFAULT_FIBER_URL="https://github.com/nervosnetwork/fiber.git"
 
 GitFIBERBranch="${GitBranch:-$DEFAULT_FIBER_BRANCH}"
@@ -15,6 +15,6 @@ cp target/debug/fnn-cli ../download/fiber/current/fnn-cli.debug
 cargo build --release
 cp target/release/fnn ../download/fiber/current/fnn
 cp target/release/fnn-cli ../download/fiber/current/fnn-cli
-cd migrate
-cargo build --release
-cp target/release/fnn-migrate ../../download/fiber/current/fnn-migrate
+# cd migrate
+# cargo build --release
+# cp target/release/fnn-migrate ../../download/fiber/current/fnn-migrate

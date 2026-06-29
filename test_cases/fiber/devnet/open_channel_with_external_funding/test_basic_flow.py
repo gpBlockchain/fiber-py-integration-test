@@ -106,7 +106,15 @@ class TestExternalFundingBasicFlow(ExternalFundingBase):
     ):
         """
         T-21: before submit, the channel may be absent from list_channels or it
-        may already appear in AwaitingExternalFunding. Both are valid.
+        may already appear in the "awaiting external funding" phase.
+
+        The PR-1252 state-machine refactor folded the standalone
+        `AwaitingExternalFunding` state into
+        `NegotiatingFunding(AWAITING_EXTERNAL_FUNDING)`. So the valid
+        observable states are now:
+          * state_name == "NegotiatingFunding" with state_flags containing
+            "AWAITING_EXTERNAL_FUNDING", OR
+          * legacy "AwaitingExternalFunding" (for older binaries).
         """
         context = self._open_external_funding_channel(public=True)
         initiator_channel = self._find_channel_by_id(
@@ -119,4 +127,14 @@ class TestExternalFundingBasicFlow(ExternalFundingBase):
         for channel in (initiator_channel, acceptor_channel):
             if channel is None:
                 continue
-            assert channel["state"]["state_name"] == "AwaitingExternalFunding"
+            state = channel["state"]
+            name = state["state_name"]
+            flags = state.get("state_flags", "")
+            ok = name == "AwaitingExternalFunding" or (
+                name == "NegotiatingFunding"
+                and "AWAITING_EXTERNAL_FUNDING" in (flags or "")
+            )
+            assert ok, (
+                f"pre-submit channel should be awaiting external funding, "
+                f"got state_name={name!r}, state_flags={flags!r}"
+            )

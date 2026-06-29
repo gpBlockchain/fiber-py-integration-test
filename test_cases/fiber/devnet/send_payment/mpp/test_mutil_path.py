@@ -446,78 +446,48 @@ class MutilPathTestCase(FiberTest):
             self.get_account_udt_script(self.fiber1.account_private),
         )
 
-        time.sleep(10)
-        payments = [[], [], []]
-        for j in range(20):
-            # self.send_invoice_payment(self.fiber1,self.fiber1,2000 * 100000000,False)
-            for i in range(3):
-                try:
-                    payment_hash = self.send_invoice_payment(
-                        self.fibers[i],
-                        self.fibers[i],
-                        1001 * 100000000,
-                        False,
-                        None,
-                        try_count=0,
-                    )
-                    payments[i].append(payment_hash)
-                except:
-                    pass
-        # todo 断言 udt channel 不会被使用
-        time.sleep(300)
-        resend = False
+        for fiber in self.fibers[:3]:
+            self.wait_graph_channels_sync(fiber, 12, 120)
+
+        # The CKB payment amount is larger than one channel's balance, so it must
+        # be split through multiple CKB paths. UDT channels should remain unused.
         for i in range(3):
-            for payment_hash in payments[i]:
-                invoice = (
-                    self.fibers[i]
-                    .get_client()
-                    .get_invoice({"payment_hash": payment_hash})
+            self.send_invoice_payment(
+                self.fibers[i],
+                self.fibers[i],
+                1001 * 100000000,
+                True,
+                None,
+                try_count=10,
+            )
+
+        start = time.time()
+        timeout = 400
+        while True:
+            all_ok = True
+            for fiber in self.fibers[:3]:
+                balance = self.get_fiber_balance(fiber)
+                print(balance)
+                if balance["ckb"]["offered_tlc_balance"] != 0:
+                    all_ok = False
+                if balance["ckb"]["received_tlc_balance"] != 0:
+                    all_ok = False
+                for key in balance.keys():
+                    if key == "ckb" and balance["ckb"]["local_balance"] != 200000000000:
+                        all_ok = False
+                    elif key == "chain":
+                        continue
+                    elif key != "ckb" and balance[key]["local_balance"] != (
+                        200000000000 + DEFAULT_MIN_DEPOSIT_CKB * 2
+                    ):
+                        all_ok = False
+            if all_ok:
+                break
+            if time.time() - start > timeout:
+                raise AssertionError(
+                    "Balances did not reach expected values within timeout"
                 )
-                if invoice["status"] == "Open":
-                    payment = (
-                        self.fibers[i]
-                        .get_client()
-                        .get_payment({"payment_hash": payment_hash})
-                    )
-                    self.wait_payment_state(
-                        self.fibers[i], payment["payment_hash"], "Failed"
-                    )
-                    try:
-                        payment = (
-                            self.fibers[i]
-                            .get_client()
-                            .send_payment(
-                                {
-                                    "invoice": invoice["invoice_address"],
-                                    "allow_self_payment": True,
-                                }
-                            )
-                        )
-                        self.wait_payment_finished(
-                            self.fibers[i], payment["payment_hash"]
-                        )
-                        resend = True
-                    except Exception as e:
-                        pass
-        assert resend == True
-        time.sleep(300)
-        for fiber in self.fibers:
-            balance = self.get_fiber_balance(fiber)
-            print(balance)
-            assert balance["ckb"]["offered_tlc_balance"] == 0
-            assert balance["ckb"]["received_tlc_balance"] == 0
-            for key in balance.keys():
-                assert balance["ckb"]["offered_tlc_balance"] == 0
-                assert balance["ckb"]["received_tlc_balance"] == 0
-                if key == "ckb":
-                    assert balance["ckb"]["local_balance"] == 200000000000
-                elif key == "chain":
-                    continue
-                else:
-                    assert (
-                        balance[key]["local_balance"]
-                        == 200000000000 + DEFAULT_MIN_DEPOSIT_CKB * 2
-                    )
+            time.sleep(2)
 
     def test_split(self):
         """

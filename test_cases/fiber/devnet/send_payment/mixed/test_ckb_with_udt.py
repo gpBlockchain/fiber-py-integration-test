@@ -256,14 +256,19 @@ class TestCkbWithUDT(FiberTest):
         router.append(udt1_router["router_hops"][1])
         router.append(udt2_router["router_hops"][2])
 
-        payment = self.fiber1.get_client().send_payment_with_router(
-            {
-                "keysend": True,
-                "dry_run": False,
-                "router": router,
-            }
+        with pytest.raises(Exception) as exc_info:
+            payment = self.fiber1.get_client().send_payment_with_router(
+                {
+                    "keysend": True,
+                    "dry_run": False,
+                    "router": router,
+                }
+            )
+        expected_error_message = "no path found"
+        assert expected_error_message in exc_info.value.args[0], (
+            f"Expected substring '{expected_error_message}' "
+            f"not found in actual string '{exc_info.value.args[0]}'"
         )
-        self.wait_payment_state(self.fiber1, payment["payment_hash"], "Failed")
 
         # udt1 udt1 udt2 will failed
         router = []
@@ -271,29 +276,47 @@ class TestCkbWithUDT(FiberTest):
         router.append(udt1_router["router_hops"][1])
         router.append(udt2_router["router_hops"][2])
 
-        payment = self.fiber1.get_client().send_payment_with_router(
-            {
-                "keysend": True,
-                "dry_run": False,
-                "router": router,
-            }
+        # payment = self.fiber1.get_client().send_payment_with_router(
+        #     {
+        #         "keysend": True,
+        #         "dry_run": False,
+        #         "router": router,
+        #     }
+        # )
+        # self.wait_payment_state(self.fiber1, payment["payment_hash"], "Failed")
+
+        with pytest.raises(Exception) as exc_info:
+            payment = self.fiber1.get_client().send_payment_with_router(
+                {
+                    "keysend": True,
+                    "dry_run": False,
+                    "router": router,
+                }
+            )
+        expected_error_message = "no path found"
+        assert expected_error_message in exc_info.value.args[0], (
+            f"Expected substring '{expected_error_message}' "
+            f"not found in actual string '{exc_info.value.args[0]}'"
         )
-        self.wait_payment_state(self.fiber1, payment["payment_hash"], "Failed")
 
         # ckb udt ckb will failed
         router = []
         router.append(ckb_router["router_hops"][0])
         router.append(udt1_router["router_hops"][1])
         router.append(ckb_router["router_hops"][2])
-
-        payment = self.fiber1.get_client().send_payment_with_router(
-            {
-                "keysend": True,
-                "dry_run": False,
-                "router": router,
-            }
+        with pytest.raises(Exception) as exc_info:
+            payment = self.fiber1.get_client().send_payment_with_router(
+                {
+                    "keysend": True,
+                    "dry_run": False,
+                    "router": router,
+                }
+            )
+        expected_error_message = "no path found"
+        assert expected_error_message in exc_info.value.args[0], (
+            f"Expected substring '{expected_error_message}' "
+            f"not found in actual string '{exc_info.value.args[0]}'"
         )
-        self.wait_payment_state(self.fiber1, payment["payment_hash"], "Failed")
 
         # udt1 udt2 udt1 will failed
         router = []
@@ -301,14 +324,27 @@ class TestCkbWithUDT(FiberTest):
         router.append(udt2_router["router_hops"][1])
         router.append(udt1_router["router_hops"][2])
 
-        payment = self.fiber1.get_client().send_payment_with_router(
-            {
-                "keysend": True,
-                "dry_run": False,
-                "router": router,
-            }
+        # payment = self.fiber1.get_client().send_payment_with_router(
+        #     {
+        #         "keysend": True,
+        #         "dry_run": False,
+        #         "router": router,
+        #     }
+        # )
+        # self.wait_payment_state(self.fiber1, payment["payment_hash"], "Failed")
+        with pytest.raises(Exception) as exc_info:
+            payment = self.fiber1.get_client().send_payment_with_router(
+                {
+                    "keysend": True,
+                    "dry_run": False,
+                    "router": router,
+                }
+            )
+        expected_error_message = "no path found"
+        assert expected_error_message in exc_info.value.args[0], (
+            f"Expected substring '{expected_error_message}' "
+            f"not found in actual string '{exc_info.value.args[0]}'"
         )
-        self.wait_payment_state(self.fiber1, payment["payment_hash"], "Failed")
 
         amount = 1
         ckb_router = self.fiber1.get_client().build_router(
@@ -393,7 +429,7 @@ class TestCkbWithUDT(FiberTest):
                 }
             )
 
-        expected_error_message = "max_fee_amount is too low for selected route"
+        expected_error_message = "no path found"
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "
             f"not found in actual string '{exc_info.value.args[0]}'"
@@ -413,7 +449,7 @@ class TestCkbWithUDT(FiberTest):
                     "router": router,
                 }
             )
-        expected_error_message = "max_fee_amount is too low for selected route"
+        expected_error_message = "no path found"
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "
             f"not found in actual string '{exc_info.value.args[0]}'"
@@ -433,7 +469,7 @@ class TestCkbWithUDT(FiberTest):
                     "router": router,
                 }
             )
-        expected_error_message = "max_fee_amount is too low for selected route"
+        expected_error_message = "no path found"
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "
             f"not found in actual string '{exc_info.value.args[0]}'"
@@ -453,7 +489,7 @@ class TestCkbWithUDT(FiberTest):
                     "router": router,
                 }
             )
-        expected_error_message = "max_fee_amount is too low for selected route"
+        expected_error_message = "no path found"
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "
             f"not found in actual string '{exc_info.value.args[0]}'"

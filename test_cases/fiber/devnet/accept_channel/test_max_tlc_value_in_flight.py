@@ -39,5 +39,9 @@ class TestMaxTlcValueInFlight(FiberTest):
         payment_hash = self.send_payment(
             self.fiber2, self.fiber1, 1 * 100000000 + 1, False
         )
-        self.wait_payment_state(self.fiber2, payment_hash, "Failed")
-        self.send_payment(self.fiber1, self.fiber2, 1 * 100000000 + 1)
+        self.wait_payment_state(self.fiber2, payment_hash)
+        self.send_payment(self.fiber1, self.fiber2, 1 * 100000000)
+        payment_hash = self.send_payment(
+            self.fiber1, self.fiber2, 1 * 100000000 + 1, False
+        )
+        self.wait_payment_state(self.fiber1, payment_hash, "Failed")

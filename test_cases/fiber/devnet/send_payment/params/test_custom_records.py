@@ -2,10 +2,62 @@ import time
 
 import pytest
 
-from framework.basic_fiber import FiberTest
+from framework.basic_share_fiber import SharedFiberTest
 
 
-class TestCustomRecords(FiberTest):
+class TestCustomRecords(SharedFiberTest):
+
+    def setUp(self):
+        if getattr(TestCustomRecords, "_channel_inited", False):
+            return
+        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 1000 * 100000000)
+        TestCustomRecords._channel_inited = True
+
+    def test_custom_records_encoded_size_under_limit_succeeds(self):
+        # PR-1448: the 2KB limit applies to encoded custom_records, not just value bytes.
+        custom_records = {
+            # One custom record has 36 bytes of Molecule encoding overhead,
+            # so a 2011-byte value is encoded as 2047 bytes.
+            "0x12": "0x"
+            + "ab" * 2011,
+        }
+        payment = self.fiber1.get_client().send_payment(
+            {
+                "target_pubkey": self.fiber2.get_client().node_info()["pubkey"],
+                "amount": hex(100),
+                "keysend": True,
+                "allow_self_payment": True,
+                "custom_records": custom_records,
+            }
+        )
+
+        self.wait_payment_state(self.fiber1, payment["payment_hash"], "Success")
+        payment = self.fiber1.get_client().get_payment(
+            {
+                "payment_hash": payment["payment_hash"],
+            }
+        )
+        assert custom_records == payment["custom_records"]
+
+    def test_custom_records_encoded_size_over_limit_rejected(self):
+        # PR-1448: the 2KB limit applies to encoded custom_records, not just value bytes.
+        with pytest.raises(Exception) as exc_info:
+            self.fiber1.get_client().send_payment(
+                {
+                    "target_pubkey": self.fiber2.get_client().node_info()["pubkey"],
+                    "amount": hex(100),
+                    "keysend": True,
+                    "allow_self_payment": True,
+                    "custom_records": {
+                        # One custom record has 36 bytes of Molecule encoding overhead,
+                        # so a 2013-byte value is encoded as 2049 bytes.
+                        "0x12": "0x"
+                        + "ab" * 2013,
+                    },
+                }
+            )
+
+        assert "custom_records encoded size" in exc_info.value.args[0]
 
     def test_custom(self):
         """
@@ -26,7 +78,6 @@ class TestCustomRecords(FiberTest):
                 Returns:
 
         """
-        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 1000 * 100000000)
         payment = self.fiber1.get_client().send_payment(
             {
                 "target_pubkey": self.fiber2.get_client().node_info()["pubkey"],
@@ -138,7 +189,7 @@ class TestCustomRecords(FiberTest):
                     },
                 }
             )
-        expected_error_message = "value can not more than 2048 bytes"
+        expected_error_message = "custom_records encoded size"
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "
             f"not found in actual string '{exc_info.value.args[0]}'"

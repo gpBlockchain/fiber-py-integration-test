@@ -14,6 +14,15 @@ fiber:
   {% endif %}
   gossip_store_maintenance_interval_ms: 1000
   gossip_network_maintenance_interval_ms: 1000
+  {% if fiber_gossip_network_num_targeted_active_syncing_peers is defined %}
+  gossip_network_num_targeted_active_syncing_peers: {{ fiber_gossip_network_num_targeted_active_syncing_peers }}
+  {% endif %}
+  {% if fiber_gossip_network_num_targeted_outbound_passive_syncing_peers is defined %}
+  gossip_network_num_targeted_outbound_passive_syncing_peers: {{ fiber_gossip_network_num_targeted_outbound_passive_syncing_peers }}
+  {% endif %}
+  {% if fiber_gossip_policy is defined %}
+{{ fiber_gossip_policy | indent(2, true) }}
+  {% endif %}
   open_channel_auto_accept_min_ckb_funding_amount: {{ fiber_open_channel_auto_accept_min_ckb_funding_amount | default(10000000000)}}
   {% if fiber_auto_accept_channel_ckb_funding_amount is defined %}
   auto_accept_channel_ckb_funding_amount: {{ fiber_auto_accept_channel_ckb_funding_amount }}
@@ -31,6 +40,12 @@ fiber:
   {% endif %}
   {% if fiber_max_inbound_peers is defined %}
   max_inbound_peers: {{ fiber_max_inbound_peers }}
+  {% endif %}
+  {% if fiber_to_be_accepted_channels_number_limit is defined %}
+  to_be_accepted_channels_number_limit: {{ fiber_to_be_accepted_channels_number_limit }}
+  {% endif %}
+  {% if fiber_to_be_accepted_channels_bytes_limit is defined %}
+  to_be_accepted_channels_bytes_limit: {{ fiber_to_be_accepted_channels_bytes_limit }}
   {% endif %}
   {% if fiber_proxy_url is defined or fiber_proxy_random_auth is defined %}
   proxy:
@@ -144,6 +159,9 @@ cch:
 
 ckb:
   rpc_url: {{ ckb_rpc_url | default("http://127.0.0.1:8114") }}
+  {% if ckb_tx_tracing_polling_interval_ms is defined %}
+  tx_tracing_polling_interval_ms: {{ ckb_tx_tracing_polling_interval_ms }}
+  {% endif %}
   {% if ckb_udt_whitelist is defined %}
   udt_whitelist:
     - name: XUDT

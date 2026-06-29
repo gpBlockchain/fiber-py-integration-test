@@ -18,6 +18,7 @@ versions = [
     "0.7.1",
     "0.8.0",
     "0.8.1",
+    "0.9.0-rc4",
 ]
 
 DOWNLOAD_DIR = "download/fiber"
@@ -42,7 +43,7 @@ SYSTEMS = {
         },
         "arm64": {
             "url": "https://github.com/nervosnetwork/fiber/releases/download/v{version}/fnn_v{"
-            "version}-x86_64-darwin-portable.tar.gz",
+            "version}-aarch64-darwin-portable.tar.gz",
             "ext": ".tar.gz",
         },
     },

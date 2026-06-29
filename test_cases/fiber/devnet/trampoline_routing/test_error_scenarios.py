@@ -246,3 +246,38 @@ class TestErrorScenarios(FiberTest):
         assert "empty" in exc_info.value.args[0].lower() or "Failed" in str(
             exc_info.value
         )
+
+    def test_trampoline_downstream_failure_error_propagates_to_payer(self):
+        self.fiber3 = self.start_new_fiber(self.generate_account(10000))
+
+        # A -> T1 有通道，但 T1 -> target 没有路径
+        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0)
+
+        payment = self.fiber1.get_client().send_payment(
+            {
+                "target_pubkey": self.fiber3.get_client().node_info()["pubkey"],
+                "currency": "Fibd",
+                "amount": hex(1 * 100000000),
+                "keysend": True,
+                "trampoline_hops": [
+                    self.fiber2.get_client().node_info()["pubkey"],
+                ],
+            }
+        )
+
+        result = self.wait_payment_finished(self.fiber1, payment["payment_hash"])
+        assert result["status"] == "Failed"
+        assert result["failed_error"] == "TemporaryNodeFailure"
+
+        payer_tlcs = self.get_pending_tlc(self.fiber1, payment["payment_hash"])
+        trampoline_tlcs = self.get_pending_tlc(self.fiber2, payment["payment_hash"])
+
+        def tlcs_empty_or_removed(tlcs):
+            return all(
+                next(iter(entry["tlc"]["status"].values())) == "RemoveAckConfirmed"
+                for entries in tlcs.values()
+                for entry in entries
+            )
+
+        assert tlcs_empty_or_removed(payer_tlcs)
+        assert tlcs_empty_or_removed(trampoline_tlcs)

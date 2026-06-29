@@ -69,3 +69,28 @@ jobs:
       with:
         name: jfoa-build-reports-${{ runner.os }}
         path: ./report
+
+  notify-discord:
+    runs-on: ubuntu-22.04
+    needs: build
+    if: always()
+    steps:
+      - name: Notify Discord on success
+        if: needs.build.result == 'success'
+        continue-on-error: true
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          title: "Fiber Mainnet Test Succeeded"
+          description: "Fiber mainnet test succeeded for fiber branch ${{ github.event.inputs.GitBranch || 'develop' }}. Triggered by ${{ github.actor }}. Check run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}."
+          color: 0x00ff00
+
+      - name: Notify Discord on failure
+        if: needs.build.result != 'success'
+        continue-on-error: true
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          title: "Fiber Mainnet Test Failed"
+          description: "Fiber mainnet test finished with ${{ needs.build.result }} for fiber branch ${{ github.event.inputs.GitBranch || 'develop' }}. Check run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}."
+          color: 0xff0000

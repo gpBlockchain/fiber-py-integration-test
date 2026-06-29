@@ -17,7 +17,7 @@ class TestMaxTlcNumberInFlightDebug(FiberTest):
         temporary_channel = self.fiber1.get_client().open_channel(
             {
                 "pubkey": self.fiber2.get_pubkey(),
-                "funding_amount": hex(DEFAULT_MIN_DEPOSIT_CKB),
+                "funding_amount": hex(DEFAULT_MIN_DEPOSIT_CKB + 1000),
                 "public": True,
             }
         )
@@ -61,4 +61,34 @@ class TestMaxTlcNumberInFlightDebug(FiberTest):
                 "invoice": fiber1_invoices["invoice_address"],
             }
         )
-        self.wait_payment_state(self.fiber2, payment["payment_hash"], "Failed")
+        time.sleep(5)
+        self.wait_payment_state(self.fiber2, payment["payment_hash"], "Inflight")
+
+        # node2 send_payment to node1
+        fiber2_invoices = self.fiber2.get_client().new_invoice(
+            {
+                "amount": hex(1),
+                "currency": "Fibd",
+                "description": "test invoice",
+                "payment_hash": self.generate_random_preimage(),
+            }
+        )
+        self.fiber1.get_client().send_payment(
+            {
+                "invoice": fiber2_invoices["invoice_address"],
+            }
+        )
+        fiber2_invoices = self.fiber2.get_client().new_invoice(
+            {
+                "amount": hex(1),
+                "currency": "Fibd",
+                "description": "test invoice",
+                "payment_hash": self.generate_random_preimage(),
+            }
+        )
+        payment = self.fiber1.get_client().send_payment(
+            {
+                "invoice": fiber2_invoices["invoice_address"],
+            }
+        )
+        self.wait_payment_state(self.fiber1, payment["payment_hash"], "Failed")

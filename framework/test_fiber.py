@@ -1,3 +1,4 @@
+import fcntl
 import shutil
 import socket
 from enum import Enum
@@ -58,17 +59,22 @@ class FiberConfigPath(Enum):
 
     CURRENT_MAINNET = (
         "/source/template/fiber/mainnet_config_3.yml.j2",
-        "download/fiber/0.8.1/fnn",
+        "download/fiber/0.9.0/fnn",
     )
 
     CURRENT_TESTNET = (
         "/source/template/fiber/testnet_config_3.yml.j2",
-        "download/fiber/0.8.1/fnn",
+        "download/fiber/0.9.0/fnn",
     )
 
     V070_DEV = (
         "/source/fiber/dev_config_3.yml.j2",
         "download/fiber/0.7.0/fnn",
+    )
+
+    V081_DEV = (
+        "/source/fiber/dev_config_3.yml.j2",
+        "download/fiber/0.8.1/fnn",
     )
 
     V061_DEV = (
@@ -231,6 +237,30 @@ class Fiber:
             False,
         )
         wait_for_port(self.rpc_port, timeout=30, open=False)
+        self._wait_store_lock_released()
+
+    def _wait_store_lock_released(self, timeout=30):
+        """After the RPC port closes the fnn process may still be flushing
+        RocksDB and holding ``<tmp_path>/fiber/store/LOCK``. If start() is
+        called too soon the new process loses the race for the lock and exits
+        with "Resource temporarily unavailable". Poll the lock until it is
+        actually released so subsequent start() is safe."""
+        lock_path = f"{self.tmp_path}/fiber/store/LOCK"
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                fd = open(lock_path, "r+")
+            except FileNotFoundError:
+                return
+            try:
+                fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.lockf(fd, fcntl.LOCK_UN)
+                return
+            except (BlockingIOError, OSError):
+                time.sleep(0.5)
+            finally:
+                fd.close()
+        raise TimeoutError(f"RocksDB LOCK still held at {lock_path} after {timeout}s")
 
     def force_stop(self):
         # run_command(f"kill -9 $(lsof -t -i:{self.rpc_port} | head -1)", False)

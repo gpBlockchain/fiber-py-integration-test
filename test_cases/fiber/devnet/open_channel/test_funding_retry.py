@@ -387,3 +387,53 @@ class TestFundingRetry(FiberTest):
         assert (
             "scheduling retry" in combined
         ), "Expected 'scheduling retry' in fiber node logs"
+
+    # ------------------------------------------------------------------
+    # PR-1444: permanent SendTx failure must abort funding
+    # ------------------------------------------------------------------
+    def test_permanent_send_transaction_error_aborts_funding_channel(self):
+        """
+        PR-1444 regression: when CKB rejects the funding transaction at
+        send_transaction time with a permanent TransactionFailedToResolve
+        error, Fiber should synthesize a rejected tx trace and abort the
+        channel instead of leaving it stuck in a pending funding state.
+        """
+        self.proxy.block_method_with_error(
+            "send_transaction",
+            code=-301,
+            message="TransactionFailedToResolve: Unknown(OutPoint)",
+        )
+        peer_pubkey = self.fiber2.get_pubkey()
+
+        self.fiber1.get_client().open_channel(
+            {
+                "pubkey": peer_pubkey,
+                "funding_amount": hex(200 * 100000000 + DEFAULT_MIN_DEPOSIT_CKB),
+                "public": True,
+                "tlc_fee_proportional_millionths": "0x4B0",
+            }
+        )
+
+        last_pending_channels = []
+        for _ in range(45):
+            pending = self.fiber1.get_client().list_channels(
+                {
+                    "pubkey": peer_pubkey,
+                    "only_pending": True,
+                }
+            )
+            last_pending_channels = pending["channels"]
+            for channel in pending["channels"]:
+                if channel["state"]["state_name"] == "Closed":
+                    assert channel["state"]["state_flags"] == "FUNDING_ABORTED"
+                    return
+                assert channel["state"]["state_name"] != "ChannelReady"
+            time.sleep(1)
+
+        channels = self.fiber1.get_client().list_channels(
+            {"pubkey": peer_pubkey, "include_closed": True}
+        )
+        assert False, (
+            "permanent send_transaction error did not abort funding; "
+            f"pending={last_pending_channels}, channels={channels['channels']}"
+        )

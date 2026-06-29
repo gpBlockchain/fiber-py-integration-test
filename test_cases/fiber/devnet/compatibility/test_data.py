@@ -5,6 +5,7 @@ import pytest
 from framework.basic_fiber import FiberTest
 from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 from framework.test_fiber import FiberConfigPath
+from test_cases.fiber.devnet.migration._helpers import start_with_confirm
 
 
 class TestData(FiberTest):
@@ -53,15 +54,16 @@ class TestData(FiberTest):
         old_fiber_2.stop()
         time.sleep(5)
         #  4. migration and restart fiber CURRENT_DEV
-        old_fiber_1.fiber_config_enum = FiberConfigPath.CURRENT_DEV
-        old_fiber_2.fiber_config_enum = FiberConfigPath.CURRENT_DEV
-
+        old_fiber_1.fiber_config_enum = FiberConfigPath.V081_DEV
+        old_fiber_2.fiber_config_enum = FiberConfigPath.V081_DEV
         old_fiber_1.migration()
         old_fiber_2.migration()
 
+        old_fiber_1.fiber_config_enum = FiberConfigPath.CURRENT_DEV
+        old_fiber_2.fiber_config_enum = FiberConfigPath.CURRENT_DEV
         time.sleep(5)
-        old_fiber_1.start()
-        old_fiber_2.start()
+        start_with_confirm(old_fiber_1, confirm="y")
+        start_with_confirm(old_fiber_2, confirm="y")
         time.sleep(10)
         self.open_channel(
             old_fiber_1, old_fiber_2, 1000 * 100000000, 1000 * 100000000, 1000, 1000

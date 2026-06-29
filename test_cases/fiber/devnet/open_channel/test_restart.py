@@ -14,6 +14,7 @@ class TestRestart(FiberTest):
     """
 
     # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/402")
+    # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/1433")
     def test_restart_fiber_node_open_channel(self):
         """
         fiber1 <-> fiber2 <-> fiber3

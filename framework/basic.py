@@ -46,9 +46,13 @@ class CkbTest(ABC, unittest.TestCase):
         if not self.did_pass:
             print("back log data")
             try:
+                dst = f"{get_project_root()}/report/{method.__name__}"
+                # Remove any previous run's report so we never inspect stale
+                # logs after a re-run.
+                shutil.rmtree(dst, ignore_errors=True)
                 shutil.copytree(
                     f"{get_project_root()}/tmp",
-                    f"{get_project_root()}/report/{method.__name__}",
+                    dst,
                 )
             except OSError as e:
                 print("Error: %s - %s." % (e.filename, e.strerror))

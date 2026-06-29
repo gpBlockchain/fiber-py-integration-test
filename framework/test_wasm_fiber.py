@@ -11,7 +11,11 @@ class WasmFiber:
         self.peerId = peer_id
         self.type = type
         self.rppcClient = FiberRPCClient(
-            "http://localhost:9000", {"databaseprefix": databasePrefix}
+            "http://localhost:9000",
+            {"databaseprefix": databasePrefix},
+            retryable_error_messages=[
+                "page.evaluate: TypeError: Cannot read properties of undefined"
+            ],
         )
         self.databasePrefix = databasePrefix
         if debug:

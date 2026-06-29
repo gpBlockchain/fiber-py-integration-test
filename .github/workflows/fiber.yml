@@ -655,6 +655,42 @@ jobs:
           name: jfoa-fiber_open_channel_with_external_funding_mixed-reports-${{ runner.os }}
           path: ./report
 
+  fiber_test_migration:
+    needs: prepare
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v3
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Download prepare backup
+        uses: actions/download-artifact@v4
+        with:
+          name: prepare-backup-${{ runner.os }}
+          path: ./
+
+      - name: Extract tarball and restore permissions
+        run: |
+          tar -xzf prepare-backup.tar.gz
+
+      - name: Run migration tests
+        run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/migration"
+
+      - name: Publish reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jfoa-migration-reports-${{ runner.os }}
+          path: ./report
+
   fiber_test_fnn_cli:
     needs: prepare
     runs-on: ubuntu-22.04
@@ -689,6 +725,42 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: jfoa-fnn-cli-reports-${{ runner.os }}
+          path: ./report
+
+  fiber_test_security:
+    needs: prepare
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v3
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Download prepare backup
+        uses: actions/download-artifact@v4
+        with:
+          name: prepare-backup-${{ runner.os }}
+          path: ./
+
+      - name: Extract tarball and restore permissions
+        run: |
+          tar -xzf prepare-backup.tar.gz
+
+      - name: Run security tests
+        run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/security"
+
+      - name: Publish reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jfoa-security-reports-${{ runner.os }}
           path: ./report
 
   fiber_test_proxy_tor:
@@ -735,4 +807,3 @@ jobs:
         with:
           name: jfoa-proxy-tor-reports-${{ runner.os }}
           path: ./report
-

@@ -122,7 +122,7 @@ def issue_udt_tx(udt_contract, rpc_url, owner_private, account_private, amount):
         type_script_arg=invoke_arg,
         hash_type="type",
         data=invoke_data,
-        fee=1000,
+        fee=2000,
         api_url=rpc_url,
         cell_deps=[],
         input_cells=[],

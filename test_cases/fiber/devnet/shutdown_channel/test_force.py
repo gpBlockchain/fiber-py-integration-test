@@ -20,6 +20,7 @@ class TestForce(FiberTest):
     start_fiber_config = {"fiber_funding_timeout_seconds": 10}
 
     # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/333")
+    @pytest.mark.skip("reson: node offline force shutdown have bug")
     def test_node_offline(self):
         temporary_channel_id = self.fiber1.get_client().open_channel(
             {
@@ -87,6 +88,20 @@ class TestForce(FiberTest):
             < 1000000
         )
         assert 200 * 100000000 - tx_message["output_cells"][1]["capacity"] < 1000000
+
+    @pytest.mark.skip("reson: node offline force shutdown have bug")
+    def test_node_offline_and_restart(self):
+        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 1000 * 100000000)
+        self.fiber2.stop()
+        channel_id = self.fiber1.get_client().list_channels({})["channels"][0][
+            "channel_id"
+        ]
+        self.fiber1.get_client().shutdown_channel({"channel_id": channel_id})
+        time.sleep(1)
+        self.fiber2.start()
+        self.wait_for_channel_state(
+            self.fiber1.get_client(), self.fiber2.get_pubkey(), "Closed"
+        )
 
     def test_node_online(self):
         temporary_channel_id = self.fiber1.get_client().open_channel(

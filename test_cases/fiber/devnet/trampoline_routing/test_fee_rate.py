@@ -184,6 +184,10 @@ class TestFeeRate(SharedFiberTest):
             }
         )
         self.wait_payment_state(self.fiber1, payment["payment_hash"], "Failed")
+        failed_payment = self.fiber1.get_client().get_payment(
+            {"payment_hash": payment["payment_hash"]}
+        )
+        assert failed_payment["failed_error"] == "FeeInsufficient"
 
         # 使用 trampoline_hops dry run ，预期失败
         dryPayment = self.fiber1.get_client().send_payment(

@@ -9,6 +9,9 @@ error that testnet.ckbapp.dev produced in issue #1189.
 Additionally supports ``reject_next(n)`` which accepts TCP connections
 but immediately closes them without sending any HTTP response, simulating
 the "Connection reset by peer" error from the original issue.
+
+Specific JSON-RPC methods can also be blocked with configurable error
+codes/messages, which is useful for simulating permanent CKB RPC failures.
 """
 
 import http.server
@@ -42,7 +45,7 @@ class CkbRpcProxy:
         self.port = None
         self.url = None
         self._reject_remaining = 0
-        self._blocked_methods = set()
+        self._method_errors = {}
         self._block_after = None  # block after N forwarded requests
         self._forwarded_count = 0
         self._forwarded_total = 0
@@ -71,13 +74,28 @@ class CkbRpcProxy:
         forwarded. All other RPC methods are forwarded normally.
         """
         with self._lock:
-            self._blocked_methods = set(methods)
+            self._method_errors = {
+                method: (-1, "CKB RPC proxy: method blocked") for method in methods
+            }
         logger.info("CKB RPC proxy blocking methods: %s", methods)
+
+    def block_method_with_error(
+        self, method, code=-1, message="CKB RPC proxy: method blocked"
+    ):
+        """Block one JSON-RPC method with a specific JSON-RPC error."""
+        with self._lock:
+            self._method_errors[method] = (code, message)
+        logger.info(
+            "CKB RPC proxy blocking method '%s' with error %s: %s",
+            method,
+            code,
+            message,
+        )
 
     def unblock_methods(self):
         """Clear method-level blocking; resume forwarding all methods."""
         with self._lock:
-            self._blocked_methods.clear()
+            self._method_errors.clear()
         logger.info("CKB RPC proxy unblocked all methods")
 
     def block_after(self, n: int):
@@ -200,17 +218,24 @@ class CkbRpcProxy:
                         self._send_rst(self.connection)
                         return
 
-                # --- block_methods: return JSON-RPC error for specific methods ---
+                # --- Method errors: return JSON-RPC error for specific methods ---
                 with proxy_ref._lock:
-                    if method in proxy_ref._blocked_methods:
-                        logger.info("CKB RPC proxy BLOCKING method '%s'", method)
+                    method_error = proxy_ref._method_errors.get(method)
+                    if method_error is not None:
+                        code, message = method_error
+                        logger.info(
+                            "CKB RPC proxy BLOCKING method '%s' with error %s: %s",
+                            method,
+                            code,
+                            message,
+                        )
                         err_body = json.dumps(
                             {
                                 "jsonrpc": "2.0",
                                 "id": req_id,
                                 "error": {
-                                    "code": -1,
-                                    "message": "CKB RPC proxy: method blocked",
+                                    "code": code,
+                                    "message": message,
                                 },
                             }
                         ).encode()

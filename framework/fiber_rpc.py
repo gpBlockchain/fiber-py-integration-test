@@ -10,10 +10,13 @@ LOGGER = logging.getLogger(__name__)
 
 
 class FiberRPCClient:
-    def __init__(self, url, other_params={}, try_count=200):
+    def __init__(
+        self, url, other_params={}, try_count=200, retryable_error_messages=None
+    ):
         self.url = url
         self.other_params = other_params
         self.try_count = try_count
+        self.retryable_error_messages = retryable_error_messages or []
 
     def send_btc(self, btc_pay_req):
         return self.call("send_btc", [btc_pay_req])
@@ -264,6 +267,13 @@ class FiberRPCClient:
                 )
                 if "error" in response.keys():
                     error_message = response["error"].get("message", "Unknown error")
+                    if any(
+                        message in error_message
+                        for message in self.retryable_error_messages
+                    ):
+                        LOGGER.debug("retryable rpc error: %s", error_message)
+                        time.sleep(2)
+                        continue
                     raise Exception(f"Error: {error_message}")
 
                 return response.get("result", None)

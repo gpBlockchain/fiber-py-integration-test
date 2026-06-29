@@ -86,6 +86,9 @@ cch:
   order_expiry_delta_seconds: {{ cch_order_expiry_delta_seconds | default(3600) }}
   base_fee_sats: {{ cch_base_fee_sats | default(0) }}
   fee_rate_per_million_sats: {{ cch_fee_rate_per_million_sats | default(1) }}
+  {% if cch_max_outgoing_fee_percentage is defined %}
+  max_outgoing_fee_percentage: {{ cch_max_outgoing_fee_percentage }}
+  {% endif %}
   btc_final_tlc_expiry_delta_blocks: {{ cch_btc_final_tlc_expiry_delta_blocks | default(180) }}
   ckb_final_tlc_expiry_delta_seconds: {{ cch_ckb_final_tlc_expiry_delta_seconds | default(108000) }}
   min_outgoing_invoice_expiry_delta_seconds: {{ cch_min_outgoing_invoice_expiry_delta_seconds | default(21600)}}

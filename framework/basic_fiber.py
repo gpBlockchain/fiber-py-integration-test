@@ -534,7 +534,7 @@ class FiberTest(CkbTest):
                 return result
             time.sleep(1)
         raise TimeoutError(
-            f"status did not reach state {expected_state} within timeout period."
+            f"payment:{payment_hash} status did not reach Success or Failed within timeout period."
         )
 
     def get_ln_tx_trace(self, open_channel_tx_hash):
@@ -758,7 +758,7 @@ class FiberTest(CkbTest):
                 continue
             return
         raise TimeoutError(
-            f"status did not reach state {expected_state} within timeout period."
+            f"tx pool pending size did not reach {pending_size} within timeout period."
         )
 
     def wait_and_check_tx_pool_fee(

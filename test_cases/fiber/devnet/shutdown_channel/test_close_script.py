@@ -180,7 +180,7 @@ class TestCloseScript(FiberTest):
                 }
             )
         expected_error_message = (
-            "Local balance is not enough to pay the fee, expect fee"
+            "Local shutdown capacity is less than occupied capacity"
         )
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "

@@ -165,4 +165,6 @@ class TestEnable(FiberTest):
             30000,
             30000,
         )
+        for fiber in self.fibers[:3]:
+            self.wait_graph_channels_sync(fiber, 4, 120)
         self.send_payment(self.fibers[0], self.fibers[2], 1 * 100000000)
