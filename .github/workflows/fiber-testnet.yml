@@ -88,6 +88,7 @@ jobs:
         uses: sarisia/actions-status-discord@v1
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          content: "<@802020984097734656>"
           title: "Fiber Testnet Test Failed"
           description: "Fiber testnet test finished with ${{ needs.build.result }} for fiber branch ${{ github.event.inputs.GitBranch || 'develop' }}. Check run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}."
           color: 0xff0000
