@@ -19,8 +19,5 @@ if [ "$BUILD_FIBER" == "true" ]; then
   cd fiber
   cargo build --release
   cp target/release/fnn ../download/fiber/current/fnn
-  cd migrate
-  cargo build
-  cp target/debug/fnn-migrate ../../download/fiber/current/fnn-migrate
-  cd ../../
+  cd ../
 fi
