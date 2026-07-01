@@ -8,6 +8,43 @@ from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 from framework.test_wasm_fiber import WasmFiber
 
 
+def _collect_stable_futures(
+    pending_set,
+    completed_tasks,
+    failed_tasks,
+    tasks_submitted,
+    start_time,
+    logger,
+    times,
+    completed_counts,
+    wait_all=False,
+    timeout=0,
+):
+    if not pending_set:
+        return pending_set, completed_tasks, failed_tasks, 0
+    done, pending_set = concurrent.futures.wait(
+        pending_set,
+        timeout=timeout,
+        return_when=(
+            concurrent.futures.ALL_COMPLETED
+            if wait_all
+            else concurrent.futures.FIRST_COMPLETED
+        ),
+    )
+    for future in done:
+        completed_tasks += 1
+        try:
+            future.result()
+            logger.debug(f"Task {completed_tasks}/{tasks_submitted} completed")
+        except Exception as e:
+            failed_tasks += 1
+            logger.error(f"Task {completed_tasks}/{tasks_submitted} failed: {e}")
+        elapsed_time = time.time() - start_time
+        times.append(elapsed_time)
+        completed_counts.append(completed_tasks)
+    return pending_set, completed_tasks, failed_tasks, len(done)
+
+
 class TestStableStress(FiberTest):
     fnn_log_level = "info"
 
@@ -114,50 +151,46 @@ class TestStableStress(FiberTest):
         start_time = time.time()
         times = []
         completed_counts = []
-        max_inflight = 25
+        max_inflight = 16
         completed_tasks = 0
-
-        def _collect(pending_set, wait_all=False):
-            """Collect completed futures from pending set."""
-            nonlocal completed_tasks
-            if not pending_set:
-                return pending_set
-            done, pending_set = concurrent.futures.wait(
-                pending_set,
-                timeout=0 if not wait_all else 20,
-                return_when=(
-                    concurrent.futures.ALL_COMPLETED
-                    if wait_all
-                    else concurrent.futures.FIRST_COMPLETED
-                ),
-            )
-            for future in done:
-                completed_tasks += 1
-                try:
-                    future.result()
-                    self.logger.debug(
-                        f"Task {completed_tasks}/{tasks_submitted} completed"
-                    )
-                except Exception as e:
-                    self.logger.error(
-                        f"Task {completed_tasks}/{tasks_submitted} failed: {e}"
-                    )
-                elapsed_time = time.time() - start_time
-                times.append(elapsed_time)
-                completed_counts.append(completed_tasks)
-            return pending_set
+        failed_tasks = 0
+        last_progress_time = start_time
+        no_progress_timeout = int(os.environ.get("STABLE_NO_PROGRESS_TIMEOUT", 300))
+        final_drain_timeout = int(os.environ.get("STABLE_FINAL_DRAIN_TIMEOUT", 300))
 
         tps_interval = 10  # print TPS every 10 seconds
         last_tps_time = start_time
         last_tps_completed = 0
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
-            pending = set()
-
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=16)
+        pending = set()
+        try:
             while time.time() - start_time < duration_seconds:
                 # Drain completed futures to keep in-flight count bounded
                 while len(pending) >= max_inflight:
-                    pending = _collect(pending)
+                    (
+                        pending,
+                        completed_tasks,
+                        failed_tasks,
+                        finished_count,
+                    ) = _collect_stable_futures(
+                        pending,
+                        completed_tasks,
+                        failed_tasks,
+                        tasks_submitted,
+                        start_time,
+                        self.logger,
+                        times,
+                        completed_counts,
+                        timeout=1,
+                    )
+                    if finished_count > 0:
+                        last_progress_time = time.time()
+                    elif time.time() - last_progress_time >= no_progress_timeout:
+                        raise TimeoutError(
+                            f"stable test stuck: {len(pending)} tasks pending, "
+                            f"no task completed for {no_progress_timeout}s"
+                        )
 
                 # Submit one round of payment tasks (8 tasks)
                 pending.add(
@@ -217,10 +250,30 @@ class TestStableStress(FiberTest):
             self.logger.info(
                 f"Duration {duration_seconds}s reached. Waiting for {len(pending)} remaining tasks..."
             )
-            pending = _collect(pending, wait_all=True)
+            drain_deadline = time.time() + final_drain_timeout
+            while pending and time.time() < drain_deadline:
+                (
+                    pending,
+                    completed_tasks,
+                    failed_tasks,
+                    finished_count,
+                ) = _collect_stable_futures(
+                    pending,
+                    completed_tasks,
+                    failed_tasks,
+                    tasks_submitted,
+                    start_time,
+                    self.logger,
+                    times,
+                    completed_counts,
+                    timeout=1,
+                )
+                if finished_count > 0:
+                    last_progress_time = time.time()
             if pending:
-                self.logger.warning(
-                    f"Timeout: {len(pending)} tasks still pending, skipping"
+                raise TimeoutError(
+                    f"stable test drain timed out: {len(pending)} tasks still pending "
+                    f"after {final_drain_timeout}s"
                 )
 
             total_time = time.time() - start_time
@@ -230,8 +283,12 @@ class TestStableStress(FiberTest):
             )
 
             self.logger.info(
-                f"finished, duration: {duration_seconds}s, tasks: {tasks_submitted}"
+                f"finished, duration: {duration_seconds}s, tasks: {tasks_submitted}, failed: {failed_tasks}"
             )
+        finally:
+            for future in pending:
+                future.cancel()
+            executor.shutdown(wait=False, cancel_futures=True)
         self.get_fibers_balance_message()
         for fiber in self.fibers:
             message = self.get_fiber_balance(fiber)

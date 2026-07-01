@@ -1,3 +1,4 @@
+import os
 import time
 
 import requests
@@ -11,12 +12,22 @@ LOGGER = logging.getLogger(__name__)
 
 class FiberRPCClient:
     def __init__(
-        self, url, other_params={}, try_count=200, retryable_error_messages=None
+        self,
+        url,
+        other_params={},
+        try_count=200,
+        retryable_error_messages=None,
+        timeout=None,
     ):
         self.url = url
         self.other_params = other_params
         self.try_count = try_count
         self.retryable_error_messages = retryable_error_messages or []
+        self.timeout = (
+            timeout
+            if timeout is not None
+            else float(os.environ.get("FIBER_RPC_TIMEOUT", "60"))
+        )
 
     def send_btc(self, btc_pay_req):
         return self.call("send_btc", [btc_pay_req])
@@ -260,7 +271,10 @@ class FiberRPCClient:
         for i in range(self.try_count):
             try:
                 response = requests.post(
-                    self.url, data=json.dumps(data), headers=headers
+                    self.url,
+                    data=json.dumps(data),
+                    headers=headers,
+                    timeout=self.timeout,
                 ).json()
                 LOGGER.debug(
                     "response:\n{response}".format(response=json.dumps(response))
@@ -277,6 +291,10 @@ class FiberRPCClient:
                     raise Exception(f"Error: {error_message}")
 
                 return response.get("result", None)
+            except requests.exceptions.Timeout as e:
+                raise Exception(
+                    f"RPC request timed out: method={method}, url={self.url}, timeout={self.timeout}s"
+                ) from e
             except requests.exceptions.ConnectionError as e:
                 LOGGER.debug(e)
                 LOGGER.debug("request too quickly, wait 2s")
