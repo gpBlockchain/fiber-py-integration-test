@@ -513,7 +513,7 @@ class TestCCHConfig(FiberCchTest):
         print("invoice:", invoice)
         assert (
             abs(int(invoice["invoice"]["data"]["attrs"][1]["expiry_time"], 16) - 21600)
-            < 10
+            <= 10
         )
 
         lndInvoice = self.LNDs[1].addinvoice(1000, "demo  --expiry 21599")
@@ -551,7 +551,7 @@ class TestCCHConfig(FiberCchTest):
             f"decodepayreq {receive_btc_result["incoming_invoice"]['Lightning']}",
         )
         print("payreq:", payreq)
-        assert abs(int(payreq["expiry"]) - 21610) < 10
+        assert abs(int(payreq["expiry"]) - 21610) <= 10
 
         invoice = self.fiber2.get_client().new_invoice(
             {

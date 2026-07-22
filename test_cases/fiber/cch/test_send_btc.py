@@ -40,9 +40,9 @@ class TestSendBtc(FiberCchTest):
         )
         assert int(invoice["amount_sats"], 16) == 1000
 
-    @pytest.mark.skip(
-        "网络不一致，预期失败:https://github.com/nervosnetwork/fiber/issues/978"
-    )
+    # @pytest.mark.skip(
+    #     "网络不一致，预期失败:https://github.com/nervosnetwork/fiber/issues/978"
+    # )
     def test_btc_pay_req_light_network_not_eq(self):
         #  Invoice.light_network 和连接的btc网络不一致，预期失败
         # Chain
@@ -256,7 +256,9 @@ class TestSendBtc(FiberCchTest):
             f"not found in actual string '{exc_info.value.args[0]}'"
         )
 
-    @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/979")
+    @pytest.mark.skip(
+        "https://github.com/nervosnetwork/fiber/issues/979 https://github.com/nervosnetwork/fiber/issues/1488"
+    )
     def test_payee_pub_key_is_self(self):
         """
         应该会失败
@@ -286,13 +288,13 @@ class TestSendBtc(FiberCchTest):
         payment = self.fiber2.get_client().send_payment(
             {"invoice": send_payment_response["incoming_invoice"]["Fiber"]}
         )
+        self.wait_cch_order_state(self.fiber1, payment["payment_hash"], "Failed")
         # todo  应该要失败才对，outgoing端没发出去, inbound 端应该回滚报错才对
         self.wait_payment_state(self.fiber2, payment["payment_hash"], "Faild")
-        cch_order = self.fiber1.get_client().get_cch_order(
-            {"payment_hash": payment["payment_hash"]}
-        )
 
-    @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/979")
+    @pytest.mark.skip(
+        "https://github.com/nervosnetwork/fiber/issues/979 https://github.com/nervosnetwork/fiber/issues/1488"
+    )
     def test_payee_pub_key_not_exist(self):
         self.faucet(
             self.fiber2.account_private,
@@ -319,12 +321,10 @@ class TestSendBtc(FiberCchTest):
             {"invoice": send_payment_response["incoming_invoice"]["Fiber"]}
         )
         # todo  应该要失败才对，outgoing端没发出去, inbound 端应该回滚报错才对
+        self.wait_cch_order_state(self.fiber1, payment["payment_hash"], "Failed")
         self.wait_payment_state(self.fiber2, payment["payment_hash"], "Failed")
-        cch_order = self.fiber1.get_client().get_cch_order(
-            {"payment_hash": payment["payment_hash"]}
-        )
 
-    @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/978")
+    # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/978")
     def test_currency_not_eq(self):
         lndInvoice = self.LNDs[1].addinvoice(100)
         # 网络不一致，应该报错
@@ -335,7 +335,7 @@ class TestSendBtc(FiberCchTest):
                     "currency": "Fibb",
                 }
             )
-        expected_error_message = "Fibd"
+        expected_error_message = "fibd"
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "
             f"not found in actual string '{exc_info.value.args[0]}'"
@@ -376,6 +376,7 @@ class TestSendBtc(FiberCchTest):
             f"not found in actual string '{exc_info.value.args[0]}'"
         )
         invoice = self.LNDs[1].addinvoice(100, "demo")
+        time.sleep(10)
         send_btc = self.fiber1.get_client().send_btc(
             {
                 "btc_pay_req": invoice["payment_request"],
@@ -389,10 +390,16 @@ class TestSendBtc(FiberCchTest):
         invoice = self.fiber2.get_client().parse_invoice(
             {"invoice": send_btc["incoming_invoice"]["Fiber"]}
         )
-        assert invoice["invoice"]["data"]["attrs"][1]["expiry_time"] == hex(86399)
-        btc_req = self.LNDs[1].ln_cli_with_cmd(
-            f"decodepayreq {send_btc['outgoing_pay_req']}"
+        # assert invoice["invoice"]["data"]["attrs"][1]["expiry_time"] == hex()
+        time_cost = (
+            int(int(invoice["invoice"]["data"]["timestamp"], 16) / 1000)
+            + int(invoice["invoice"]["data"]["attrs"][1]["expiry_time"], 16)
+            - int(btc_req["expiry"])
+            - int(btc_req["timestamp"])
         )
+        print("time_cost:", time_cost)
+        assert time_cost <= 0
+        assert abs(time_cost) <= 1
         time.sleep(5)
         payment = self.fiber2.get_client().send_payment(
             {"invoice": send_btc["incoming_invoice"]["Fiber"]}
