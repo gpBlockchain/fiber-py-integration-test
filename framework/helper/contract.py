@@ -114,6 +114,7 @@ def invoke_ckb_contract(
     cell_deps=[],
     input_cells=[],
     output_lock_arg="0x470dcdc5e44064909650113a274b3b36aecb6dc7",
+    skip_type_cells=False,
 ):
     """
 
@@ -126,6 +127,8 @@ def invoke_ckb_contract(
         data:
         fee:
         api_url:
+        skip_type_cells: Exclude live cells with a type script from automatic
+            capacity input selection. Explicit ``input_cells`` are unchanged.
 
     Returns:
 
@@ -161,20 +164,21 @@ def invoke_ckb_contract(
     input_cells_hashes = [input_cell["tx_hash"] for input_cell in input_cells]
 
     for i in range(len(account_live_cells["live_cells"])):
-        if account_live_cells["live_cells"][i]["tx_hash"] in input_cells_hashes:
+        live_cell = account_live_cells["live_cells"][i]
+        if live_cell["tx_hash"] in input_cells_hashes:
+            continue
+        if skip_type_cells and live_cell.get("type_hashes") is not None:
             continue
         if input_cell_cap > 20000000000:
             break
         input_cell_out_point = {
-            "tx_hash": account_live_cells["live_cells"][i]["tx_hash"],
-            "index": account_live_cells["live_cells"][i]["output_index"],
+            "tx_hash": live_cell["tx_hash"],
+            "index": live_cell["output_index"],
         }
 
         input_cell_cap += (
             float(
-                account_live_cells["live_cells"][i]["capacity"]
-                .replace("(CKB)", "")
-                .strip()
+                live_cell["capacity"].replace("(CKB)", "").strip()
             )
             * 100000000
         )
