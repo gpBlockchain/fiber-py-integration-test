@@ -127,5 +127,6 @@ def issue_udt_tx(udt_contract, rpc_url, owner_private, account_private, amount):
         cell_deps=[],
         input_cells=[],
         output_lock_arg=account1["lock_arg"],
+        skip_type_cells=True,
     )
     return tx_hash
