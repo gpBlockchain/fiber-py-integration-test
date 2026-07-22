@@ -177,10 +177,7 @@ def invoke_ckb_contract(
         }
 
         input_cell_cap += (
-            float(
-                live_cell["capacity"].replace("(CKB)", "").strip()
-            )
-            * 100000000
+            float(live_cell["capacity"].replace("(CKB)", "").strip()) * 100000000
         )
 
         input_cell_out_points.append(input_cell_out_point)
