@@ -165,38 +165,29 @@ class TestUpdateChannel(FiberTest):
         router_length = 2
         for i in range(router_length):
             account_private = self.generate_account(1000)
-            fiber = self.start_new_fiber(account_private)
-            fiber.connect_peer(self.fiber1)
-            fiber.connect_peer(self.fiber2)
+            self.start_new_fiber(account_private)
         for i in range(len(self.fibers) - 1):
             linked_fiber = self.fibers[(i + 1) % len(self.fibers)]
             current_fiber = self.fibers[i]
-            linked_fiber.connect_peer(current_fiber)
-            time.sleep(1)
-            # open channel
-            current_fiber.get_client().open_channel(
-                {
-                    "pubkey": linked_fiber.get_pubkey(),
-                    "funding_amount": hex(500 * 100000000),
-                    "public": True,
-                }
-            )
-            # // AWAITING_TX_SIGNATURES
-            self.wait_for_channel_state(
-                current_fiber.get_client(), linked_fiber.get_pubkey(), "ChannelReady"
+            channel_id = self.open_channel(
+                current_fiber,
+                linked_fiber,
+                500 * 100000000,
+                0,
             )
             for i in range(100):
                 linked_fiber.get_client().update_channel(
                     {
-                        "channel_id": current_fiber.get_client().list_channels({})[
-                            "channels"
-                        ][0]["channel_id"],
+                        "channel_id": channel_id,
                         "tlc_fee_proportional_millionths": hex(2000 + i),
                     }
                 )
                 time.sleep(0.02)
             self.wait_for_channel_state(
-                current_fiber.get_client(), linked_fiber.get_pubkey(), "ChannelReady"
+                current_fiber.get_client(),
+                linked_fiber.get_pubkey(),
+                "ChannelReady",
+                channel_id=channel_id,
             )
         time.sleep(1)
         pub_key = self.fibers[-1].get_client().node_info()["pubkey"]

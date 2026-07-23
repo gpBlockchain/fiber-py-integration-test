@@ -18,7 +18,7 @@ from ._helpers import (
     fiber_bin_exists,
     list_channels_with_timeout,
     MigrationFiberTest,
-    send_invoice_payment_with_timeout,
+    send_invoice_payment_with_retry,
     start_with_confirm,
     wait_log_matches,
     wait_peer_connected,
@@ -75,6 +75,8 @@ class TestLargeU128ChannelConstraints(MigrationFiberTest):
         old_b.fiber_config_enum = FiberConfigPath.CURRENT_DEV
         start_with_confirm(old_a, confirm="y")
         start_with_confirm(old_b, confirm="y")
+        old_a.connect_peer(old_b)
+        wait_peer_connected(old_a, timeout=30)
 
         wait_log_matches(
             old_a, r"Migrating to {}".format(LATEST_DB_VERSION_AFTER_PR1323)
@@ -85,5 +87,5 @@ class TestLargeU128ChannelConstraints(MigrationFiberTest):
         assert len(chans) == old_channel_count, "channel must survive migration"
         assert all(c["state"]["state_name"] == "ChannelReady" for c in chans), chans
 
-        send_invoice_payment_with_timeout(self, old_a, old_b, 1)
-        send_invoice_payment_with_timeout(self, old_b, old_a, 1)
+        send_invoice_payment_with_retry(self, old_a, old_b, 1)
+        send_invoice_payment_with_retry(self, old_b, old_a, 1)

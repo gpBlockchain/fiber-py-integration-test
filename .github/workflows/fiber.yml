@@ -18,7 +18,7 @@ on:
         default: 'https://github.com/nervosnetwork/fiber.git'
       GitBranch:
         description: 'fiber -git branch'
-        default: 'develop'
+        default: 'v0.9.0-rc7'
   schedule:
     - cron: '0 0 */7 * *'
 

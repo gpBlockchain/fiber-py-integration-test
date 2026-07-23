@@ -291,9 +291,16 @@ class Fiber:
         )
 
     def connect_peer(self, node):
-        address = (
-            node.get_client()
-            .node_info()["addresses"][0]
-            .replace("0。0.0.0", "127.0.0.1")
-        )
-        return self.client.connect_peer({"address": address})
+        node_info = node.get_client().node_info()
+        address = node_info["addresses"][0].replace("0。0.0.0", "127.0.0.1")
+        result = self.client.connect_peer({"address": address})
+        remote_pubkey = node_info.get("pubkey")
+        if remote_pubkey is None:
+            return result
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            peers = self.client.list_peers().get("peers") or []
+            if any(peer.get("pubkey") == remote_pubkey for peer in peers):
+                return result
+            time.sleep(0.5)
+        return result

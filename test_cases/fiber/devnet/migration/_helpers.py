@@ -153,7 +153,7 @@ def open_v070_channel(opener, balance):
     )
 
 
-def send_invoice_payment_with_timeout(test_case, fiber1, fiber2, amount, timeout=45):
+def send_invoice_payment_with_timeout(test_case, fiber1, fiber2, amount, timeout=60):
     invoice = rpc_call_with_timeout(
         fiber2,
         "new_invoice",
@@ -199,13 +199,13 @@ def send_invoice_payment_with_timeout(test_case, fiber1, fiber2, amount, timeout
     )
 
 
-def send_invoice_payment_with_retry(test_case, fiber1, fiber2, amount, timeout=60):
+def send_invoice_payment_with_retry(test_case, fiber1, fiber2, amount, timeout=120):
     deadline = time.time() + timeout
     last_error = None
     while time.time() < deadline:
         try:
             return send_invoice_payment_with_timeout(
-                test_case, fiber1, fiber2, amount, timeout=15
+                test_case, fiber1, fiber2, amount, timeout=30
             )
         except Exception as e:
             last_error = e

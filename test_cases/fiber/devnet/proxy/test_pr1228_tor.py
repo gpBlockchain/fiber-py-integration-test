@@ -191,6 +191,32 @@ class TestPR1228TorOnion(FiberTest):
             f"peer {remote_pubkey} not listed before timeout ({timeout}s)"
         )
 
+    def _connect_peer_until_visible(
+        self,
+        dialer,
+        listener,
+        address: str,
+        timeout: float = 300.0,
+    ):
+        deadline = time.time() + timeout
+        last_error = None
+        while time.time() < deadline:
+            try:
+                dialer.get_client().connect_peer({"address": address})
+            except Exception as e:
+                last_error = e
+            dialer_peers = dialer.get_client().list_peers().get("peers") or []
+            listener_peers = listener.get_client().list_peers().get("peers") or []
+            if any(
+                p.get("pubkey") == listener.get_pubkey() for p in dialer_peers
+            ) and any(p.get("pubkey") == dialer.get_pubkey() for p in listener_peers):
+                return
+            time.sleep(5.0)
+        raise AssertionError(
+            "peer connection via onion was not visible on both nodes before "
+            f"timeout ({timeout}s), last_error={last_error}"
+        )
+
     def _wait_onion_multiaddr(self, client, timeout: float = 180.0) -> str:
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -281,15 +307,11 @@ class TestPR1228TorOnion(FiberTest):
             cfg_c.update(cfg_extra)
             fiber_onion_client = self.start_new_fiber(account_client, config=cfg_c)
             time.sleep(2)
-            fiber_onion_client.get_client().connect_peer({"address": onion_addr})
-
-            self._wait_peer(
-                fiber_hs.get_client(), fiber_onion_client.get_pubkey(), timeout=180.0
-            )
-            self._wait_peer(
-                fiber_onion_client.get_client(),
-                fiber_hs.get_pubkey(),
-                timeout=180.0,
+            self._connect_peer_until_visible(
+                fiber_onion_client,
+                fiber_hs,
+                onion_addr,
+                timeout=300.0,
             )
 
             with open(

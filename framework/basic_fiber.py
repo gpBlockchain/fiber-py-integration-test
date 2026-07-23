@@ -294,10 +294,19 @@ class FiberTest(CkbTest):
                 continue
             idx = 0
             if channel_id is not None:
+                found_channel = False
                 for i in range(len(channels["channels"])):
                     print("channel_id:", channel_id)
                     if channels["channels"][i]["channel_id"] == channel_id:
                         idx = i
+                        found_channel = True
+                        break
+                if not found_channel:
+                    self.logger.debug(
+                        f"Waiting for channel id {channel_id}, current channels: {channels['channels']}"
+                    )
+                    time.sleep(1)
+                    continue
             if type(expected_state) == str:
                 if channels["channels"][idx]["state"]["state_name"] == expected_state:
                     self.logger.debug(
@@ -322,6 +331,30 @@ class FiberTest(CkbTest):
             f"Channel did not reach state {expected_state} within timeout period."
         )
 
+    def wait_for_new_channel_state(
+        self,
+        client,
+        pubkey,
+        expected_state,
+        existing_channel_ids,
+        timeout=180,
+    ):
+        for _ in range(timeout):
+            channels = client.list_channels({"pubkey": pubkey})
+            for channel in channels["channels"]:
+                channel_id = channel["channel_id"]
+                if channel_id in existing_channel_ids:
+                    continue
+                if channel["state"]["state_name"] == expected_state:
+                    time.sleep(1)
+                    return channel_id
+            time.sleep(1)
+        channels = client.list_channels({"pubkey": pubkey})
+        raise TimeoutError(
+            f"New channel did not reach state {expected_state} within timeout period. "
+            f"existing={existing_channel_ids}, current={channels['channels']}"
+        )
+
     def get_account_udt_script(self, account_private_key):
         account1 = self.Ckb_cli.util_key_info_by_private_key(account_private_key)
         return {
@@ -342,7 +375,12 @@ class FiberTest(CkbTest):
         other_config={},
     ):
         fiber1.connect_peer(fiber2)
-        time.sleep(1)
+        existing_channel_ids = {
+            channel["channel_id"]
+            for channel in fiber1.get_client().list_channels(
+                {"pubkey": fiber2.get_pubkey()}
+            )["channels"]
+        }
         if fiber1_balance <= int(
             fiber2.get_client().node_info()[
                 "open_channel_auto_accept_min_ckb_funding_amount"
@@ -365,11 +403,13 @@ class FiberTest(CkbTest):
                     "tlc_fee_proportional_millionths": hex(fiber2_fee),
                 }
             )
-            time.sleep(1)
-            self.wait_for_channel_state(
-                fiber1.get_client(), fiber2.get_pubkey(), "ChannelReady"
+            channel_id = self.wait_for_new_channel_state(
+                fiber1.get_client(),
+                fiber2.get_pubkey(),
+                "ChannelReady",
+                existing_channel_ids,
             )
-            return
+            return channel_id
         open_channel_config = {
             "pubkey": fiber2.get_pubkey(),
             "funding_amount": hex(
@@ -381,8 +421,11 @@ class FiberTest(CkbTest):
         }
         open_channel_config.update(other_config)
         fiber1.get_client().open_channel(open_channel_config)
-        self.wait_for_channel_state(
-            fiber1.get_client(), fiber2.get_pubkey(), "ChannelReady"
+        channel_id = self.wait_for_new_channel_state(
+            fiber1.get_client(),
+            fiber2.get_pubkey(),
+            "ChannelReady",
+            existing_channel_ids,
         )
         channels = fiber1.get_client().list_channels({"pubkey": fiber2.get_pubkey()})
         # payment = fiber1.get_client().send_payment(
@@ -405,6 +448,7 @@ class FiberTest(CkbTest):
         # channels = fiber1.get_client().list_channels({"pubkey": fiber2.get_pubkey()})
         # assert channels["channels"][0]["local_balance"] == hex(fiber1_balance)
         # assert channels["channels"][0]["remote_balance"] == hex(fiber2_balance)
+        return channel_id
 
     def send_invoice_payment(
         self,

@@ -12,6 +12,13 @@ class WasmRpcTest(FiberTest):
     Test cases for the Wasm RPC interface.
     """
 
+    def _channel_by_id(self, client, channel_id):
+        channels = client.list_channels({})["channels"]
+        for channel in channels:
+            if channel["channel_id"] == channel_id:
+                return channel
+        raise AssertionError(f"channel {channel_id} not found in {channels}")
+
     def test_wasm_rpc(self):
         """
         Test the Wasm RPC interface.
@@ -50,12 +57,16 @@ class WasmRpcTest(FiberTest):
             f"not found in actual string '{exc_info.value.args[0]}'"
         )
         time.sleep(1)
-        self.wait_for_channel_state(
+        first_channel_id = self.wait_for_channel_state(
             wasmFiber.get_client(), self.fiber1.get_pubkey(), "ChannelReady"
         )
 
         # accept_channel
         wasm_node_pubkey = wasmFiber.get_client().node_info()["pubkey"]
+        existing_channel_ids = {
+            channel["channel_id"]
+            for channel in wasmFiber.get_client().list_channels({})["channels"]
+        }
         temporary_channel = self.fiber1.get_client().open_channel(
             {
                 "pubkey": wasm_node_pubkey,
@@ -71,22 +82,28 @@ class WasmRpcTest(FiberTest):
             }
         )
         self.wait_for_channel_state(
-            wasmFiber.get_client(), self.fiber1.get_pubkey(), "ChannelReady"
+            wasmFiber.get_client(),
+            self.fiber1.get_pubkey(),
+            "ChannelReady",
+            channel_id=first_channel_id,
+        )
+        accepted_channel_id = self.wait_for_new_channel_state(
+            wasmFiber.get_client(),
+            self.fiber1.get_pubkey(),
+            "ChannelReady",
+            existing_channel_ids,
         )
         # list_channels
-        wasm_list_channel = wasmFiber.get_client().list_channels({})
-        fiber1_list_channel = self.fiber1.get_client().list_channels({})
-        print("wasm_list_channel:", wasm_list_channel)
-        print("fiber1_list_channel:", fiber1_list_channel)
-        assert (
-            wasm_list_channel["channels"][0]["channel_id"]
-            == fiber1_list_channel["channels"][0]["channel_id"]
+        wasm_channel = self._channel_by_id(wasmFiber.get_client(), accepted_channel_id)
+        fiber1_channel = self._channel_by_id(
+            self.fiber1.get_client(), accepted_channel_id
         )
+        print("wasm_channel:", wasm_channel)
+        print("fiber1_channel:", fiber1_channel)
+        assert wasm_channel["channel_id"] == fiber1_channel["channel_id"]
 
         # update_channel
-        update_channel_id = wasmFiber.get_client().list_channels({})["channels"][0][
-            "channel_id"
-        ]
+        update_channel_id = accepted_channel_id
         wasmFiber.get_client().update_channel(
             {
                 "channel_id": update_channel_id,
@@ -94,13 +111,11 @@ class WasmRpcTest(FiberTest):
             }
         )
         time.sleep(1)
-        channels = wasmFiber.get_client().list_channels({})
-        assert channels["channels"][0]["tlc_fee_proportional_millionths"] == hex(2000)
+        channel = self._channel_by_id(wasmFiber.get_client(), update_channel_id)
+        assert channel["tlc_fee_proportional_millionths"] == hex(2000)
 
         # shutdown_channel
-        shutdown_channel_id = wasmFiber.get_client().list_channels({})["channels"][0][
-            "channel_id"
-        ]
+        shutdown_channel_id = accepted_channel_id
         wasmFiber.get_client().shutdown_channel(
             {
                 "channel_id": shutdown_channel_id,

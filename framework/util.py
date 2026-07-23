@@ -3,7 +3,6 @@ import subprocess
 import time
 import json
 import toml
-import re
 import struct
 
 import hashlib
@@ -130,14 +129,7 @@ def run_command(cmd, check_exit_code=True, env=None):
 
 
 def get_project_root():
-    current_path = os.path.dirname(os.path.abspath(__file__))
-    pattern = r"(.*fiber-py-integration-test)"
-    matches = re.findall(pattern, current_path)
-    if matches:
-        root_dir = max(matches, key=len)
-        return root_dir
-    else:
-        raise Exception("not found fiber-py-integration-test dir")
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def read_toml_file(file_path):

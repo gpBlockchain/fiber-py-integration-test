@@ -22,7 +22,12 @@ class FiberRPCClient:
         self.url = url
         self.other_params = other_params
         self.try_count = try_count
-        self.retryable_error_messages = retryable_error_messages or []
+        default_retryable_error_messages = [
+            "waiting for peer to send Init message",
+        ]
+        self.retryable_error_messages = default_retryable_error_messages + (
+            retryable_error_messages or []
+        )
         self.timeout = (
             timeout
             if timeout is not None
@@ -268,6 +273,7 @@ class FiberRPCClient:
                 url=self.url, data=json.dumps(data, indent=4)
             )
         )
+        last_retryable_error = None
         for i in range(self.try_count):
             try:
                 response = requests.post(
@@ -285,6 +291,7 @@ class FiberRPCClient:
                         message in error_message
                         for message in self.retryable_error_messages
                     ):
+                        last_retryable_error = error_message
                         LOGGER.debug("retryable rpc error: %s", error_message)
                         time.sleep(2)
                         continue
@@ -300,4 +307,6 @@ class FiberRPCClient:
                 LOGGER.debug("request too quickly, wait 2s")
                 time.sleep(2)
                 continue
+        if last_retryable_error is not None:
+            raise Exception(f"Error: {last_retryable_error}")
         raise Exception("request time out")

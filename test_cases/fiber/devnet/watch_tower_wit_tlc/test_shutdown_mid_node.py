@@ -61,13 +61,26 @@ class TestShutdownMidNode(FiberTest):
                 }
             )
             fiber2_invoices.append(fiber2_invoice)
+        payment_hashes = []
         for i in range(N):
-            self.new_fibers[i % len(self.new_fibers)].get_client().send_payment(
-                {
-                    "invoice": fiber2_invoices[i]["invoice_address"],
-                }
+            payment = (
+                self.new_fibers[i % len(self.new_fibers)]
+                .get_client()
+                .send_payment(
+                    {
+                        "invoice": fiber2_invoices[i]["invoice_address"],
+                    }
+                )
             )
+            payment_hashes.append(payment["payment_hash"])
             time.sleep(1)
+        for i, payment_hash in enumerate(payment_hashes):
+            self.wait_payment_state(
+                self.new_fibers[i % len(self.new_fibers)],
+                payment_hash,
+                "Inflight",
+                timeout=60,
+            )
 
         self.fiber2.get_client().shutdown_channel(
             {
@@ -89,21 +102,30 @@ class TestShutdownMidNode(FiberTest):
                 self.Miner.miner_with_version(self.node, "0x0")
             time.sleep(20)
 
-        for channels in self.fiber1.get_client().list_channels({})["channels"]:
-            try:
-                self.fiber1.get_client().shutdown_channel(
+        for fiber in self.new_fibers:
+            channels = fiber.get_client().list_channels(
+                {"pubkey": self.fiber1.get_pubkey()}
+            )["channels"]
+            for channel in channels:
+                if channel["state"]["state_name"] == "Closed":
+                    continue
+                fiber.get_client().shutdown_channel(
                     {
-                        "channel_id": channels["channel_id"],
-                        "close_script": self.get_account_script(
-                            self.Config.ACCOUNT_PRIVATE_1
-                        ),
+                        "channel_id": channel["channel_id"],
+                        "close_script": self.get_account_script(fiber.account_private),
                         "fee_rate": "0x3FC",
                     }
                 )
                 tx_hash = self.wait_and_check_tx_pool_fee(1000, False)
                 self.Miner.miner_until_tx_committed(self.node, tx_hash)
-            except Exception as e:
-                pass
+                self.wait_for_channel_state(
+                    fiber.get_client(),
+                    self.fiber1.get_pubkey(),
+                    "Closed",
+                    120,
+                    True,
+                    channel["channel_id"],
+                )
         after_balance = self.get_fibers_balance()
         result = self.get_balance_change(before_balance, after_balance)
         assert result[0]["udt"] == -800000
