@@ -89,8 +89,8 @@ cch:
   {% if cch_max_outgoing_fee_percentage is defined %}
   max_outgoing_fee_percentage: {{ cch_max_outgoing_fee_percentage }}
   {% endif %}
-  btc_final_tlc_expiry_delta_blocks: {{ cch_btc_final_tlc_expiry_delta_blocks | default(180) }}
-  ckb_final_tlc_expiry_delta_seconds: {{ cch_ckb_final_tlc_expiry_delta_seconds | default(108000) }}
+  btc_final_tlc_expiry_delta_blocks: {{ cch_btc_final_tlc_expiry_delta_blocks | default(360) }}
+  ckb_final_tlc_expiry_delta_seconds: {{ cch_ckb_final_tlc_expiry_delta_seconds | default(216000) }}
   min_outgoing_invoice_expiry_delta_seconds: {{ cch_min_outgoing_invoice_expiry_delta_seconds | default(21600)}}
   {% if cch_fiber_rpc_url is defined %}
   fiber_rpc_url: {{ cch_fiber_rpc_url }}

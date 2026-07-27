@@ -108,8 +108,8 @@ class TestPR1486PendingExpiryReconciliation(FiberCchTest):
         self.LNDs[1].ln_cli_with_cmd_without_json(
             f"payinvoice {order['incoming_invoice']['Lightning']} --force &"
         )
-        self.wait_payment_state(self.fiber1, payment_hash, "Inflight")
         self.wait_invoice_state(self.fiber2, payment_hash, "Received")
+        self.wait_payment_state(self.fiber1, payment_hash, "Inflight")
         self.wait_cch_order_state(
             self.fiber1, payment_hash, "OutgoingInFlight", timeout=10
         )

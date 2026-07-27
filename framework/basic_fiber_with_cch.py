@@ -6,10 +6,14 @@ from framework.test_fiber import FiberConfigPath
 import time
 
 
+BTC_BLOCK_TIME_SECONDS = 10 * 60
+
+
 class FiberCchTest(FiberTest):
     LNDs: list[LndNode] = []
     btcNode: BtcNode
     fiber_version = FiberConfigPath.CURRENT_CCH
+    start_lnd_config = {}
 
     @classmethod
     def setup_class(cls):
@@ -26,7 +30,7 @@ class FiberCchTest(FiberTest):
         cls.btcNode.start()
         # 启动lnd
         for lnd in cls.LNDs:
-            lnd.prepare()
+            lnd.prepare(cls.start_lnd_config)
             lnd.start()
 
         # 建立2个lnd的连接
@@ -71,7 +75,7 @@ class FiberCchTest(FiberTest):
         # start lnd
         lnd = LndNode(f"tmp/lnd/node{i}", 9735 + i, 10009 + i, 8180 + i)
         self.LNDs.append(lnd)
-        lnd.prepare()
+        lnd.prepare(self.start_lnd_config)
         lnd.start()
         return lnd
 
@@ -135,3 +139,44 @@ class FiberCchTest(FiberTest):
         raise TimeoutError(
             f"payment:{payment_hash} status did not reach state: {result['status']}, expected:{status} , within timeout period."
         )
+
+    def get_all_nodes_payment_tlc_expiry(self, payment_hash):
+        """
+        获取所有节点关于该payment——hash 的所有过期时间
+        """
+        expiry_times = []
+        for lnd in self.LNDs:
+            expiry_times.extend(self.get_lnd_payment_tlc_expiry(lnd, payment_hash))
+        expiry_times.reverse()
+        for fiber in self.fibers:
+            expiry_times.extend(self.get_fiber_payment_tlc_expiry(fiber, payment_hash))
+        return expiry_times
+
+    def get_fiber_payment_tlc_expiry(self, fiber, payment_hash):
+        pending_tlcs = self.get_pending_tlc(fiber, payment_hash)
+        expiry_times = []
+        for direction in ("Inbound", "Outbound"):
+            for tlc in pending_tlcs.get(direction, []):
+                expiry_times.append(tlc["expiry_seconds"])
+        return expiry_times
+
+    def get_lnd_payment_tlc_expiry(self, lnd, payment_hash):
+        """
+        1. get btc height
+        2. get tlc expiration_height
+        3. 换算还需要多少s 过期
+        """
+        btc_tip_height = int(str(self.btcNode.rpc("getblockcount")).strip(), 0)
+        target_hash = str(payment_hash).lower().replace("0x", "")
+        expiry_times = []
+        channels = lnd.ln_cli_with_cmd("listchannels").get("channels", [])
+        for channel in channels:
+            for htlc in channel.get("pending_htlcs", []):
+                hash_lock = str(htlc.get("hash_lock", "")).lower().replace("0x", "")
+                if hash_lock != target_hash:
+                    continue
+                expiration_height = int(str(htlc["expiration_height"]), 0)
+                expiry_times.append(
+                    (expiration_height - btc_tip_height) * BTC_BLOCK_TIME_SECONDS
+                )
+        return expiry_times

@@ -5,7 +5,7 @@ from cch_restart_helpers import CchRestartBase, sha256_hex, wait_lnd_invoice_sta
 
 class TestCchReceiveBtcRestart(CchRestartBase):
 
-    @pytest.mark.skip("https://github.com/nervosnetwork/fiber/pull/1498")
+    # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/pull/1498")
     def test_cch_r101_restart_after_multiple_lnd_hold_invoices_settle(self):
         """CCH-R101.
 
@@ -120,15 +120,11 @@ class TestCchReceiveBtcRestart(CchRestartBase):
             )
         for cancel_transaction in cancel_transactions:
             self.fiber2.get_client().cancel_invoice(
-                {
-                    "payment_hash": cancel_transaction["payment_hash"]
-                }
+                {"payment_hash": cancel_transaction["payment_hash"]}
             )
         for transaction in transactions:
             self.wait_payment_state(self.fiber1, transaction["payment_hash"])
-            wait_lnd_invoice_state(
-                self.LNDs[0], transaction["payment_hash"], "SETTLED"
-            )
+            wait_lnd_invoice_state(self.LNDs[0], transaction["payment_hash"], "SETTLED")
         for transaction in transactions:
             payment_hash = transaction["payment_hash"]
             self.wait_cch_order_state(self.fiber1, payment_hash, "Success", timeout=180)
@@ -140,7 +136,9 @@ class TestCchReceiveBtcRestart(CchRestartBase):
 
         for transaction in cancel_transactions:
             self.wait_payment_state(self.fiber1, transaction["payment_hash"], "Failed")
-            self.wait_cch_order_state(self.fiber1, transaction["payment_hash"], "Failed")
+            self.wait_cch_order_state(
+                self.fiber1, transaction["payment_hash"], "Failed"
+            )
             # todo lnd[0] 状态转为 canceled
             wait_lnd_invoice_state(
                 self.LNDs[0], transaction["payment_hash"], "CANCELED"

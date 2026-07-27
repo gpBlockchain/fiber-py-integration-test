@@ -6,6 +6,10 @@ from cch_restart_helpers import CchRestartBase, sha256_hex, wait_lnd_invoice_sta
 
 
 class TestCchLndRestart(CchRestartBase):
+    start_fiber_config = {
+        "cch_base_fee_sats": 0,
+        "cch_fee_rate_per_million_sats": 5000,
+    }
 
     @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/1501")
     def test_cch_r201_lnd_sender_restarts_during_outgoing_inflight(self):
@@ -74,9 +78,7 @@ class TestCchLndRestart(CchRestartBase):
                 )
 
             for transaction in receive_btc_transactions:
-                self.LNDs[1].payinvoice(
-                    transaction["incoming_invoice"]["Lightning"]
-                )
+                self.LNDs[1].payinvoice(transaction["incoming_invoice"]["Lightning"])
 
             for transaction in send_btc_transactions:
                 wait_lnd_invoice_state(

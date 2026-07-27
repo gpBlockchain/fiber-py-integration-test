@@ -87,6 +87,19 @@ class TestCCHConfig(FiberCchTest):
         ), config_text
 
         self.fiber1.start()
+        self.faucet(
+            self.fiber2.account_private,
+            0,
+            self.fiber1.account_private,
+            10000 * 100000000,
+        )
+        self.open_channel(
+            self.fiber2,
+            self.fiber1,
+            1000 * 100000000,
+            1000 * 100000000,
+            udt=self.get_account_udt_script(self.fiber1.account_private),
+        )
         invoice = self.fiber2.get_client().new_invoice(
             {
                 "amount": hex(1000),
@@ -158,6 +171,19 @@ class TestCCHConfig(FiberCchTest):
             }
         )
         self.fiber1.start()
+        self.faucet(
+            self.fiber2.account_private,
+            0,
+            self.fiber1.account_private,
+            300000 * 100000000,
+        )
+        self.open_channel(
+            self.fiber2,
+            self.fiber1,
+            100000 * 100000000,
+            100000 * 100000000,
+            udt=self.get_account_udt_script(self.fiber1.account_private),
+        )
         lndInvoice = self.LNDs[0].addinvoice(10000000 * 1000000)
         btcResult = self.fiber1.get_client().send_btc(
             {
@@ -354,6 +380,19 @@ class TestCCHConfig(FiberCchTest):
             }
         )
         self.fiber1.start()
+        self.faucet(
+            self.fiber2.account_private,
+            0,
+            self.fiber1.account_private,
+            10000 * 100000000,
+        )
+        self.open_channel(
+            self.fiber2,
+            self.fiber1,
+            1000 * 100000000,
+            1000 * 100000000,
+            udt=self.get_account_udt_script(self.fiber1.account_private),
+        )
         # receive_btc
         invoice = self.fiber2.get_client().new_invoice(
             {
@@ -493,7 +532,19 @@ class TestCCHConfig(FiberCchTest):
         Returns:
         """
         # - 没有配置，预期: 默认6小时
-
+        self.faucet(
+            self.fiber2.account_private,
+            0,
+            self.fiber1.account_private,
+            10000 * 100000000,
+        )
+        self.open_channel(
+            self.fiber2,
+            self.fiber1,
+            1000 * 100000000,
+            1000 * 100000000,
+            udt=self.get_account_udt_script(self.fiber1.account_private),
+        )
         # send_btc
         lndInvoice = self.LNDs[1].addinvoice(1000, "demo  --expiry 21610")
         payreq = self.LNDs[0].ln_cli_with_cmd(

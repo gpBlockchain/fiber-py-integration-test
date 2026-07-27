@@ -256,9 +256,9 @@ class TestSendBtc(FiberCchTest):
             f"not found in actual string '{exc_info.value.args[0]}'"
         )
 
-    @pytest.mark.skip(
-        "https://github.com/nervosnetwork/fiber/issues/979 https://github.com/nervosnetwork/fiber/issues/1488"
-    )
+    # @pytest.mark.skip(
+    #     "https://github.com/nervosnetwork/fiber/issues/979 https://github.com/nervosnetwork/fiber/issues/1488"
+    # )
     def test_payee_pub_key_is_self(self):
         """
         应该会失败
@@ -290,11 +290,43 @@ class TestSendBtc(FiberCchTest):
         )
         self.wait_cch_order_state(self.fiber1, payment["payment_hash"], "Failed")
         # todo  应该要失败才对，outgoing端没发出去, inbound 端应该回滚报错才对
-        self.wait_payment_state(self.fiber2, payment["payment_hash"], "Faild")
+        self.wait_payment_state(self.fiber2, payment["payment_hash"], "Failed")
 
-    @pytest.mark.skip(
-        "https://github.com/nervosnetwork/fiber/issues/979 https://github.com/nervosnetwork/fiber/issues/1488"
-    )
+    def test_cancel_invoice(self):
+        self.faucet(
+            self.fiber2.account_private,
+            0,
+            self.fiber1.account_private,
+            10000 * 100000000,
+        )
+        self.open_channel(
+            self.fiber2,
+            self.fiber1,
+            1000 * 100000000,
+            1000 * 100000000,
+            udt=self.get_account_udt_script(self.fiber1.account_private),
+        )
+        lndInvoice = self.LNDs[1].addinvoice(100)
+        send_payment_response = self.fiber1.get_client().send_btc(
+            {
+                "btc_pay_req": lndInvoice["payment_request"],
+                "currency": "Fibd",
+            }
+        )
+        self.LNDs[1].ln_cli_with_cmd(
+            f"cancelinvoice {send_payment_response['payment_hash'].replace('0x', '')}"
+        )
+        time.sleep(1)
+        payment = self.fiber2.get_client().send_payment(
+            {"invoice": send_payment_response["incoming_invoice"]["Fiber"]}
+        )
+        self.wait_cch_order_state(self.fiber1, payment["payment_hash"], "Failed")
+        # todo  应该要失败才对，outgoing端没发出去, inbound 端应该回滚报错才对
+        self.wait_payment_state(self.fiber2, payment["payment_hash"], "Failed")
+
+    # @pytest.mark.skip(
+    #     "https://github.com/nervosnetwork/fiber/issues/979 https://github.com/nervosnetwork/fiber/issues/1488"
+    # )
     def test_payee_pub_key_not_exist(self):
         self.faucet(
             self.fiber2.account_private,
@@ -375,6 +407,7 @@ class TestSendBtc(FiberCchTest):
             f"Expected substring '{expected_error_message}' "
             f"not found in actual string '{exc_info.value.args[0]}'"
         )
+
         invoice = self.LNDs[1].addinvoice(100, "demo")
         time.sleep(10)
         send_btc = self.fiber1.get_client().send_btc(
@@ -483,10 +516,12 @@ class TestSendBtc(FiberCchTest):
         )
         print("cch order:", cch_order)
         self.wait_cch_order_state(self.fiber1, cch_order["payment_hash"], "Failed")
-        time.sleep(10)
-        self.fiber1.get_client().cancel_invoice(
-            {"payment_hash": payment["payment_hash"]}
-        )
+        self.wait_invoice_state(self.fiber1, cch_order["payment_hash"], "Cancelled")
+
+        # time.sleep(10)
+        # self.fiber1.get_client().cancel_invoice(
+        #     {"payment_hash": payment["payment_hash"]}
+        # )
         # time.sleep(10)
         # self.fiber2.get_client().get_payment({
         #     "payment_hash": payment['payment_hash']

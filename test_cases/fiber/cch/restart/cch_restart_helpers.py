@@ -57,9 +57,7 @@ class CchRestartBase(FiberCchTest):
             "amount": hex(amount_sats),
             "currency": "Fibd",
             "description": "CCH restart receive_btc invoice",
-            "udt_type_script": self.get_account_udt_script(
-                self.fiber1.account_private
-            ),
+            "udt_type_script": self.get_account_udt_script(self.fiber1.account_private),
             "payment_preimage": self.generate_random_preimage(),
             "hash_algorithm": "sha256",
         }

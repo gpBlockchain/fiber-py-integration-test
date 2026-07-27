@@ -46,11 +46,14 @@ class LndNode:
         }
         self.lnd_config_path = "source/lnd-init/lnd/lnd.conf.j2"
 
-    def prepare(self, other_config={}):
+    def prepare(self, other_config=None):
         os.makedirs(self.tmp_path, exist_ok=True)  # 创建文件夹，如果已存在则不报错
         if ".j2" in self.lnd_config_path:
+            config = self.config.copy()
+            if other_config:
+                config.update(other_config)
             create_config_file(
-                self.config,
+                config,
                 self.lnd_config_path,
                 f"{self.tmp_path}/lnd.conf",
             )

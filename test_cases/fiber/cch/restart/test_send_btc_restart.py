@@ -81,7 +81,7 @@ class TestCchSendBtcRestart(CchRestartBase):
         self.wait_cch_order_state(self.fiber1, payment_hash, "Success", timeout=180)
         self.wait_payment_state(self.fiber2, payment["payment_hash"], "Success")
 
-    @pytest.mark.skip("https://github.com/nervosnetwork/fiber/pull/1546")
+    # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/pull/1546")
     def test_cch_r004_recovers_lnd_success_during_cch_downtime(self):
         """CCH-R004 / CCH-T006."""
         self.open_wrapped_btc_channel_to_cch()
