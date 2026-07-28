@@ -1,10 +1,36 @@
 import json
-
-from framework.util import get_project_root
 import os
-from framework.util import create_config_file, get_project_root, run_command
-import time
 import shutil
+import signal
+import subprocess
+import time
+
+from framework.util import create_config_file, get_project_root, run_command
+
+
+LND_PROCESS_TIMEOUT_SECONDS = 30
+
+
+def _listening_process_ids(port):
+    result = subprocess.run(
+        ["lsof", "-nP", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode not in (0, 1):
+        raise RuntimeError(
+            f"Failed to inspect LND RPC port {port}: {result.stderr.strip()}"
+        )
+    return {int(pid) for pid in result.stdout.split()}
+
+
+def _process_is_running(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
 
 
 class LndNode:
@@ -59,19 +85,32 @@ class LndNode:
             )
 
     def start(self):
+        existing_pids = _listening_process_ids(self.rpc_port)
+        if existing_pids:
+            raise RuntimeError(
+                f"Cannot start LND on RPC port {self.rpc_port}; "
+                f"listener processes are still running: {sorted(existing_pids)}"
+            )
+
         run_command(
             f'{self.lnd} --lnddir="{self.tmp_path}" > {self.tmp_path}/lnd.log 2>&1 &'
         )
-        retries = 30
+        retries = LND_PROCESS_TIMEOUT_SECONDS
+        last_error = None
         print("waiting for ready")
-        for i in range(retries):
+        for remaining_retries in range(retries, 0, -1):
             try:
-                self.ln_cli_with_cmd("getinfo")
-                print(f"remaining retries={retries}")
-                return
-            except Exception as e:
+                info = self.ln_cli_with_cmd("getinfo")
+                print(f"remaining retries={remaining_retries - 1}")
+                return info
+            except Exception as error:
+                last_error = error
                 time.sleep(1)
-                continue
+
+        raise TimeoutError(
+            f"LND RPC port {self.rpc_port} did not become ready within {retries}s; "
+            f"check {self.tmp_path}/lnd.log"
+        ) from last_error
 
     def getinfo(self):
         return self.ln_cli_with_cmd("getinfo")
@@ -103,9 +142,23 @@ class LndNode:
         pass
 
     def stop(self):
-        run_command(
-            f"kill $(lsof -i:{self.rpc_port} | grep LISTEN | awk '{{print $2}}')",
-            check_exit_code=False,
+        pids = _listening_process_ids(self.rpc_port)
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+
+        deadline = time.monotonic() + LND_PROCESS_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            running_pids = [pid for pid in pids if _process_is_running(pid)]
+            if not running_pids:
+                return
+            time.sleep(0.1)
+
+        raise TimeoutError(
+            f"LND processes {running_pids} on RPC port {self.rpc_port} "
+            f"did not stop within {LND_PROCESS_TIMEOUT_SECONDS}s"
         )
 
     def clean(self):

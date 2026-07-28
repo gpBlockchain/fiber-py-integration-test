@@ -1,5 +1,7 @@
 """PR #1546: recover CCH LND payments after tracker and daemon restarts."""
 
+import time
+
 import pytest
 
 from cch_restart_helpers import CchRestartBase, sha256_hex, wait_lnd_invoice_state
@@ -19,6 +21,18 @@ def _lnd_payments_for_hash(lnd, payment_hash):
         for payment in payments
         if payment.get("payment_hash", "").lower() == target_hash
     ]
+
+
+def _wait_lnd_payment_state(lnd, payment_hash, expected, timeout=120):
+    last = []
+    for _ in range(timeout):
+        last = _lnd_payments_for_hash(lnd, payment_hash)
+        if len(last) == 1 and last[0].get("status") == expected:
+            return last[0]
+        time.sleep(1)
+    raise TimeoutError(
+        f"LND payment {payment_hash} did not reach {expected}, last={last}"
+    )
 
 
 class TestPr1546TrackPaymentRecovery(CchRestartBase):
@@ -57,7 +71,7 @@ class TestPr1546TrackPaymentRecovery(CchRestartBase):
         )
         assert incoming_invoice["status"] == "Paid"
 
-    @pytest.mark.skip("https://github.com/nervosnetwork/fiber/pull/1546")
+    # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/pull/1546")
     def test_cch_r202_recovers_terminal_payment_after_cch_and_lnd_restart(self):
         """TP-CCH-SEND-RECOVERY-001 [P0]: recover a persisted LND success."""
         preimage, payment_hash, fiber_payment = self._create_outgoing_inflight_payment(
@@ -122,6 +136,9 @@ class TestPr1546TrackPaymentRecovery(CchRestartBase):
         wait_lnd_invoice_state(self.LNDs[1], payment_hash, "SETTLED")
         self.LNDs[0].start()
 
+        # Prove the restarted payer has recovered the terminal state before
+        # requiring CCH's TrackPaymentV2 subscription to replay it.
+        _wait_lnd_payment_state(self.LNDs[0], payment_hash, "SUCCEEDED")
         self._assert_successful_swap(payment_hash, fiber_payment)
 
     def test_cch_r008_restarts_keep_one_lnd_payment_record(self):

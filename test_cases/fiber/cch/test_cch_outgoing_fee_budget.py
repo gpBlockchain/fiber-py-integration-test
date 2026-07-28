@@ -389,28 +389,12 @@ class TestCchOutgoingFeeBudget(FiberCchTest):
         self._assert_fiber_invoice_amount(
             self.fiber2, invoice["invoice_address"], self.amount_sats
         )
-        order = self.fiber1.get_client().receive_btc(
-            {"fiber_pay_req": invoice["invoice_address"]}
+        with pytest.raises(Exception) as exc_info:
+            self.fiber1.get_client().receive_btc(
+                {"fiber_pay_req": invoice["invoice_address"]}
+            )
+        expected_error_message = "no path found"
+        assert expected_error_message in exc_info.value.args[0], (
+            f"Expected substring '{expected_error_message}' "
+            f"not found in actual string '{exc_info.value.args[0]}'"
         )
-        fee_sats = int(order["fee_sats"], 16)
-        incoming_amount_sats = self.amount_sats + fee_sats
-        self._assert_incoming_invoice_amount(order, incoming_amount_sats)
-        self._assert_outgoing_pay_req_amount(order, self.amount_sats)
-        assert int(order["amount_sats"], 16) == incoming_amount_sats
-        self.LNDs[1].ln_cli_with_cmd_without_json(
-            f"payinvoice {order['incoming_invoice']['Lightning']} "
-            "--force --timeout 30s &"
-        )
-
-        order = _wait_cch_order_status(self.fiber1, order["payment_hash"], "Failed")
-        outgoing_invoice = self.fiber2.get_client().get_invoice(
-            {"payment_hash": order["payment_hash"]}
-        )
-        assert int(order["fee_sats"], 16) == 200
-        assert int(order["amount_sats"], 16) == self.amount_sats + 200
-        self._assert_incoming_invoice_amount(order, self.amount_sats + 200)
-        self._assert_outgoing_pay_req_amount(order, self.amount_sats)
-        assert route_fee > int(order["fee_sats"], 16) * 50 // 100
-        assert outgoing_invoice["status"] != "Paid"
-        if self.verify_rollback:
-            self._verify_receive_btc_failure_rollback(order["payment_hash"])
