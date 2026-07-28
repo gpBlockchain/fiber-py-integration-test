@@ -2,7 +2,6 @@ import pytest
 
 from framework.basic_fiber_with_cch import FiberCchTest
 
-
 # A valid, signed Fibd invoice generated with InvoiceBuilder without calling
 # final_expiry_delta(). The new_invoice RPC cannot create this compatibility case:
 # it always writes its own fallback delta.

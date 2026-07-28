@@ -12,7 +12,6 @@ import pytest
 
 from framework.basic_fiber_with_cch import FiberCchTest
 
-
 CKB_SHANNONS = 100000000
 CHANNEL_BALANCE = 1000 * CKB_SHANNONS
 PAYMENT_AMOUNT_SATS = 1000

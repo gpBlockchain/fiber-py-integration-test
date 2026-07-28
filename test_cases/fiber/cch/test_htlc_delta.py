@@ -2,7 +2,6 @@ import time
 
 from framework.basic_fiber_with_cch import FiberCchTest
 
-
 BTC_BLOCK_TIME_SECONDS = 10 * 60
 PENDING_TLC_TIMEOUT_SECONDS = 30
 EXPECTED_LND_TLC_EXPIRY_COUNT = 4

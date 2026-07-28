@@ -7,7 +7,6 @@ import time
 
 from framework.util import create_config_file, get_project_root, run_command
 
-
 LND_PROCESS_TIMEOUT_SECONDS = 30
 
 

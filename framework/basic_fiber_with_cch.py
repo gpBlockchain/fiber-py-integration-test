@@ -5,7 +5,6 @@ from framework.test_lnd import LndNode
 from framework.test_fiber import FiberConfigPath
 import time
 
-
 BTC_BLOCK_TIME_SECONDS = 10 * 60
 
 

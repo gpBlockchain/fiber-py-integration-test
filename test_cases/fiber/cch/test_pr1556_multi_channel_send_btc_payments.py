@@ -11,7 +11,6 @@ import time
 
 from framework.basic_fiber_with_cch import FiberCchTest
 
-
 CHANNEL_COUNT = 3
 SWAPS_PER_CHANNEL = 2
 SEND_BTC_SWAP_COUNT = CHANNEL_COUNT * SWAPS_PER_CHANNEL
