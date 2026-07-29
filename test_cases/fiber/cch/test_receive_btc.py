@@ -524,16 +524,19 @@ class TestReceiveBtc(FiberCchTest):
                 "hash_algorithm": "sha256",
             }
         )
-        receive_btc_result1 = self.fiber1.get_client().receive_btc(
+        first_order = self.fiber1.get_client().receive_btc(
             {"fiber_pay_req": invoice["invoice_address"]}
         )
-
-        with pytest.raises(Exception) as exc_info:
-            receive_btc_result2 = self.fiber1.get_client().receive_btc(
+        try:
+            second_order = self.fiber1.get_client().receive_btc(
                 {"fiber_pay_req": invoice["invoice_address"]}
             )
-        expected_error_message = "LND invoice Hash256"
-        assert expected_error_message in exc_info.value.args[0], (
-            f"Expected substring '{expected_error_message}' "
-            f"not found in actual string '{exc_info.value.args[0]}'"
+        except Exception as error:
+            assert "already exists" in str(error)
+        else:
+            assert second_order == first_order
+
+        stored_order = self.fiber1.get_client().get_cch_order(
+            {"payment_hash": first_order["payment_hash"]}
         )
+        assert stored_order == first_order

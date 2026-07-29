@@ -8,6 +8,7 @@ import time
 from framework.util import create_config_file, get_project_root, run_command
 
 LND_PROCESS_TIMEOUT_SECONDS = 30
+LND_STARTING_ERROR = "server is still in the process of starting"
 
 
 def _listening_process_ids(port):
@@ -166,18 +167,19 @@ class LndNode:
     def open_channel(self, peerNode, local_amt, sat_per_vbyte, min_confs):
         node_key = peerNode.getinfo()["identity_pubkey"]
         peer_address = f"localhost:{peerNode.listen_port}"
-        self.ln_cli_with_cmd(
-            f"openchannel --node_key {node_key} --connect {peer_address} --local_amt {local_amt} --sat_per_vbyte {sat_per_vbyte} --min_confs {min_confs}"
-        )
-        ##   echo "openchannel"
-        #   local retries=5
-        #   while [[ $retries -gt 0 ]] && ! lncli -n regtest --lnddir="$ingrid_dir" --no-macaroons --rpcserver "localhost:$ingrid_port" \
-        #       openchannel \
-        #       --node_key "$bob_node_key" \
-        #       --connect localhost:9835 \
-        #       --local_amt 1000000 \
-        #       --sat_per_vbyte 1 \
-        #       --min_confs 0; do
-        #     sleep 3
-        #     retries=$((retries - 1))
-        #   done
+        command = f"openchannel --node_key {node_key} --connect {peer_address} --local_amt {local_amt} --sat_per_vbyte {sat_per_vbyte} --min_confs {min_confs}"
+        last_error = None
+        for attempt in range(LND_PROCESS_TIMEOUT_SECONDS):
+            try:
+                return self.ln_cli_with_cmd(command)
+            except Exception as error:
+                if LND_STARTING_ERROR not in str(error):
+                    raise
+                last_error = error
+                if attempt + 1 < LND_PROCESS_TIMEOUT_SECONDS:
+                    time.sleep(1)
+
+        raise TimeoutError(
+            f"LND RPC port {self.rpc_port} was still starting after "
+            f"{LND_PROCESS_TIMEOUT_SECONDS}s"
+        ) from last_error
