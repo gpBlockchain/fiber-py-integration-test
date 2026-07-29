@@ -3,7 +3,6 @@ import pytest
 from framework.basic_fiber import FiberTest
 from framework.fiber_rpc import FiberRPCClient
 
-
 BISCUIT_PUBLIC_KEY = (
     "ed25519/383faaf0aff783efe70479ff34d645ba0d3d729e541b55b17d6344c551bcb1cd"
 )

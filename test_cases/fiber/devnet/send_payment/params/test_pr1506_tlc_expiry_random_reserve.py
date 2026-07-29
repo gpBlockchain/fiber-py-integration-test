@@ -4,7 +4,6 @@ import pytest
 
 from framework.basic_fiber import FiberTest
 
-
 ONE_CKB = 100000000
 FINAL_TLC_EXPIRY_DELTA = 24 * 60 * 60 * 1000
 

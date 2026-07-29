@@ -3,7 +3,6 @@ import time
 
 from framework.basic_fiber import FiberTest
 
-
 ONE_CKB = 100000000
 
 
