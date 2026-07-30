@@ -16,33 +16,73 @@ class FiberCchTest(FiberTest):
 
     @classmethod
     def setup_class(cls):
-        super().setup_class()
-        cls.btcNode = BtcNode()
-        cls.LNDs = [
-            LndNode("tmp/lnd/node0", 9735, 10009, 8180),
-            LndNode("tmp/lnd/node1", 9736, 11010, 8181),
-        ]
-        if cls.debug == True:
-            return
-            # 启动btc
-        cls.btcNode.prepare()
-        cls.btcNode.start()
-        # 启动lnd
-        for lnd in cls.LNDs:
-            lnd.prepare(cls.start_lnd_config)
-            lnd.start()
+        cls.LNDs = []
+        cls.btcNode = None
+        try:
+            super().setup_class()
+            cls.btcNode = BtcNode()
+            cls.LNDs = [
+                LndNode("tmp/lnd/node0", 9735, 10009, 8180),
+                LndNode("tmp/lnd/node1", 9736, 11010, 8181),
+            ]
+            if cls.debug == True:
+                return
+                # 启动btc
+            cls.btcNode.prepare()
+            cls.btcNode.start()
+            # 启动lnd
+            for lnd in cls.LNDs:
+                lnd.prepare(cls.start_lnd_config)
+                lnd.start()
 
-        # 建立2个lnd的连接
-        ingrid_p2tr_address = cls.LNDs[0].ln_cli_with_cmd("newaddress p2tr")["address"]
-        cls.btcNode.sendtoaddress(ingrid_p2tr_address, 5, 25)
-        cls.btcNode.miner(1)
-        cls.LNDs[0].open_channel(cls.LNDs[1], 1000000, 1, 0)
-        cls.btcNode.miner(6)
-        ingrid_p2tr_address = cls.LNDs[1].ln_cli_with_cmd("newaddress p2tr")["address"]
-        cls.btcNode.sendtoaddress(ingrid_p2tr_address, 5, 25)
-        cls.btcNode.miner(1)
-        cls.LNDs[1].open_channel(cls.LNDs[0], 1000000, 1, 0)
-        cls.btcNode.miner(6)
+            # 建立2个lnd的连接
+            ingrid_p2tr_address = cls.LNDs[0].ln_cli_with_cmd("newaddress p2tr")[
+                "address"
+            ]
+            cls.btcNode.sendtoaddress(ingrid_p2tr_address, 5, 25)
+            cls.btcNode.miner(1)
+            cls.LNDs[0].open_channel(cls.LNDs[1], 1000000, 1, 0)
+            cls.btcNode.miner(6)
+            ingrid_p2tr_address = cls.LNDs[1].ln_cli_with_cmd("newaddress p2tr")[
+                "address"
+            ]
+            cls.btcNode.sendtoaddress(ingrid_p2tr_address, 5, 25)
+            cls.btcNode.miner(1)
+            cls.LNDs[1].open_channel(cls.LNDs[0], 1000000, 1, 0)
+            cls.btcNode.miner(6)
+        except Exception:
+            if not cls.debug and not cls.first_debug:
+                cls._cleanup_class_resources(suppress_errors=True)
+            raise
+
+    @classmethod
+    def _cleanup_class_resources(cls, suppress_errors=False):
+        resources = [
+            *[(f"LND {index}", lnd) for index, lnd in enumerate(cls.LNDs)],
+            ("Bitcoin", cls.btcNode),
+            ("CKB", getattr(cls, "node", None)),
+        ]
+        cleanup_errors = []
+
+        for action in ("stop", "clean"):
+            for name, resource in resources:
+                if resource is None:
+                    continue
+                try:
+                    getattr(resource, action)()
+                except Exception as error:
+                    cleanup_errors.append((name, action, error))
+
+        if not cleanup_errors:
+            return
+
+        details = "; ".join(
+            f"{name}.{action}: {error}" for name, action, error in cleanup_errors
+        )
+        if suppress_errors:
+            cls.logger.error("CCH setup cleanup failed: %s", details)
+            return
+        raise RuntimeError(f"CCH teardown failed: {details}") from cleanup_errors[0][2]
 
     def faucetBtc(self, lnd, amount):
         address = lnd.ln_cli_with_cmd("newaddress p2tr")["address"]
@@ -100,13 +140,7 @@ class FiberCchTest(FiberTest):
             return
         if cls.first_debug:
             return
-        cls.node.stop()
-        cls.node.clean()
-        for lnd in cls.LNDs:
-            lnd.stop()
-            lnd.clean()
-        cls.btcNode.stop()
-        cls.btcNode.clean()
+        cls._cleanup_class_resources()
 
     def wait_cch_order_state(
         self, client, payment_hash, status="Success", timeout=360, interval=1

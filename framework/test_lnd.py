@@ -8,7 +8,10 @@ import time
 from framework.util import create_config_file, get_project_root, run_command
 
 LND_PROCESS_TIMEOUT_SECONDS = 30
-LND_STARTING_ERROR = "server is still in the process of starting"
+LND_TRANSIENT_OPEN_CHANNEL_ERRORS = (
+    "server is still in the process of starting",
+    "channels cannot be created before the wallet is fully synced",
+)
 
 
 def _listening_process_ids(port):
@@ -173,13 +176,16 @@ class LndNode:
             try:
                 return self.ln_cli_with_cmd(command)
             except Exception as error:
-                if LND_STARTING_ERROR not in str(error):
+                if not any(
+                    message in str(error)
+                    for message in LND_TRANSIENT_OPEN_CHANNEL_ERRORS
+                ):
                     raise
                 last_error = error
                 if attempt + 1 < LND_PROCESS_TIMEOUT_SECONDS:
                     time.sleep(1)
 
         raise TimeoutError(
-            f"LND RPC port {self.rpc_port} was still starting after "
-            f"{LND_PROCESS_TIMEOUT_SECONDS}s"
+            f"LND RPC port {self.rpc_port} could not open a channel after "
+            f"retrying for {LND_PROCESS_TIMEOUT_SECONDS}s"
         ) from last_error
