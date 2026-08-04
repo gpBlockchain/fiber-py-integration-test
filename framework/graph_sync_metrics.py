@@ -394,8 +394,7 @@ def sample_nodes_graph_sync_until_stable(
                 )
 
             core_query_failed = any(
-                name in snapshot["errors"]
-                for name in ("graph_channels", "graph_nodes")
+                name in snapshot["errors"] for name in ("graph_channels", "graph_nodes")
             )
             if core_query_failed:
                 continue
@@ -411,9 +410,8 @@ def sample_nodes_graph_sync_until_stable(
                 0 if previous_channels is None else channels_count - previous_channels
             )
             nodes_delta = 0 if previous_nodes is None else nodes_count - previous_nodes
-            graph_changed = (
-                previous_channels is not None
-                and (channels_delta != 0 or nodes_delta != 0)
+            graph_changed = previous_channels is not None and (
+                channels_delta != 0 or nodes_delta != 0
             )
 
             if state["first_channels"] is None:
