@@ -80,6 +80,40 @@ jobs:
           set -o pipefail
           make fiber_sync_state_test 2>&1 | tee sync_state.log
 
+      - name: Collect and print sync diagnostics
+        if: always()
+        run: |
+          set -e
+          mkdir -p report/sync_state_node_logs
+
+          # Fallback for failures that happen before the pytest artifact copy.
+          for network in main_net test_net; do
+            case "$network" in
+              main_net) source_log="tmp/fiber/sync-state-mainnet/node.log" ;;
+              test_net) source_log="tmp/fiber/sync-state-testnet/node.log" ;;
+            esac
+            destination="report/sync_state_node_logs/${network}.node.log"
+            if [ -f "$source_log" ]; then
+              cp "$source_log" "$destination"
+            fi
+          done
+
+          echo "::group::Graph sync diagnostic timeline"
+          if [ -f sync_state.log ]; then
+            grep -E 'BOOT|CONNECT_PEER|CONFIG|SAMPLE|QUERY_ERROR|SLOW_RPC|PEER_CHANGE|SYNC_STATUS_CHANGE|DIAGNOSTIC|RESULT' sync_state.log || true
+          fi
+          echo "::endgroup::"
+
+          for node_log in report/sync_state_node_logs/*.node.log; do
+            [ -f "$node_log" ] || continue
+            filtered_log="${node_log%.node.log}.filtered.log"
+            grep -Ei 'gossip|sync|peer|disconnect|reconnect|timeout|warn|error' "$node_log" \
+              | tail -n 200 > "$filtered_log" || true
+            echo "::group::$(basename "$filtered_log")"
+            cat "$filtered_log"
+            echo "::endgroup::"
+          done
+
       - name: Capture RESULT lines for Discord
         id: capture
         if: always()
@@ -122,7 +156,7 @@ jobs:
           run_url = os.environ.get("RUN_URL", "")
 
           reason_map = {
-              "graph_stable": ("已稳定", "counts unchanged for 1 min"),
+              "graph_stable": ("已稳定", "counts unchanged for the stable window"),
               "max_duration_reached": ("超时截断", "hit max duration"),
           }
           net_map = {
@@ -148,6 +182,15 @@ jobs:
               r"list_peers=(?P<peers>\d+) "
               r"reason=(?P<reason>\w+)"
           )
+          detail_pattern = re.compile(
+              r"last_change=(?P<last_change>[\d.]+)s "
+              r"stable_for=(?P<stable_for>[\d.]+)s "
+              r"changes=(?P<changes>\d+) "
+              r"peer_changes=(?P<peer_changes>\d+) "
+              r"rpc_failures=(?P<rpc_failures>\d+) "
+              r"rpc_max=(?P<rpc_max>[\d.]+)s "
+              r"signals=(?P<signals>\S+)"
+          )
 
           blocks = []
           for line in results.splitlines():
@@ -158,6 +201,21 @@ jobs:
               reason = m.group("reason")
               reason_zh, reason_en = reason_map.get(reason, (reason, reason))
               elapsed = fmt_duration(m.group("elapsed"))
+              detail = detail_pattern.search(line)
+              diagnostic_lines = []
+              if detail:
+                  diagnostic_lines = [
+                      "🧩 最后增长 **{}** · 图变化 **{}** 次 · peer 变化 **{}** 次".format(
+                          fmt_duration(detail.group("last_change")),
+                          detail.group("changes"),
+                          detail.group("peer_changes"),
+                      ),
+                      "🩺 RPC max **{}s** · failures **{}** · `{}`".format(
+                          detail.group("rpc_max"),
+                          detail.group("rpc_failures"),
+                          detail.group("signals"),
+                      ),
+                  ]
               blocks.append(
                   "\n".join(
                       [
@@ -167,7 +225,7 @@ jobs:
                           f"🧭 graph_nodes **{m.group('nodes')}**",
                           f"🔗 list_peers **{m.group('peers')}**",
                           f"✅ 状态 **{reason_zh}**  ({reason_en})",
-                      ]
+                      ] + diagnostic_lines
                   )
               )
 
