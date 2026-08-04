@@ -84,6 +84,9 @@ fiber_testnet_cases := \
 fiber_mainnet_cases := \
 	test_cases/fiber/mainnet
 
+fiber_sync_state_cases := \
+	test_cases/fiber/sync_state
+
 
 
 test:
@@ -118,6 +121,20 @@ fiber_testnet_test:
 fiber_mainnet_test:
 	@failed_cases=; \
     for test_case in $(fiber_mainnet_cases); do \
+        echo "Running tests for $$test_case"; \
+        if ! bash test.sh "$$test_case"; then \
+            echo "$$test_case" >> failed_test_cases.txt; \
+        fi \
+    done; \
+    if [ -s failed_test_cases.txt ]; then \
+        echo "Some test cases failed: $$(cat failed_test_cases.txt)"; \
+        rm -f failed_test_cases.txt; \
+        exit 1; \
+    fi
+
+fiber_sync_state_test:
+	@failed_cases=; \
+    for test_case in $(fiber_sync_state_cases); do \
         echo "Running tests for $$test_case"; \
         if ! bash test.sh "$$test_case"; then \
             echo "$$test_case" >> failed_test_cases.txt; \

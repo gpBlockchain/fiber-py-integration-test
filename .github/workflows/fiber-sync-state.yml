@@ -1,0 +1,248 @@
+# Daily mainnet + testnet graph sync measurement.
+# Mirrors fiber-testnet.yml setup; posts a readable sync summary to Discord.
+
+name: fiber sync state
+
+on:
+  schedule:
+    # Daily at 00:00 UTC
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+    inputs:
+      GitUrl:
+        description: "fiber -git url"
+        default: "https://github.com/nervosnetwork/fiber.git"
+      GitBranch:
+        description: "fiber -git branch"
+        default: "develop"
+      BuildFIBER:
+        description: "build fiber"
+        default: "false"
+      SampleSeconds:
+        description: "poll interval seconds (FIBER_SYNC_STATE_SAMPLE_SECONDS)"
+        default: "5"
+      StableSeconds:
+        description: "stable window seconds (FIBER_SYNC_STATE_STABLE_SECONDS)"
+        default: "60"
+      MaxSeconds:
+        description: "max duration seconds (FIBER_SYNC_STATE_MAX_SECONDS)"
+        default: "7200"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    # setup + up to 2h sync observation
+    timeout-minutes: 180
+    outputs:
+      sync_results: ${{ steps.capture.outputs.sync_results }}
+      discord_body: ${{ steps.capture.outputs.discord_body }}
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v3
+        with:
+          python-version: "3.12"
+
+      - name: Print Input Values
+        run: |
+          echo "**Input Values:**"
+          echo "  GitUrl: ${{ github.event.inputs.GitUrl }}"
+          echo "  GitBranch: ${{ github.event.inputs.GitBranch }}"
+          echo "  BuildFIBER: ${{ github.event.inputs.BuildFIBER }}"
+          echo "  SampleSeconds: ${{ github.event.inputs.SampleSeconds }}"
+          echo "  StableSeconds: ${{ github.event.inputs.StableSeconds }}"
+          echo "  MaxSeconds: ${{ github.event.inputs.MaxSeconds }}"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Prepare fiber binaries
+        run: make prepare_develop_testnet
+        env:
+          GitUrl: "${{ github.event.inputs.GitUrl }}"
+          GitBranch: "${{ github.event.inputs.GitBranch }}"
+          BuildFIBER: "${{ github.event.inputs.BuildFIBER }}"
+
+      - name: Run sync state tests
+        id: run_tests
+        env:
+          FIBER_SYNC_STATE_SAMPLE_SECONDS: ${{ github.event.inputs.SampleSeconds || '5' }}
+          FIBER_SYNC_STATE_STABLE_SECONDS: ${{ github.event.inputs.StableSeconds || '60' }}
+          FIBER_SYNC_STATE_MAX_SECONDS: ${{ github.event.inputs.MaxSeconds || '7200' }}
+        run: |
+          set -o pipefail
+          make fiber_sync_state_test 2>&1 | tee sync_state.log
+
+      - name: Capture RESULT lines for Discord
+        id: capture
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          FIBER_BRANCH: ${{ github.event.inputs.GitBranch || 'develop' }}
+          ACTOR: ${{ github.actor }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -e
+          RESULTS=""
+          if [ -f report/sync_state_results.txt ]; then
+            RESULTS=$(cat report/sync_state_results.txt)
+          elif [ -f sync_state.log ]; then
+            RESULTS=$(grep -E '\[(main|test)_net\] RESULT' sync_state.log || true)
+          fi
+          if [ -z "$RESULTS" ]; then
+            RESULTS="No RESULT lines captured (job=${JOB_STATUS})"
+          fi
+          echo "Captured results:"
+          echo "$RESULTS"
+
+          {
+            echo "sync_results<<EOF"
+            printf '%s\n' "$RESULTS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          # Human-readable Discord body (mainnet / testnet cards)
+          DISCORD_BODY=$(RESULTS="$RESULTS" JOB_STATUS="$JOB_STATUS" \
+            FIBER_BRANCH="$FIBER_BRANCH" ACTOR="$ACTOR" RUN_URL="$RUN_URL" \
+            python3 <<'PY'
+          import os
+          import re
+
+          results = os.environ.get("RESULTS", "").strip()
+          job_status = os.environ.get("JOB_STATUS", "unknown")
+          fiber_branch = os.environ.get("FIBER_BRANCH", "develop")
+          actor = os.environ.get("ACTOR", "")
+          run_url = os.environ.get("RUN_URL", "")
+
+          reason_map = {
+              "graph_stable": ("已稳定", "counts unchanged for 1 min"),
+              "max_duration_reached": ("超时截断", "hit max duration"),
+          }
+          net_map = {
+              "main_net": ("🟢 Mainnet", "主网"),
+              "test_net": ("🔵 Testnet", "测试网"),
+          }
+
+          def fmt_duration(seconds: float) -> str:
+              total = int(round(float(seconds)))
+              m, s = divmod(total, 60)
+              h, m = divmod(m, 60)
+              if h:
+                  return f"{h}h {m}m {s}s"
+              if m:
+                  return f"{m}m {s}s"
+              return f"{s}s"
+
+          pattern = re.compile(
+              r"\[(?P<net>main_net|test_net)\] RESULT "
+              r"elapsed=(?P<elapsed>[\d.]+)s "
+              r"graph_channels=(?P<channels>\d+) "
+              r"graph_nodes=(?P<nodes>\d+) "
+              r"list_peers=(?P<peers>\d+) "
+              r"reason=(?P<reason>\w+)"
+          )
+
+          blocks = []
+          for line in results.splitlines():
+              m = pattern.search(line.strip())
+              if not m:
+                  continue
+              title, subtitle = net_map.get(m.group("net"), (m.group("net"), ""))
+              reason = m.group("reason")
+              reason_zh, reason_en = reason_map.get(reason, (reason, reason))
+              elapsed = fmt_duration(m.group("elapsed"))
+              blocks.append(
+                  "\n".join(
+                      [
+                          f"**{title}** · {subtitle}",
+                          f"⏱ 耗时 **{elapsed}**  (`{m.group('elapsed')}s`)",
+                          f"📡 graph_channels **{m.group('channels')}**",
+                          f"🧭 graph_nodes **{m.group('nodes')}**",
+                          f"🔗 list_peers **{m.group('peers')}**",
+                          f"✅ 状态 **{reason_zh}**  ({reason_en})",
+                      ]
+                  )
+              )
+
+          header = (
+              f"Fiber branch `{fiber_branch}` · by `{actor}` · job `{job_status}`"
+          )
+          if blocks:
+              body = header + "\n\n" + "\n\n".join(blocks)
+          else:
+              body = header + "\n\n" + f"```\n{results}\n```"
+
+          body += f"\n\n[查看完整运行日志]({run_url})"
+          print(body)
+          PY
+          )
+
+          {
+            echo "discord_body<<EOF"
+            printf '%s\n' "$DISCORD_BODY"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "# Fiber Sync State Results"
+            echo
+            echo "$DISCORD_BODY"
+            echo
+            echo '## Raw RESULT'
+            echo '```'
+            printf '%s\n' "$RESULTS"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fiber-sync-state-${{ runner.os }}-${{ github.run_id }}
+          path: |
+            report/
+            sync_state.log
+          if-no-files-found: ignore
+
+  notify-discord:
+    runs-on: ubuntu-22.04
+    needs: build
+    if: always()
+    steps:
+      - name: Notify Discord on success
+        if: needs.build.result == 'success'
+        continue-on-error: true
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_SYNC }}
+          username: Fiber Sync
+          noprefix: true
+          nocontext: true
+          nodetail: true
+          title: "Fiber Graph Sync · 主网 / 测试网"
+          url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          description: ${{ needs.build.outputs.discord_body }}
+          color: 0x2ecc71
+
+      - name: Notify Discord on failure
+        if: needs.build.result != 'success'
+        continue-on-error: true
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_SYNC }}
+          username: Fiber Sync
+          content: "<@802020984097734656>"
+          noprefix: true
+          nocontext: true
+          nodetail: true
+          title: "Fiber Graph Sync · 失败 (${{ needs.build.result }})"
+          url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          description: ${{ needs.build.outputs.discord_body }}
+          color: 0xe74c3c
