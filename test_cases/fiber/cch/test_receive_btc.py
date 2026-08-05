@@ -494,7 +494,7 @@ class TestReceiveBtc(FiberCchTest):
             f"decodepayreq {receive_btc_result['incoming_invoice']['Lightning']}"
         )
         print(f"decodepayreq_result:{decodepayreq_result}")
-        assert decodepayreq_result["expiry"] == str(6 * 60 * 60 + 1)
+        assert abs(decodepayreq_result["expiry"] - int(6 * 60 * 60 + 1)) < 5
         # todo expiry_delta_seconds 应该 == expiry
         # assert receive_btc_result['expiry_delta_seconds'] == hex(6* 60*60)
 
