@@ -483,7 +483,7 @@ class TestReceiveBtc(FiberCchTest):
                 ),
                 "payment_preimage": self.generate_random_preimage(),
                 "hash_algorithm": "sha256",
-                "expiry": hex(6 * 60 * 60 + 1),
+                "expiry": hex(6 * 60 * 60 + 10),
             }
         )
         receive_btc_result = self.fiber1.get_client().receive_btc(

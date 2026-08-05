@@ -11,7 +11,7 @@ class TestCchLndRestart(CchRestartBase):
         "cch_fee_rate_per_million_sats": 5000,
     }
 
-    @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/1501")
+    # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/1501")
     def test_cch_r201_lnd_sender_restarts_during_outgoing_inflight(self):
         """CCH-R201.
 

@@ -484,7 +484,7 @@ class TestCCHConfig(FiberCchTest):
         invoice = self.fiber1.get_client().parse_invoice(
             {"invoice": btcResult["incoming_invoice"]["Fiber"]}
         )
-        assert invoice["invoice"]["data"]["attrs"][2][
+        assert invoice["invoice"]["data"]["attrs"][1][
             "final_htlc_minimum_expiry_delta"
         ] == hex((2 * 24 * 60 * 60 + 1) * 1000)
         self.LNDs[0].ln_cli_with_cmd(f"decodepayreq {lndInvoice["payment_request"]}")
@@ -563,7 +563,7 @@ class TestCCHConfig(FiberCchTest):
         )
         print("invoice:", invoice)
         assert (
-            abs(int(invoice["invoice"]["data"]["attrs"][1]["expiry_time"], 16) - 21600)
+            abs(int(invoice["invoice"]["data"]["attrs"][4]["expiry_time"], 16) - 21600)
             <= 10
         )
 

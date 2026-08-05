@@ -30,7 +30,9 @@ class TestCCHExpiryDeltaSeconds(FiberCchTest):
 
     """
 
-    def _restart_fiber1_with_expiry(self, expiry_seconds):
+    def _restart_fiber1_with_expiry(
+        self, expiry_seconds, min_outgoing_invoice_expiry_delta_seconds=21600
+    ):
         self.fiber1.stop()
         self.fiber1.prepare(
             {
@@ -38,6 +40,7 @@ class TestCCHExpiryDeltaSeconds(FiberCchTest):
                 "cch_lnd_cert_path": f"{self.LNDs[0].tmp_path}/tls.cert",
                 "cch_lnd_rpc_url": f"https://localhost:{self.LNDs[0].rpc_port}",
                 "cch_order_expiry_delta_seconds": expiry_seconds,
+                "cch_min_outgoing_invoice_expiry_delta_seconds": min_outgoing_invoice_expiry_delta_seconds,
             }
         )
         self.fiber1.start()
@@ -211,7 +214,7 @@ class TestCCHExpiryDeltaSeconds(FiberCchTest):
 
     def test_expired_order_should_cancel_incoming_fiber_invoice(self):
         expiry_seconds = 10
-        self._restart_fiber1_with_expiry(expiry_seconds)
+        self._restart_fiber1_with_expiry(expiry_seconds, 8)
 
         send_btc_result = self._create_send_btc_order()
         payment_hash = send_btc_result["payment_hash"]

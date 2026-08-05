@@ -426,7 +426,7 @@ class TestSendBtc(FiberCchTest):
         # assert invoice["invoice"]["data"]["attrs"][1]["expiry_time"] == hex()
         time_cost = (
             int(int(invoice["invoice"]["data"]["timestamp"], 16) / 1000)
-            + int(invoice["invoice"]["data"]["attrs"][1]["expiry_time"], 16)
+            + int(invoice["invoice"]["data"]["attrs"][4]["expiry_time"], 16)
             - int(btc_req["expiry"])
             - int(btc_req["timestamp"])
         )
