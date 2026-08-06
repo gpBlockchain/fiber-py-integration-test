@@ -1,4 +1,4 @@
-name: Fiber PR1466 rapid reconnect soak
+name: Fiber test soak
 
 on:
   workflow_dispatch:
@@ -18,20 +18,30 @@ on:
         required: true
         default: develop
         type: string
+      BuildFIBER:
+        description: Build Fiber from the selected source revision
+        required: true
+        default: true
+        type: boolean
+      TEST_TARGET:
+        description: Pytest file, class, or test selector to run
+        required: true
+        default: test_cases/fiber/devnet/send_payment/offline/test_pr1466_reestablish_retry.py::TestPR1466ReestablishRetry::test_pending_payments_finish_after_rapid_reconnects
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: fiber-pr1466-reconnect-soak-${{ github.ref }}
+  group: fiber-test-soak-${{ github.ref }}
   cancel-in-progress: false
 
 env:
-  TEST_TARGET: test_cases/fiber/devnet/send_payment/offline/test_pr1466_reestablish_retry.py::TestPR1466ReestablishRetry::test_pending_payments_finish_after_rapid_reconnects
+  TEST_TARGET: ${{ inputs.TEST_TARGET }}
 
 jobs:
-  reconnect-soak:
-    name: Run rapid reconnect test ${{ inputs.runs }} times
+  test-soak:
+    name: Run selected test ${{ inputs.runs }} times
     runs-on: ubuntu-22.04
     timeout-minutes: 180
 
@@ -52,13 +62,18 @@ jobs:
             echo "runs must be an integer between 1 and 100; received: $RUNS" >&2
             exit 2
           fi
+          if [[ -z "$TEST_TARGET" ]]; then
+            echo "TEST_TARGET must not be empty" >&2
+            exit 2
+          fi
 
       - name: Prepare CKB and Fiber
         env:
           GitUrl: ${{ inputs.fiber_url }}
           GitBranch: ${{ inputs.fiber_ref }}
+          BuildFIBER: ${{ inputs.BuildFIBER }}
         run: |
-          make prepare
+          make prepare_develop_testnet
           # Make recipes run each line in a separate shell, so their activate
           # command does not install requirements into this virtualenv.
           ./venv/bin/python -m pip install --upgrade pip
@@ -83,14 +98,24 @@ jobs:
           echo "runtime_bin=$runtime_bin" >> "$GITHUB_ENV"
 
       - name: Record test environment
+        env:
+          FIBER_URL: ${{ inputs.fiber_url }}
+          FIBER_REF: ${{ inputs.fiber_ref }}
+          BUILD_FIBER: ${{ inputs.BuildFIBER }}
         run: |
           mkdir -p soak-artifacts
 
           {
             echo "integration_commit=$(git rev-parse HEAD)"
-            echo "fiber_url=${{ inputs.fiber_url }}"
-            echo "fiber_ref=${{ inputs.fiber_ref }}"
-            echo "fiber_commit=$(git -C fiber rev-parse HEAD)"
+            echo "fiber_url=$FIBER_URL"
+            echo "fiber_ref=$FIBER_REF"
+            echo "build_fiber=$BUILD_FIBER"
+            echo "test_target=$TEST_TARGET"
+            if [[ -d fiber/.git ]]; then
+              echo "fiber_commit=$(git -C fiber rev-parse HEAD)"
+            else
+              echo "fiber_commit=release-binary"
+            fi
             echo "fnn_binary=$runtime_bin"
             echo "fnn_sha256=$(sha256sum "$runtime_bin" | awk '{print $1}')"
             if [[ -x "$runtime_bin" ]]; then
@@ -154,7 +179,7 @@ jobs:
           done
 
           {
-            echo "# Fiber PR1466 rapid reconnect soak"
+            echo "# Fiber test soak"
             echo
             echo "| Result | Count |"
             echo "|---|---:|"
@@ -172,7 +197,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fiber-pr1466-reconnect-soak-${{ github.run_id }}-${{ github.run_attempt }}
+          name: fiber-test-soak-${{ github.run_id }}-${{ github.run_attempt }}
           path: soak-artifacts
           if-no-files-found: warn
           retention-days: 14
