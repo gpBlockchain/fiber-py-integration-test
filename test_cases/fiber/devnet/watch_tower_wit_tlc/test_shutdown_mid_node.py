@@ -5,6 +5,8 @@ import pytest
 from framework.basic_fiber import FiberTest
 from framework.util import ckb_hash
 
+COMMIT_CELL_SWEEP_ROUNDS = 10
+
 
 class TestShutdownMidNode(FiberTest):
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 3}
@@ -96,11 +98,23 @@ class TestShutdownMidNode(FiberTest):
             self.fiber2.get_client().settle_invoice(
                 {"payment_hash": ckb_hash(preimage), "payment_preimage": preimage}
             )
-        while len(self.get_commit_cells()) > 0:
+        for _ in range(COMMIT_CELL_SWEEP_ROUNDS):
+            commit_cells = self.get_commit_cells()
+            if not commit_cells:
+                break
             # self.add_time_and_generate_block(1, 450)
             for i in range(600):
                 self.Miner.miner_with_version(self.node, "0x0")
             time.sleep(20)
+        else:
+            commit_cells = self.get_commit_cells()
+            if commit_cells:
+                raise TimeoutError(
+                    "Commit cells were not consumed after "
+                    f"{COMMIT_CELL_SWEEP_ROUNDS} mining rounds: "
+                    f"tip={self.node.getClient().get_tip_block_number()}, "
+                    f"remaining_commit_cells={commit_cells}"
+                )
 
         for fiber in self.new_fibers:
             channels = fiber.get_client().list_channels(

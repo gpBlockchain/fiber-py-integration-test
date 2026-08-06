@@ -93,7 +93,7 @@ def miner_with_version(node, version):
             and indexer_tip_number >= tip_number
         ):
             return
-        time.sleep(1)
+        time.sleep(0.05)
     raise TimeoutError(
         "node components did not sync within timeout: "
         f"chain_tip={tip_number}, "
