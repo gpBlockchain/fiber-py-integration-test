@@ -81,10 +81,25 @@ def miner_with_version(node, version):
     for i in range(100):
         pool_info = node.getClient().tx_pool_info()
         tip_number = node.getClient().get_tip_block_number()
-        if int(pool_info["tip_number"], 16) == tip_number:
+        indexer_tip = node.getClient().get_indexer_tip()
+        indexer_tip_number = (
+            int(indexer_tip.get("block_number", "0x0"), 16)
+            if indexer_tip is not None
+            else -1
+        )
+
+        if (
+            int(pool_info["tip_number"], 16) == tip_number
+            and indexer_tip_number >= tip_number
+        ):
             return
         time.sleep(1)
-    raise Exception("pool_info not eq tip number")
+    raise TimeoutError(
+        "node components did not sync within timeout: "
+        f"chain_tip={tip_number}, "
+        f"tx_pool_tip={int(pool_info['tip_number'], 16)}, "
+        f"indexer_tip={indexer_tip_number}"
+    )
 
 
 def block_template_transfer_to_submit_block(block, version="0x0"):
