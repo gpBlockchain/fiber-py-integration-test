@@ -3,10 +3,14 @@ import time
 from framework.basic_fiber import FiberTest
 from framework.util import ckb_hash
 
+CHAIN_DEPTH_WAIT_ATTEMPTS = 120
+COMMIT_CELL_SWEEP_ROUNDS = 15
+
 
 class TestMutilToOne(FiberTest):
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 3}
 
+    @classmethod
     def teardown_class(cls):
         cls.restore_time()
         super().teardown_class()
@@ -52,15 +56,36 @@ class TestMutilToOne(FiberTest):
         time.sleep(10)
         self.add_time_and_generate_block(1, 600)
         time.sleep(10)
-        while (
-            self.node.getClient().get_tip_block_number()
-            - self.get_latest_commit_tx_number()
-            < 20
-        ):
+        for _ in range(CHAIN_DEPTH_WAIT_ATTEMPTS):
+            tip_number = self.node.getClient().get_tip_block_number()
+            latest_commit_number = self.get_latest_commit_tx_number()
+            if tip_number - latest_commit_number >= 20:
+                break
             time.sleep(5)
-        while len(self.get_commit_cells()) > 0:
+        else:
+            tip_number = self.node.getClient().get_tip_block_number()
+            latest_commit_number = self.get_latest_commit_tx_number()
+            if tip_number - latest_commit_number < 20:
+                raise TimeoutError(
+                    "Timed out waiting for 20 blocks after the latest commit: "
+                    f"tip={tip_number}, latest_commit={latest_commit_number}"
+                )
+
+        for _ in range(COMMIT_CELL_SWEEP_ROUNDS):
+            commit_cells = self.get_commit_cells()
+            if not commit_cells:
+                break
             self.add_time_and_generate_block(24 * 3, 600)
             time.sleep(10)
+        else:
+            commit_cells = self.get_commit_cells()
+            if commit_cells:
+                raise TimeoutError(
+                    "Commit cells were not consumed after "
+                    f"{COMMIT_CELL_SWEEP_ROUNDS} block-advance rounds: "
+                    f"tip={self.node.getClient().get_tip_block_number()}, "
+                    f"remaining_commit_cells={commit_cells}"
+                )
         after_fibers_balance = []
         for i in range(len(self.fibers)):
             balance = self.get_fiber_balance(self.fibers[i])
@@ -135,15 +160,36 @@ class TestMutilToOne(FiberTest):
         time.sleep(10)
         self.add_time_and_generate_block(1, 600)
         time.sleep(10)
-        while (
-            self.node.getClient().get_tip_block_number()
-            - self.get_latest_commit_tx_number()
-            < 20
-        ):
+        for _ in range(CHAIN_DEPTH_WAIT_ATTEMPTS):
+            tip_number = self.node.getClient().get_tip_block_number()
+            latest_commit_number = self.get_latest_commit_tx_number()
+            if tip_number - latest_commit_number >= 20:
+                break
             time.sleep(5)
-        while len(self.get_commit_cells()) > 0:
+        else:
+            tip_number = self.node.getClient().get_tip_block_number()
+            latest_commit_number = self.get_latest_commit_tx_number()
+            if tip_number - latest_commit_number < 20:
+                raise TimeoutError(
+                    "Timed out waiting for 20 blocks after the latest commit: "
+                    f"tip={tip_number}, latest_commit={latest_commit_number}"
+                )
+
+        for _ in range(COMMIT_CELL_SWEEP_ROUNDS):
+            commit_cells = self.get_commit_cells()
+            if not commit_cells:
+                break
             self.add_time_and_generate_block(24, 600)
             time.sleep(10)
+        else:
+            commit_cells = self.get_commit_cells()
+            if commit_cells:
+                raise TimeoutError(
+                    "Commit cells were not consumed after "
+                    f"{COMMIT_CELL_SWEEP_ROUNDS} block-advance rounds: "
+                    f"tip={self.node.getClient().get_tip_block_number()}, "
+                    f"remaining_commit_cells={commit_cells}"
+                )
         after_fibers_balance = []
         for i in range(len(self.fibers)):
             balance = self.get_fiber_balance(self.fibers[i])

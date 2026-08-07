@@ -5,41 +5,84 @@ from framework.test_lnd import LndNode
 from framework.test_fiber import FiberConfigPath
 import time
 
+BTC_BLOCK_TIME_SECONDS = 10 * 60
+
 
 class FiberCchTest(FiberTest):
     LNDs: list[LndNode] = []
     btcNode: BtcNode
     fiber_version = FiberConfigPath.CURRENT_CCH
+    start_lnd_config = {}
 
     @classmethod
     def setup_class(cls):
-        super().setup_class()
-        cls.btcNode = BtcNode()
-        cls.LNDs = [
-            LndNode("tmp/lnd/node0", 9735, 10009, 8180),
-            LndNode("tmp/lnd/node1", 9736, 11010, 8181),
-        ]
-        if cls.debug == True:
-            return
-            # 启动btc
-        cls.btcNode.prepare()
-        cls.btcNode.start()
-        # 启动lnd
-        for lnd in cls.LNDs:
-            lnd.prepare()
-            lnd.start()
+        cls.LNDs = []
+        cls.btcNode = None
+        try:
+            super().setup_class()
+            cls.btcNode = BtcNode()
+            cls.LNDs = [
+                LndNode("tmp/lnd/node0", 9735, 10009, 8180),
+                LndNode("tmp/lnd/node1", 9736, 11010, 8181),
+            ]
+            if cls.debug == True:
+                return
+                # 启动btc
+            cls.btcNode.prepare()
+            cls.btcNode.start()
+            # 启动lnd
+            for lnd in cls.LNDs:
+                lnd.prepare(cls.start_lnd_config)
+                lnd.start()
 
-        # 建立2个lnd的连接
-        ingrid_p2tr_address = cls.LNDs[0].ln_cli_with_cmd("newaddress p2tr")["address"]
-        cls.btcNode.sendtoaddress(ingrid_p2tr_address, 5, 25)
-        cls.btcNode.miner(1)
-        cls.LNDs[0].open_channel(cls.LNDs[1], 1000000, 1, 0)
-        cls.btcNode.miner(6)
-        ingrid_p2tr_address = cls.LNDs[1].ln_cli_with_cmd("newaddress p2tr")["address"]
-        cls.btcNode.sendtoaddress(ingrid_p2tr_address, 5, 25)
-        cls.btcNode.miner(1)
-        cls.LNDs[1].open_channel(cls.LNDs[0], 1000000, 1, 0)
-        cls.btcNode.miner(6)
+            # 建立2个lnd的连接
+            ingrid_p2tr_address = cls.LNDs[0].ln_cli_with_cmd("newaddress p2tr")[
+                "address"
+            ]
+            cls.btcNode.sendtoaddress(ingrid_p2tr_address, 5, 25)
+            cls.btcNode.miner(1)
+            cls.LNDs[0].open_channel(cls.LNDs[1], 1000000, 1, 0)
+            cls.btcNode.miner(6)
+            ingrid_p2tr_address = cls.LNDs[1].ln_cli_with_cmd("newaddress p2tr")[
+                "address"
+            ]
+            cls.btcNode.sendtoaddress(ingrid_p2tr_address, 5, 25)
+            cls.btcNode.miner(1)
+            cls.LNDs[1].open_channel(cls.LNDs[0], 1000000, 1, 0)
+            cls.btcNode.miner(6)
+        except Exception:
+            if not cls.debug and not cls.first_debug:
+                cls._cleanup_class_resources(suppress_errors=True)
+            raise
+
+    @classmethod
+    def _cleanup_class_resources(cls, suppress_errors=False):
+        resources = [
+            *[(f"LND {index}", lnd) for index, lnd in enumerate(cls.LNDs)],
+            ("Bitcoin", cls.btcNode),
+            ("CKB", getattr(cls, "node", None)),
+        ]
+        cleanup_errors = []
+
+        for action in ("stop", "clean"):
+            for name, resource in resources:
+                if resource is None:
+                    continue
+                try:
+                    getattr(resource, action)()
+                except Exception as error:
+                    cleanup_errors.append((name, action, error))
+
+        if not cleanup_errors:
+            return
+
+        details = "; ".join(
+            f"{name}.{action}: {error}" for name, action, error in cleanup_errors
+        )
+        if suppress_errors:
+            cls.logger.error("CCH setup cleanup failed: %s", details)
+            return
+        raise RuntimeError(f"CCH teardown failed: {details}") from cleanup_errors[0][2]
 
     def faucetBtc(self, lnd, amount):
         address = lnd.ln_cli_with_cmd("newaddress p2tr")["address"]
@@ -71,7 +114,7 @@ class FiberCchTest(FiberTest):
         # start lnd
         lnd = LndNode(f"tmp/lnd/node{i}", 9735 + i, 10009 + i, 8180 + i)
         self.LNDs.append(lnd)
-        lnd.prepare()
+        lnd.prepare(self.start_lnd_config)
         lnd.start()
         return lnd
 
@@ -97,13 +140,7 @@ class FiberCchTest(FiberTest):
             return
         if cls.first_debug:
             return
-        cls.node.stop()
-        cls.node.clean()
-        for lnd in cls.LNDs:
-            lnd.stop()
-            lnd.clean()
-        cls.btcNode.stop()
-        cls.btcNode.clean()
+        cls._cleanup_class_resources()
 
     def wait_cch_order_state(
         self, client, payment_hash, status="Success", timeout=360, interval=1
@@ -135,3 +172,44 @@ class FiberCchTest(FiberTest):
         raise TimeoutError(
             f"payment:{payment_hash} status did not reach state: {result['status']}, expected:{status} , within timeout period."
         )
+
+    def get_all_nodes_payment_tlc_expiry(self, payment_hash):
+        """
+        获取所有节点关于该payment——hash 的所有过期时间
+        """
+        expiry_times = []
+        for lnd in self.LNDs:
+            expiry_times.extend(self.get_lnd_payment_tlc_expiry(lnd, payment_hash))
+        expiry_times.reverse()
+        for fiber in self.fibers:
+            expiry_times.extend(self.get_fiber_payment_tlc_expiry(fiber, payment_hash))
+        return expiry_times
+
+    def get_fiber_payment_tlc_expiry(self, fiber, payment_hash):
+        pending_tlcs = self.get_pending_tlc(fiber, payment_hash)
+        expiry_times = []
+        for direction in ("Inbound", "Outbound"):
+            for tlc in pending_tlcs.get(direction, []):
+                expiry_times.append(tlc["expiry_seconds"])
+        return expiry_times
+
+    def get_lnd_payment_tlc_expiry(self, lnd, payment_hash):
+        """
+        1. get btc height
+        2. get tlc expiration_height
+        3. 换算还需要多少s 过期
+        """
+        btc_tip_height = int(str(self.btcNode.rpc("getblockcount")).strip(), 0)
+        target_hash = str(payment_hash).lower().replace("0x", "")
+        expiry_times = []
+        channels = lnd.ln_cli_with_cmd("listchannels").get("channels", [])
+        for channel in channels:
+            for htlc in channel.get("pending_htlcs", []):
+                hash_lock = str(htlc.get("hash_lock", "")).lower().replace("0x", "")
+                if hash_lock != target_hash:
+                    continue
+                expiration_height = int(str(htlc["expiration_height"]), 0)
+                expiry_times.append(
+                    (expiration_height - btc_tip_height) * BTC_BLOCK_TIME_SECONDS
+                )
+        return expiry_times

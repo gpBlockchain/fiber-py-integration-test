@@ -1,0 +1,212 @@
+name: Fiber test soak
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: Number of isolated test iterations
+        required: true
+        default: 30
+        type: number
+      fiber_url:
+        description: Fiber source repository
+        required: true
+        default: https://github.com/nervosnetwork/fiber.git
+        type: string
+      fiber_ref:
+        description: Fiber branch or tag to test
+        required: true
+        default: develop
+        type: string
+      BuildFIBER:
+        description: Build Fiber from the selected source revision
+        required: true
+        default: true
+        type: boolean
+      TEST_TARGET:
+        description: Pytest file, class, or test selector to run
+        required: true
+        default: test_cases/fiber/devnet/send_payment/offline/test_pr1466_reestablish_retry.py::TestPR1466ReestablishRetry::test_pending_payments_finish_after_rapid_reconnects
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fiber-test-soak-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TEST_TARGET: ${{ inputs.TEST_TARGET }}
+
+jobs:
+  test-soak:
+    name: Run selected test ${{ inputs.runs }} times
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Check out integration tests
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate iteration count
+        env:
+          RUNS: ${{ inputs.runs }}
+        run: |
+          if ! [[ "$RUNS" =~ ^[0-9]+$ ]] || (( RUNS < 1 || RUNS > 100 )); then
+            echo "runs must be an integer between 1 and 100; received: $RUNS" >&2
+            exit 2
+          fi
+          if [[ -z "$TEST_TARGET" ]]; then
+            echo "TEST_TARGET must not be empty" >&2
+            exit 2
+          fi
+
+      - name: Prepare CKB and Fiber
+        env:
+          GitUrl: ${{ inputs.fiber_url }}
+          GitBranch: ${{ inputs.fiber_ref }}
+          BuildFIBER: ${{ inputs.BuildFIBER }}
+        run: |
+          make prepare_develop_testnet
+          # Make recipes run each line in a separate shell, so their activate
+          # command does not install requirements into this virtualenv.
+          ./venv/bin/python -m pip install --upgrade pip
+          ./venv/bin/python -m pip install -r requirements.txt
+
+      - name: Bind test runtime to selected Fiber build
+        run: |
+          selected_bin="download/fiber/current/fnn"
+          runtime_bin="$({
+            ./venv/bin/python - <<'PY'
+          from framework.test_fiber import FiberConfigPath
+          print(FiberConfigPath.CURRENT_DEV.fiber_bin_path)
+          PY
+          } | tail -n 1)"
+
+          test -x "$selected_bin"
+          if [[ "$runtime_bin" != "$selected_bin" ]]; then
+            mkdir -p "$(dirname "$runtime_bin")"
+            install -m 0755 "$selected_bin" "$runtime_bin"
+          fi
+          cmp "$selected_bin" "$runtime_bin"
+          echo "runtime_bin=$runtime_bin" >> "$GITHUB_ENV"
+
+      - name: Record test environment
+        env:
+          FIBER_URL: ${{ inputs.fiber_url }}
+          FIBER_REF: ${{ inputs.fiber_ref }}
+          BUILD_FIBER: ${{ inputs.BuildFIBER }}
+        run: |
+          mkdir -p soak-artifacts
+
+          {
+            echo "integration_commit=$(git rev-parse HEAD)"
+            echo "fiber_url=$FIBER_URL"
+            echo "fiber_ref=$FIBER_REF"
+            echo "build_fiber=$BUILD_FIBER"
+            echo "test_target=$TEST_TARGET"
+            if [[ -d fiber/.git ]]; then
+              echo "fiber_commit=$(git -C fiber rev-parse HEAD)"
+            else
+              echo "fiber_commit=release-binary"
+            fi
+            echo "fnn_binary=$runtime_bin"
+            echo "fnn_sha256=$(sha256sum "$runtime_bin" | awk '{print $1}')"
+            if [[ -x "$runtime_bin" ]]; then
+              "$runtime_bin" --version
+            else
+              echo "FNN binary is missing or is not executable"
+            fi
+            ./venv/bin/python --version
+            uname -a
+          } | tee soak-artifacts/environment.txt
+
+      - name: Run isolated soak iterations
+        id: soak
+        env:
+          RUNS: ${{ inputs.runs }}
+        run: |
+          set -u -o pipefail
+
+          passed=0
+          failed=0
+          printf 'iteration\tstatus\texit_code\tduration_seconds\n' \
+            > soak-artifacts/results.tsv
+
+          for ((iteration = 1; iteration <= RUNS; iteration++)); do
+            run_id="$(printf '%03d' "$iteration")"
+            run_dir="soak-artifacts/run-$run_id"
+            mkdir -p "$run_dir"
+            rm -rf report
+
+            echo "::group::Iteration $iteration/$RUNS"
+            started_at="$(date +%s)"
+            set +e
+            ./venv/bin/python -u -m pytest \
+              -vv -s --tb=short \
+              -o log_cli_level=INFO \
+              -o 'addopts=' \
+              "$TEST_TARGET" 2>&1 | tee "$run_dir/pytest.log"
+            pytest_status="${PIPESTATUS[0]}"
+            set -e
+            duration="$(( $(date +%s) - started_at ))"
+
+            if (( pytest_status == 0 )); then
+              status=PASS
+              passed="$((passed + 1))"
+            else
+              status=FAIL
+              failed="$((failed + 1))"
+              if [[ -d report ]]; then
+                cp -a report "$run_dir/report"
+              fi
+              if [[ -d tmp ]]; then
+                cp -a tmp "$run_dir/tmp-fallback"
+              fi
+            fi
+
+            printf '%s\t%s\t%s\t%s\n' \
+              "$iteration" "$status" "$pytest_status" "$duration" \
+              >> soak-artifacts/results.tsv
+            echo "Iteration $iteration/$RUNS: $status (${duration}s)"
+            echo "::endgroup::"
+          done
+
+          {
+            echo "# Fiber test soak"
+            echo
+            echo "| Result | Count |"
+            echo "|---|---:|"
+            echo "| Requested | $RUNS |"
+            echo "| Passed | $passed |"
+            echo "| Failed | $failed |"
+            echo
+            echo "Test: \`$TEST_TARGET\`"
+          } | tee soak-artifacts/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+          echo "passed=$passed" >> "$GITHUB_OUTPUT"
+          echo "failures=$failed" >> "$GITHUB_OUTPUT"
+
+      - name: Upload soak evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fiber-test-soak-${{ github.run_id }}-${{ github.run_attempt }}
+          path: soak-artifacts
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Fail when any iteration failed
+        if: steps.soak.outputs.failures != '0'
+        env:
+          FAILURES: ${{ steps.soak.outputs.failures }}
+          PASSED: ${{ steps.soak.outputs.passed }}
+        run: |
+          echo "$FAILURES soak iteration(s) failed; $PASSED passed." >&2
+          exit 1

@@ -78,6 +78,7 @@ class TestCCHConfig(FiberCchTest):
                 "cch_lnd_cert_path": f"{self.LNDs[0].tmp_path}/tls.cert",
                 "cch_lnd_rpc_url": f"https://localhost:{self.LNDs[0].rpc_port}",
                 "cch_order_expiry_delta_seconds": expiry_seconds,
+                "cch_min_outgoing_invoice_expiry_delta_seconds": 5,
             }
         )
         with open(self.fiber1.fiber_config_path, "r") as f:
@@ -87,6 +88,19 @@ class TestCCHConfig(FiberCchTest):
         ), config_text
 
         self.fiber1.start()
+        self.faucet(
+            self.fiber2.account_private,
+            0,
+            self.fiber1.account_private,
+            10000 * 100000000,
+        )
+        self.open_channel(
+            self.fiber2,
+            self.fiber1,
+            1000 * 100000000,
+            1000 * 100000000,
+            udt=self.get_account_udt_script(self.fiber1.account_private),
+        )
         invoice = self.fiber2.get_client().new_invoice(
             {
                 "amount": hex(1000),
@@ -132,6 +146,42 @@ class TestCCHConfig(FiberCchTest):
             f"decodepayreq {cch_order['incoming_invoice']['Lightning']}"
         )
         print("ret:", ret)
+        # todo print 过期时间
+        #
+        # send btc
+        lndInvoice = self.LNDs[1].addinvoice(1000)
+        btcResult = self.fiber1.get_client().send_btc(
+            {
+                "btc_pay_req": lndInvoice["payment_request"],
+                "currency": "Fibd",
+            }
+        )
+        invoice = self.fiber1.get_client().parse_invoice(
+            {"invoice": btcResult["incoming_invoice"]["Fiber"]}
+        )
+        assert int(invoice["invoice"]["data"]["attrs"][4]["expiry_time"], 16) < 10
+
+        # receive btc
+        invoice = self.fiber2.get_client().new_invoice(
+            {
+                "amount": hex(1000),
+                "currency": "Fibd",
+                "description": "test invoice",
+                "udt_type_script": self.get_account_udt_script(
+                    self.fiber1.account_private
+                ),
+                "hash_algorithm": "sha256",
+                "payment_preimage": self.generate_random_preimage(),
+            }
+        )
+        receive_btc = self.fiber1.get_client().receive_btc(
+            {"fiber_pay_req": invoice["invoice_address"]}
+        )
+        ret = self.LNDs[0].ln_cli_with_cmd(
+            "decodepayreq " f"{receive_btc['incoming_invoice']['Lightning']}"
+        )
+        print("ret:", ret)
+        assert ret["expiry"] == "10"
 
     # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/976")
     def test_CCH_FEE_RATE_PER_MILLION_SATS(self):
@@ -158,6 +208,19 @@ class TestCCHConfig(FiberCchTest):
             }
         )
         self.fiber1.start()
+        self.faucet(
+            self.fiber2.account_private,
+            0,
+            self.fiber1.account_private,
+            300000 * 100000000,
+        )
+        self.open_channel(
+            self.fiber2,
+            self.fiber1,
+            100000 * 100000000,
+            100000 * 100000000,
+            udt=self.get_account_udt_script(self.fiber1.account_private),
+        )
         lndInvoice = self.LNDs[0].addinvoice(10000000 * 1000000)
         btcResult = self.fiber1.get_client().send_btc(
             {
@@ -354,6 +417,19 @@ class TestCCHConfig(FiberCchTest):
             }
         )
         self.fiber1.start()
+        self.faucet(
+            self.fiber2.account_private,
+            0,
+            self.fiber1.account_private,
+            10000 * 100000000,
+        )
+        self.open_channel(
+            self.fiber2,
+            self.fiber1,
+            1000 * 100000000,
+            1000 * 100000000,
+            udt=self.get_account_udt_script(self.fiber1.account_private),
+        )
         # receive_btc
         invoice = self.fiber2.get_client().new_invoice(
             {
@@ -445,7 +521,7 @@ class TestCCHConfig(FiberCchTest):
         invoice = self.fiber1.get_client().parse_invoice(
             {"invoice": btcResult["incoming_invoice"]["Fiber"]}
         )
-        assert invoice["invoice"]["data"]["attrs"][2][
+        assert invoice["invoice"]["data"]["attrs"][1][
             "final_htlc_minimum_expiry_delta"
         ] == hex((2 * 24 * 60 * 60 + 1) * 1000)
         self.LNDs[0].ln_cli_with_cmd(f"decodepayreq {lndInvoice["payment_request"]}")
@@ -493,7 +569,19 @@ class TestCCHConfig(FiberCchTest):
         Returns:
         """
         # - 没有配置，预期: 默认6小时
-
+        self.faucet(
+            self.fiber2.account_private,
+            0,
+            self.fiber1.account_private,
+            10000 * 100000000,
+        )
+        self.open_channel(
+            self.fiber2,
+            self.fiber1,
+            1000 * 100000000,
+            1000 * 100000000,
+            udt=self.get_account_udt_script(self.fiber1.account_private),
+        )
         # send_btc
         lndInvoice = self.LNDs[1].addinvoice(1000, "demo  --expiry 21610")
         payreq = self.LNDs[0].ln_cli_with_cmd(
@@ -512,7 +600,7 @@ class TestCCHConfig(FiberCchTest):
         )
         print("invoice:", invoice)
         assert (
-            abs(int(invoice["invoice"]["data"]["attrs"][1]["expiry_time"], 16) - 21600)
+            abs(int(invoice["invoice"]["data"]["attrs"][4]["expiry_time"], 16) - 21600)
             <= 10
         )
 

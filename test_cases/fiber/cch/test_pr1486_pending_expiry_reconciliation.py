@@ -12,7 +12,9 @@ def sha256_hex(preimage_hex):
 class TestPR1486PendingExpiryReconciliation(FiberCchTest):
     """PR-1486: only Pending CCH orders should expire from the original quote TTL."""
 
-    def _restart_cch_with_order_expiry(self, expiry_seconds):
+    def _restart_cch_with_order_expiry(
+        self, expiry_seconds, min_outgoing_invoice_expiry_delta_seconds=21600
+    ):
         self.fiber1.stop()
         self.fiber1.prepare(
             {
@@ -20,6 +22,7 @@ class TestPR1486PendingExpiryReconciliation(FiberCchTest):
                 "cch_lnd_cert_path": f"{self.LNDs[0].tmp_path}/tls.cert",
                 "cch_lnd_rpc_url": f"https://localhost:{self.LNDs[0].rpc_port}",
                 "cch_order_expiry_delta_seconds": expiry_seconds,
+                "cch_min_outgoing_invoice_expiry_delta_seconds": min_outgoing_invoice_expiry_delta_seconds,
             }
         )
         self.fiber1.start()
@@ -55,7 +58,7 @@ class TestPR1486PendingExpiryReconciliation(FiberCchTest):
 
     def test_send_btc_outgoing_inflight_survives_original_quote_ttl(self):
         expiry_seconds = 10
-        self._restart_cch_with_order_expiry(expiry_seconds)
+        self._restart_cch_with_order_expiry(expiry_seconds, 5)
         self._open_udt_channel_to_cch()
 
         preimage = self.generate_random_preimage()
@@ -108,8 +111,8 @@ class TestPR1486PendingExpiryReconciliation(FiberCchTest):
         self.LNDs[1].ln_cli_with_cmd_without_json(
             f"payinvoice {order['incoming_invoice']['Lightning']} --force &"
         )
-        self.wait_payment_state(self.fiber1, payment_hash, "Inflight")
         self.wait_invoice_state(self.fiber2, payment_hash, "Received")
+        self.wait_payment_state(self.fiber1, payment_hash, "Inflight")
         self.wait_cch_order_state(
             self.fiber1, payment_hash, "OutgoingInFlight", timeout=10
         )

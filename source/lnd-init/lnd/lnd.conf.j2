@@ -5,6 +5,7 @@ restlisten=localhost:{{ lnd_rest_listen_port }}
 no-macaroons=true
 no-rest-tls=true
 noseedbackup=true
+trickledelay={{ lnd_trickle_delay | default(90000) }}
 
 [Bitcoin]
 bitcoin.active=1

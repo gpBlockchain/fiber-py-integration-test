@@ -4,6 +4,9 @@ import pytest
 
 from framework.basic_fiber import FiberTest
 
+CHAIN_DEPTH_WAIT_ATTEMPTS = 120
+COMMIT_CELL_SWEEP_ROUNDS = 10
+
 
 class TestDiscard(FiberTest):
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 5}
@@ -56,15 +59,36 @@ class TestDiscard(FiberTest):
         for i in range(5):
             self.Miner.miner_with_version(self.node, "0x0")
         self.node.getClient().generate_epochs("0x1", 0)
-        while (
-            self.node.getClient().get_tip_block_number()
-            - self.get_latest_commit_tx_number()
-            < 20
-        ):
+        for _ in range(CHAIN_DEPTH_WAIT_ATTEMPTS):
+            tip_number = self.node.getClient().get_tip_block_number()
+            latest_commit_number = self.get_latest_commit_tx_number()
+            if tip_number - latest_commit_number >= 20:
+                break
             time.sleep(5)
-        while len(self.get_commit_cells()) > 0:
+        else:
+            tip_number = self.node.getClient().get_tip_block_number()
+            latest_commit_number = self.get_latest_commit_tx_number()
+            if tip_number - latest_commit_number < 20:
+                raise TimeoutError(
+                    "Timed out waiting for 20 blocks after the latest commit: "
+                    f"tip={tip_number}, latest_commit={latest_commit_number}"
+                )
+
+        for _ in range(COMMIT_CELL_SWEEP_ROUNDS):
+            commit_cells = self.get_commit_cells()
+            if not commit_cells:
+                break
             self.add_time_and_generate_epoch(24, 1)
             time.sleep(10)
+        else:
+            commit_cells = self.get_commit_cells()
+            if commit_cells:
+                raise TimeoutError(
+                    "Commit cells were not consumed after "
+                    f"{COMMIT_CELL_SWEEP_ROUNDS} epoch-advance rounds: "
+                    f"tip={self.node.getClient().get_tip_block_number()}, "
+                    f"remaining_commit_cells={commit_cells}"
+                )
 
         after_udt_balances = self.get_fibers_balance()
         result = self.get_balance_change(before_udt_balances, after_udt_balances)
@@ -111,16 +135,36 @@ class TestDiscard(FiberTest):
             self.Miner.miner_with_version(self.node, "0x0")
 
         self.node.getClient().generate_epochs("0x1", 0)
-        while (
-            self.node.getClient().get_tip_block_number()
-            - self.get_latest_commit_tx_number()
-            < 20
-        ):
+        for _ in range(CHAIN_DEPTH_WAIT_ATTEMPTS):
+            tip_number = self.node.getClient().get_tip_block_number()
+            latest_commit_number = self.get_latest_commit_tx_number()
+            if tip_number - latest_commit_number >= 20:
+                break
             time.sleep(5)
+        else:
+            tip_number = self.node.getClient().get_tip_block_number()
+            latest_commit_number = self.get_latest_commit_tx_number()
+            if tip_number - latest_commit_number < 20:
+                raise TimeoutError(
+                    "Timed out waiting for 20 blocks after the latest commit: "
+                    f"tip={tip_number}, latest_commit={latest_commit_number}"
+                )
 
-        while len(self.get_commit_cells()) > 0:
+        for _ in range(COMMIT_CELL_SWEEP_ROUNDS):
+            commit_cells = self.get_commit_cells()
+            if not commit_cells:
+                break
             self.add_time_and_generate_epoch(24, 1)
             time.sleep(10)
+        else:
+            commit_cells = self.get_commit_cells()
+            if commit_cells:
+                raise TimeoutError(
+                    "Commit cells were not consumed after "
+                    f"{COMMIT_CELL_SWEEP_ROUNDS} epoch-advance rounds: "
+                    f"tip={self.node.getClient().get_tip_block_number()}, "
+                    f"remaining_commit_cells={commit_cells}"
+                )
 
         after_udt_balances = []
         for fiber in self.fibers:

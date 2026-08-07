@@ -148,6 +148,7 @@ class TestOutgoingPaymentsErrorCheck(FiberCchTest):
         )
 
     @pytest.mark.skip("bug:https://github.com/nervosnetwork/fiber/issues/1222")
+    @pytest.mark.skip("todo check")
     def test_lightning_outgoing_invoice_already_paid(self):
         """LND: invoice is already paid — 预先用 LNDs[0] 付清 BTC 发票再走 CCH，出站应永久失败。"""
         self._open_udt_channel_fiber2_to_fiber1()
@@ -185,7 +186,7 @@ class TestOutgoingPaymentsErrorCheck(FiberCchTest):
             ),
         )
 
-    @pytest.mark.skip("bug:https://github.com/nervosnetwork/fiber/issues/1222")
+    # @pytest.mark.skip("bug:https://github.com/nervosnetwork/fiber/issues/1222")
     def test_lightning_outgoing_self_payment_rejected(self):
         """LND: self-payments not allowed — 发票收款方为 CCH 所持 LNDs[0] 自身。"""
         self._open_udt_channel_fiber2_to_fiber1()
@@ -218,7 +219,7 @@ class TestOutgoingPaymentsErrorCheck(FiberCchTest):
             ),
         )
 
-    @pytest.mark.skip("bug:https://github.com/nervosnetwork/fiber/issues/1222")
+    # @pytest.mark.skip("bug:https://github.com/nervosnetwork/fiber/issues/1222")
     def test_lightning_outgoing_no_route_to_isolated_lnd(self):
         """LND: no route / unable to find path — 发票来自未与 LNDs[0] 建链的孤立节点。"""
         self._open_udt_channel_fiber2_to_fiber1()

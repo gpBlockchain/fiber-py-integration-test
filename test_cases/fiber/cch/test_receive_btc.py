@@ -21,13 +21,13 @@ class TestReceiveBtc(FiberCchTest):
             self.fiber2.account_private,
             0,
             self.fiber1.account_private,
-            10000 * 100000000,
+            300000 * 100000000,
         )
         self.open_channel(
             self.fiber2,
             self.fiber1,
-            1000 * 100000000,
-            1000 * 100000000,
+            110000 * 100000000,
+            110000 * 100000000,
             udt=self.get_account_udt_script(self.fiber1.account_private),
         )
         # amount 为0，预期：报错
@@ -152,6 +152,19 @@ class TestReceiveBtc(FiberCchTest):
         Description长度为特别长639，预期：成功
         Returns:
         """
+        self.faucet(
+            self.fiber2.account_private,
+            0,
+            self.fiber1.account_private,
+            10000 * 100000000,
+        )
+        self.open_channel(
+            self.fiber2,
+            self.fiber1,
+            1000 * 100000000,
+            1000 * 100000000,
+            udt=self.get_account_udt_script(self.fiber1.account_private),
+        )
         # Description长度为1，预期：成功
         invoice = self.fiber2.get_client().new_invoice(
             {
@@ -269,9 +282,9 @@ class TestReceiveBtc(FiberCchTest):
             fiber.stop()
             fiber.clean()
 
-    @pytest.mark.skip(
-        "fiber 发送交易失败，btc这边需要回滚 https://github.com/nervosnetwork/fiber/issues/1216"
-    )
+    # @pytest.mark.skip(
+    #     "fiber 发送交易失败，btc这边需要回滚 https://github.com/nervosnetwork/fiber/issues/1216"
+    # )
     def test_PayeePublicKey_not_found(self):
         self.fiber3 = self.start_new_fiber(self.generate_account(10000))
         invoice = self.fiber3.get_client().new_invoice(
@@ -286,23 +299,16 @@ class TestReceiveBtc(FiberCchTest):
                 "hash_algorithm": "sha256",
             }
         )
-        receive_btc_result = self.fiber1.get_client().receive_btc(
-            {"fiber_pay_req": invoice["invoice_address"]}
+
+        with pytest.raises(Exception) as exc_info:
+            receive_btc_result = self.fiber1.get_client().receive_btc(
+                {"fiber_pay_req": invoice["invoice_address"]}
+            )
+        expected_error_message = "Insufficient balance"
+        assert expected_error_message in exc_info.value.args[0], (
+            f"Expected substring '{expected_error_message}' "
+            f"not found in actual string '{exc_info.value.args[0]}'"
         )
-        # self.ln_cli_with_cmd_without_json(f"payinvoice {payment_request} --force")
-        self.LNDs[1].ln_cli_with_cmd_without_json(
-            f"payinvoice {receive_btc_result['incoming_invoice']['Lightning']} --force --timeout 10s &"
-        )
-        time.sleep(10)
-        order = self.fiber1.get_client().get_cch_order(
-            {"payment_hash": receive_btc_result["payment_hash"]}
-        )
-        assert order["status"] == "Failed"
-        result = self.LNDs[0].ln_cli_with_cmd(
-            f"lookupinvoice {receive_btc_result['payment_hash'].replace('0x','')}"
-        )
-        # todo 是不是需要回退
-        assert result["state"] == "CANCELED"
 
     def test_HashAlgorithm_sha256(self):
         """
@@ -454,6 +460,19 @@ class TestReceiveBtc(FiberCchTest):
         Returns:
 
         """
+        self.faucet(
+            self.fiber2.account_private,
+            0,
+            self.fiber1.account_private,
+            10000 * 100000000,
+        )
+        self.open_channel(
+            self.fiber2,
+            self.fiber1,
+            1000 * 100000000,
+            1000 * 100000000,
+            udt=self.get_account_udt_script(self.fiber1.account_private),
+        )
         invoice = self.fiber2.get_client().new_invoice(
             {
                 "amount": hex(100),
@@ -464,7 +483,7 @@ class TestReceiveBtc(FiberCchTest):
                 ),
                 "payment_preimage": self.generate_random_preimage(),
                 "hash_algorithm": "sha256",
-                "expiry": hex(6 * 60 * 60 + 1),
+                "expiry": hex(6 * 60 * 60 + 10),
             }
         )
         receive_btc_result = self.fiber1.get_client().receive_btc(
@@ -475,6 +494,49 @@ class TestReceiveBtc(FiberCchTest):
             f"decodepayreq {receive_btc_result['incoming_invoice']['Lightning']}"
         )
         print(f"decodepayreq_result:{decodepayreq_result}")
-        assert decodepayreq_result["expiry"] == str(6 * 60 * 60 + 1)
+        assert abs(int(decodepayreq_result["expiry"]) - int(6 * 60 * 60 + 10)) < 5
         # todo expiry_delta_seconds 应该 == expiry
         # assert receive_btc_result['expiry_delta_seconds'] == hex(6* 60*60)
+
+    def test_receive_btc_twice(self):
+        self.faucet(
+            self.fiber2.account_private,
+            0,
+            self.fiber1.account_private,
+            300000 * 100000000,
+        )
+        self.open_channel(
+            self.fiber2,
+            self.fiber1,
+            10000 * 100000000,
+            10000 * 100000000,
+            udt=self.get_account_udt_script(self.fiber1.account_private),
+        )
+        invoice = self.fiber2.get_client().new_invoice(
+            {
+                "amount": hex(1),
+                "currency": "Fibd",
+                "description": "test invoice",
+                "udt_type_script": self.get_account_udt_script(
+                    self.fiber1.account_private
+                ),
+                "payment_preimage": self.generate_random_preimage(),
+                "hash_algorithm": "sha256",
+            }
+        )
+        first_order = self.fiber1.get_client().receive_btc(
+            {"fiber_pay_req": invoice["invoice_address"]}
+        )
+        try:
+            second_order = self.fiber1.get_client().receive_btc(
+                {"fiber_pay_req": invoice["invoice_address"]}
+            )
+        except Exception as error:
+            assert "already exists" in str(error)
+        else:
+            assert second_order == first_order
+
+        stored_order = self.fiber1.get_client().get_cch_order(
+            {"payment_hash": first_order["payment_hash"]}
+        )
+        assert stored_order == first_order

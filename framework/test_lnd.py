@@ -1,10 +1,39 @@
 import json
-
-from framework.util import get_project_root
 import os
-from framework.util import create_config_file, get_project_root, run_command
-import time
 import shutil
+import signal
+import subprocess
+import time
+
+from framework.util import create_config_file, get_project_root, run_command
+
+LND_PROCESS_TIMEOUT_SECONDS = 30
+LND_TRANSIENT_OPEN_CHANNEL_ERRORS = (
+    "server is still in the process of starting",
+    "channels cannot be created before the wallet is fully synced",
+)
+
+
+def _listening_process_ids(port):
+    result = subprocess.run(
+        ["lsof", "-nP", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode not in (0, 1):
+        raise RuntimeError(
+            f"Failed to inspect LND RPC port {port}: {result.stderr.strip()}"
+        )
+    return {int(pid) for pid in result.stdout.split()}
+
+
+def _process_is_running(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
 
 
 class LndNode:
@@ -46,29 +75,45 @@ class LndNode:
         }
         self.lnd_config_path = "source/lnd-init/lnd/lnd.conf.j2"
 
-    def prepare(self, other_config={}):
+    def prepare(self, other_config=None):
         os.makedirs(self.tmp_path, exist_ok=True)  # 创建文件夹，如果已存在则不报错
         if ".j2" in self.lnd_config_path:
+            config = self.config.copy()
+            if other_config:
+                config.update(other_config)
             create_config_file(
-                self.config,
+                config,
                 self.lnd_config_path,
                 f"{self.tmp_path}/lnd.conf",
             )
 
     def start(self):
+        existing_pids = _listening_process_ids(self.rpc_port)
+        if existing_pids:
+            raise RuntimeError(
+                f"Cannot start LND on RPC port {self.rpc_port}; "
+                f"listener processes are still running: {sorted(existing_pids)}"
+            )
+
         run_command(
             f'{self.lnd} --lnddir="{self.tmp_path}" > {self.tmp_path}/lnd.log 2>&1 &'
         )
-        retries = 30
+        retries = LND_PROCESS_TIMEOUT_SECONDS
+        last_error = None
         print("waiting for ready")
-        for i in range(retries):
+        for remaining_retries in range(retries, 0, -1):
             try:
-                self.ln_cli_with_cmd("getinfo")
-                print(f"remaining retries={retries}")
-                return
-            except Exception as e:
+                info = self.ln_cli_with_cmd("getinfo")
+                print(f"remaining retries={remaining_retries - 1}")
+                return info
+            except Exception as error:
+                last_error = error
                 time.sleep(1)
-                continue
+
+        raise TimeoutError(
+            f"LND RPC port {self.rpc_port} did not become ready within {retries}s; "
+            f"check {self.tmp_path}/lnd.log"
+        ) from last_error
 
     def getinfo(self):
         return self.ln_cli_with_cmd("getinfo")
@@ -100,9 +145,23 @@ class LndNode:
         pass
 
     def stop(self):
-        run_command(
-            f"kill $(lsof -i:{self.rpc_port} | grep LISTEN | awk '{{print $2}}')",
-            check_exit_code=False,
+        pids = _listening_process_ids(self.rpc_port)
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+
+        deadline = time.monotonic() + LND_PROCESS_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            running_pids = [pid for pid in pids if _process_is_running(pid)]
+            if not running_pids:
+                return
+            time.sleep(0.1)
+
+        raise TimeoutError(
+            f"LND processes {running_pids} on RPC port {self.rpc_port} "
+            f"did not stop within {LND_PROCESS_TIMEOUT_SECONDS}s"
         )
 
     def clean(self):
@@ -111,18 +170,22 @@ class LndNode:
     def open_channel(self, peerNode, local_amt, sat_per_vbyte, min_confs):
         node_key = peerNode.getinfo()["identity_pubkey"]
         peer_address = f"localhost:{peerNode.listen_port}"
-        self.ln_cli_with_cmd(
-            f"openchannel --node_key {node_key} --connect {peer_address} --local_amt {local_amt} --sat_per_vbyte {sat_per_vbyte} --min_confs {min_confs}"
-        )
-        ##   echo "openchannel"
-        #   local retries=5
-        #   while [[ $retries -gt 0 ]] && ! lncli -n regtest --lnddir="$ingrid_dir" --no-macaroons --rpcserver "localhost:$ingrid_port" \
-        #       openchannel \
-        #       --node_key "$bob_node_key" \
-        #       --connect localhost:9835 \
-        #       --local_amt 1000000 \
-        #       --sat_per_vbyte 1 \
-        #       --min_confs 0; do
-        #     sleep 3
-        #     retries=$((retries - 1))
-        #   done
+        command = f"openchannel --node_key {node_key} --connect {peer_address} --local_amt {local_amt} --sat_per_vbyte {sat_per_vbyte} --min_confs {min_confs}"
+        last_error = None
+        for attempt in range(LND_PROCESS_TIMEOUT_SECONDS):
+            try:
+                return self.ln_cli_with_cmd(command)
+            except Exception as error:
+                if not any(
+                    message in str(error)
+                    for message in LND_TRANSIENT_OPEN_CHANNEL_ERRORS
+                ):
+                    raise
+                last_error = error
+                if attempt + 1 < LND_PROCESS_TIMEOUT_SECONDS:
+                    time.sleep(1)
+
+        raise TimeoutError(
+            f"LND RPC port {self.rpc_port} could not open a channel after "
+            f"retrying for {LND_PROCESS_TIMEOUT_SECONDS}s"
+        ) from last_error
