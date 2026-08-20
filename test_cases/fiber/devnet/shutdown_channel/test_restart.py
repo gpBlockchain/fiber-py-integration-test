@@ -167,6 +167,14 @@ class TestRestart(FiberTest):
         assert result["status"] == "unknown"
         print(f"result=:{result}")
         # 2.检查channel被close成功
+        self.wait_for_channel_state(
+            self.fiber1.get_client(),
+            self.fiber2.get_pubkey(),
+            "Closed",
+            120,
+            include_closed=True,
+            channel_id=N1N2_CHANNEL_ID,
+        )
         node_info = self.fiber1.get_client().node_info()
         print("node info :", node_info)
         assert node_info["channel_count"] == "0x0"
