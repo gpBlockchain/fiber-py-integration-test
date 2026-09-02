@@ -13,6 +13,7 @@ from framework.util import to_int_from_big_uint128_le, change_time
 import logging
 import os
 import subprocess
+import framework.config as framework_config
 
 # FIBER_TAR_GZ = "ckb-py-integration-test/source/fiber/data.fiber.tar.gz"
 XUDT_TX_HASH = "0x03c4475655a46dc4984c49fce03316f80bf666236bd95118112731082758d686"
@@ -36,6 +37,18 @@ class FiberTest(CkbTest):
     fnn_log_level = "debug"
     beginNum = "0x0"
     node: CkbTest.CkbNode
+    # Override these in a suite that must run beside another local devnet.
+    tmp_path_name = None
+    ckb_rpc_port = 8114
+    ckb_p2p_port = 8125
+    fiber1_rpc_port = 8228
+    fiber1_p2p_port = 8227
+    fiber2_rpc_port = 8229
+    fiber2_p2p_port = 8230
+    extra_mock_fiber_rpc_port = 8251
+    extra_mock_fiber_p2p_port = 8302
+    extra_fiber_rpc_port = 8251
+    extra_fiber_p2p_port = 8402
 
     @classmethod
     def setup_class(cls):
@@ -46,6 +59,10 @@ class FiberTest(CkbTest):
         Returns:
 
         """
+        cls._original_tmp_path_name = framework_config.TMP_PATH
+        if cls.tmp_path_name is not None:
+            framework_config.TMP_PATH = cls.tmp_path_name
+
         global ACCOUNT_PRIVATE_KEY_INDEX
         ACCOUNT_PRIVATE_KEY_INDEX = 0
         cls.account1_private_key = cls.Config.ACCOUNT_PRIVATE_1
@@ -57,11 +74,14 @@ class FiberTest(CkbTest):
             cls.account2_private_key
         )
         cls.node = cls.CkbNode.init_dev_by_port(
-            cls.CkbNodeConfigPath.CURRENT_TEST, "contract/node", 8114, 8125
+            cls.CkbNodeConfigPath.CURRENT_TEST,
+            "contract/node",
+            cls.ckb_rpc_port,
+            cls.ckb_p2p_port,
         )
 
         if cls.debug:
-            if check_port(8114):
+            if check_port(cls.ckb_rpc_port):
                 cls.logger.debug("=====不是第一次启动=====")
                 return
             cls.debug = False
@@ -95,15 +115,15 @@ class FiberTest(CkbTest):
             self.fiber_version,
             self.account1_private_key,
             "fiber/node1",
-            "8228",
-            "8227",
+            str(self.fiber1_rpc_port),
+            str(self.fiber1_p2p_port),
         )
         self.fiber2 = Fiber.init_by_port(
             self.fiber_version,
             self.account2_private_key,
             "fiber/node2",
-            "8229",
-            "8230",
+            str(self.fiber2_rpc_port),
+            str(self.fiber2_p2p_port),
         )
         self.fibers.append(self.fiber1)
         self.fibers.append(self.fiber2)
@@ -165,12 +185,14 @@ class FiberTest(CkbTest):
 
     @classmethod
     def teardown_class(cls):
-        if cls.debug:
-            return
-        if cls.first_debug:
-            return
-        cls.node.stop()
-        cls.node.clean()
+        try:
+            if cls.debug or cls.first_debug:
+                return
+            cls.node.stop()
+            cls.node.clean()
+        finally:
+            if cls.tmp_path_name is not None:
+                framework_config.TMP_PATH = cls._original_tmp_path_name
 
     def faucet(
         self,
@@ -224,8 +246,8 @@ class FiberTest(CkbTest):
             fiber_version,
             account_private_key,
             f"fiber/node{3 + i}",
-            str(8251 + i),
-            str(8302 + i),
+            str(self.extra_mock_fiber_rpc_port + i),
+            str(self.extra_mock_fiber_p2p_port + i),
         )
         fiber.read_ckb_key()
         self.new_fibers.append(fiber)
@@ -261,8 +283,8 @@ class FiberTest(CkbTest):
             fiber_version,
             account_private_key,
             f"fiber/node{3 + i}",
-            str(8251 + i),
-            str(8402 + i),
+            str(self.extra_fiber_rpc_port + i),
+            str(self.extra_fiber_p2p_port + i),
         )
         self.fibers.append(fiber)
         self.new_fibers.append(fiber)

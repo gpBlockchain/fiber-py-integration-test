@@ -217,6 +217,33 @@ class FiberRPCClient:
         """Individual send/receive payment events. See fiber-json-types fee::PaymentHistoryParams."""
         return self.call("payment_history", [param])
 
+    def commitment_signed(self, param):
+        return self.call("commitment_signed", [param])
+
+    def set_fiber_message_intercept(self, param):
+        return self.call("set_fiber_message_intercept", [param])
+
+    def take_captured_fiber_messages(self):
+        return self.call("take_captured_fiber_messages", [])
+
+    def deliver_captured_fiber_messages(self, param={}):
+        return self.call("deliver_captured_fiber_messages", [param])
+
+    def take_held_outbound_fiber_messages(self):
+        return self.call("take_held_outbound_fiber_messages", [])
+
+    def release_held_outbound_fiber_messages(self, param={}):
+        return self.call("release_held_outbound_fiber_messages", [param])
+
+    def send_raw_channel_message(self, param):
+        return self.call("send_raw_channel_message", [param])
+
+    def get_channel_musig2_public(self, param):
+        return self.call("get_channel_musig2_public", [param])
+
+    def build_shutdown_tx_message(self, param):
+        return self.call("build_shutdown_tx_message", [param])
+
     def node_info(self):
         """
         curl --location 'http://127.0.0.1:8229' --header 'Content-Type: application/json' --data '{
