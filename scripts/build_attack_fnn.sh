@@ -32,12 +32,13 @@ checkout_ref() {
 build_fnn() {
     local destination="$1"
 
+    # The p2p-tap RPC registration is intentionally debug-only. Build the
+    # stock binary with the same profile so behavior differs only by source.
     cargo build \
         --locked \
-        --release \
         --bin fnn \
         --manifest-path "$FIBER_BUILD_DIR/Cargo.toml"
-    install -m 0755 "$FIBER_BUILD_DIR/target/release/fnn" "$destination"
+    install -m 0755 "$FIBER_BUILD_DIR/target/debug/fnn" "$destination"
 }
 
 mkdir -p "$(dirname "$FIBER_BUILD_DIR")"
@@ -75,11 +76,13 @@ cat >"$PROVENANCE_FILE" <<PROVENANCE
 stock_fiber_repository=$STOCK_FIBER_REPOSITORY
 stock_fiber_ref=$STOCK_FIBER_REF
 stock_fiber_sha=$stock_sha
+stock_fnn_profile=debug
 stock_fnn_sha256=$stock_hash
 attack_fiber_repository=$ATTACK_FIBER_REPOSITORY
 attack_fiber_ref=$ATTACK_FIBER_REF
 attack_fiber_sha=$attack_sha
 attack_base_verified=true
+attack_fnn_profile=debug
 attack_fnn_sha256=$attack_hash
 PROVENANCE
 
