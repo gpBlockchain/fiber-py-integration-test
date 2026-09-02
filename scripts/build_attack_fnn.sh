@@ -2,13 +2,13 @@
 set -euo pipefail
 
 # Keep the honest node and the instrumented peer on one protocol baseline.
-# Defaults are immutable commits; workflow_dispatch may override them.
+# Defaults follow branches; workflow_dispatch may override either ref.
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 STOCK_FIBER_REPOSITORY="${STOCK_FIBER_REPOSITORY:-https://github.com/nervosnetwork/fiber.git}"
-STOCK_FIBER_REF="${STOCK_FIBER_REF:-f9232d52254a5aa52195ecae296c896de7078887}"
+STOCK_FIBER_REF="${STOCK_FIBER_REF:-develop}"
 ATTACK_FIBER_REPOSITORY="${ATTACK_FIBER_REPOSITORY:-https://github.com/gpBlockchain/fiber.git}"
-ATTACK_FIBER_REF="${ATTACK_FIBER_REF:-48a68f72ac63f46ad0bd15fcda030260f026393e}"
+ATTACK_FIBER_REF="${ATTACK_FIBER_REF:-p2p-tap}"
 FIBER_BUILD_DIR="${FIBER_BUILD_DIR:-$ROOT_DIR/.build/fiber-attack-fnn}"
 PROVENANCE_FILE="${PROVENANCE_FILE:-$ROOT_DIR/download/fiber/provenance.env}"
 

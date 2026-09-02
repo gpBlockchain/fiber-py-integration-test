@@ -23,9 +23,9 @@ on:
         default: https://github.com/nervosnetwork/fiber.git
         type: string
       stock_fiber_ref:
-        description: Commit used to build the unmodified FNN
+        description: Branch used to build the unmodified FNN
         required: true
-        default: f9232d52254a5aa52195ecae296c896de7078887
+        default: develop
         type: string
       attack_fiber_repository:
         description: Repository containing the debug attack RPCs
@@ -33,9 +33,9 @@ on:
         default: https://github.com/gpBlockchain/fiber.git
         type: string
       attack_fiber_ref:
-        description: Commit used to build the instrumented FNN
+        description: Branch used to build the instrumented FNN
         required: true
-        default: 48a68f72ac63f46ad0bd15fcda030260f026393e
+        default: p2p-tap
         type: string
 
 permissions:
@@ -47,9 +47,9 @@ concurrency:
 
 env:
   STOCK_FIBER_REPOSITORY: ${{ inputs.stock_fiber_repository || 'https://github.com/nervosnetwork/fiber.git' }}
-  STOCK_FIBER_REF: ${{ inputs.stock_fiber_ref || 'f9232d52254a5aa52195ecae296c896de7078887' }}
+  STOCK_FIBER_REF: ${{ inputs.stock_fiber_ref || 'develop' }}
   ATTACK_FIBER_REPOSITORY: ${{ inputs.attack_fiber_repository || 'https://github.com/gpBlockchain/fiber.git' }}
-  ATTACK_FIBER_REF: ${{ inputs.attack_fiber_ref || '48a68f72ac63f46ad0bd15fcda030260f026393e' }}
+  ATTACK_FIBER_REF: ${{ inputs.attack_fiber_ref || 'p2p-tap' }}
 
 jobs:
   attack-fnn-regressions:
