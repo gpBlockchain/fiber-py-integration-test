@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/fiber-attack-fnn.yml"
+      - "download_btc.py"
+      - "download_lnd.py"
       - "framework/attack_fnn.py"
       - "framework/basic_fiber.py"
       - "framework/basic_p2p.py"
@@ -69,6 +71,8 @@ jobs:
           ./venv/bin/python -m pip install --upgrade pip
           ./venv/bin/python -m pip install -r requirements.txt
           ./venv/bin/python -m download
+          ./venv/bin/python -m download_btc
+          ./venv/bin/python -m download_lnd
           install -m 0755 download/0.202.0/ckb-cli source/ckb-cli
 
       - name: Build stock and attack FNN binaries
