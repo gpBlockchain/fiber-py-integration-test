@@ -4,12 +4,13 @@ from framework.basic_fiber import FiberTest
 from framework.util import ckb_hash
 
 CHAIN_DEPTH_WAIT_ATTEMPTS = 120
-COMMIT_CELL_SWEEP_ROUNDS = 10
+COMMIT_CELL_SWEEP_ROUNDS = 15
 
 
 class TestMutilToOne(FiberTest):
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 3}
 
+    @classmethod
     def teardown_class(cls):
         cls.restore_time()
         super().teardown_class()
