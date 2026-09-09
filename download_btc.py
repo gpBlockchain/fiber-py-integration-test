@@ -19,17 +19,17 @@ DOWNLOAD_DIR = "download/btc"
 SYSTEMS = {
     "Linux": {
         "x86_64": {
-            "url": " https://bitcoincore.org/bin/bitcoin-core-{version}/bitcoin-{version}-x86_64-linux-gnu.tar.gz",
+            "url": "https://bitcoincore.org/bin/bitcoin-core-{version}/bitcoin-{version}-x86_64-linux-gnu.tar.gz",
             "ext": ".tar.gz",
         },
     },
     "Darwin": {
         "x86_64": {
-            "url": " https://bitcoincore.org/bin/bitcoin-core-{version}/bitcoin-{version}-x86_64-apple-darwin.tar.gz",
+            "url": "https://bitcoincore.org/bin/bitcoin-core-{version}/bitcoin-{version}-x86_64-apple-darwin.tar.gz",
             "ext": ".tar.gz",
         },
         "arm64": {
-            "url": " https://bitcoincore.org/bin/bitcoin-core-{version}/bitcoin-{version}-x86_64-apple-darwin.tar.gz",
+            "url": "https://bitcoincore.org/bin/bitcoin-core-{version}/bitcoin-{version}-x86_64-apple-darwin.tar.gz",
             "ext": ".tar.gz",
         },
     },

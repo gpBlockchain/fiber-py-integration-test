@@ -1,0 +1,133 @@
+name: Fiber attack FNN regressions
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/fiber-attack-fnn.yml"
+      - "download_btc.py"
+      - "download_lnd.py"
+      - "framework/attack_fnn.py"
+      - "framework/basic_fiber.py"
+      - "framework/basic_p2p.py"
+      - "framework/fiber_rpc.py"
+      - "framework/p2p_peer.py"
+      - "framework/test_fiber.py"
+      - "scripts/build_attack_fnn.sh"
+      - "test_cases/fiber/devnet/security/**"
+  workflow_dispatch:
+    inputs:
+      stock_fiber_repository:
+        description: Repository used to build the unmodified FNN
+        required: true
+        default: https://github.com/nervosnetwork/fiber.git
+        type: string
+      stock_fiber_ref:
+        description: Branch used to build the unmodified FNN
+        required: true
+        default: develop
+        type: string
+      attack_fiber_repository:
+        description: Repository containing the debug attack RPCs
+        required: true
+        default: https://github.com/gpBlockchain/fiber.git
+        type: string
+      attack_fiber_ref:
+        description: Branch used to build the instrumented FNN
+        required: true
+        default: p2p-tap
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fiber-attack-fnn-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  STOCK_FIBER_REPOSITORY: ${{ inputs.stock_fiber_repository || 'https://github.com/nervosnetwork/fiber.git' }}
+  STOCK_FIBER_REF: ${{ inputs.stock_fiber_ref || 'develop' }}
+  ATTACK_FIBER_REPOSITORY: ${{ inputs.attack_fiber_repository || 'https://github.com/gpBlockchain/fiber.git' }}
+  ATTACK_FIBER_REF: ${{ inputs.attack_fiber_ref || 'p2p-tap' }}
+
+jobs:
+  attack-fnn-regressions:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Check out integration tests
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies and node runtimes
+        run: |
+          python -m venv venv
+          ./venv/bin/python -m pip install --upgrade pip
+          ./venv/bin/python -m pip install -r requirements.txt
+          ./venv/bin/python -m download
+          ./venv/bin/python -m download_btc
+          ./venv/bin/python -m download_lnd
+          install -m 0755 download/0.202.0/ckb-cli source/ckb-cli
+
+      - name: Build stock and attack FNN binaries
+        env:
+          FIBER_BUILD_DIR: ${{ runner.temp }}/fiber-attack-build
+        run: ./scripts/build_attack_fnn.sh
+
+      - name: Verify binary roles and provenance
+        run: |
+          set -euo pipefail
+          test -x download/fiber/current/fnn
+          test -x download/fiber/attack/fnn
+          test -s download/fiber/provenance.env
+
+          if grep -aFq set_fiber_message_intercept download/fiber/current/fnn; then
+            echo "stock FNN unexpectedly exposes attack RPCs" >&2
+            exit 1
+          fi
+          grep -aFq set_fiber_message_intercept download/fiber/attack/fnn
+          grep -aFq send_raw_channel_message download/fiber/attack/fnn
+
+          cat download/fiber/provenance.env
+
+      - name: Run tests marked requires_attack_fnn
+        run: |
+          set -euo pipefail
+          mkdir -p attack-fnn-artifacts
+          cp download/fiber/provenance.env attack-fnn-artifacts/
+          ./venv/bin/python -m pytest \
+            -o addopts= \
+            --strict-markers \
+            -vv -s --tb=short \
+            --junitxml=attack-fnn-artifacts/junit.xml \
+            -m requires_attack_fnn \
+            test_cases/fiber/devnet/security \
+            2>&1 | tee attack-fnn-artifacts/pytest.log
+
+      - name: Publish source provenance
+        if: always()
+        run: |
+          if [[ -f download/fiber/provenance.env ]]; then
+            {
+              echo "```text"
+              cat download/fiber/provenance.env
+              echo "```"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload attack FNN evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fiber-attack-fnn-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            attack-fnn-artifacts
+            report
+          if-no-files-found: warn
+          retention-days: 14
