@@ -306,9 +306,7 @@ class FiberTest(CkbTest):
         deadline = time.monotonic() + timeout
         while True:
             node_info = client.node_info()
-            if all(
-                int(node_info[key], 16) == value for key, value in expected.items()
-            ):
+            if all(int(node_info[key], 16) == value for key, value in expected.items()):
                 return node_info
             remaining = deadline - time.monotonic()
             if remaining <= 0:
