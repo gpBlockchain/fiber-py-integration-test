@@ -270,6 +270,32 @@ class FiberTest(CkbTest):
         fiber.start(fnn_log_level=self.fnn_log_level)
         return fiber
 
+    def wait_for_node_info_counts(
+        self, client, channel_count, pending_channel_count=None, timeout=120
+    ):
+        """Wait for actor counts, independently of persisted channel states.
+
+        Closed channels may still have actors, especially during force-close
+        settlement. Only expect zero once actor cleanup is expected to finish.
+        """
+        expected = {"channel_count": channel_count}
+        if pending_channel_count is not None:
+            expected["pending_channel_count"] = pending_channel_count
+        deadline = time.monotonic() + timeout
+        while True:
+            node_info = client.node_info()
+            if all(
+                int(node_info[key], 16) == value for key, value in expected.items()
+            ):
+                return node_info
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"Timed out waiting for node_info counts {expected}; "
+                    f"last node_info: {node_info}"
+                )
+            time.sleep(min(1, remaining))
+
     def wait_for_channel_state(
         self,
         client,

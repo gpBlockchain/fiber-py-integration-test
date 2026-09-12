@@ -80,9 +80,8 @@ class TestRestart(FiberTest):
         assert result["status"] == "unknown"
         print(f"result=:{result}")
         # 2.检查channel被close成功
-        node_info = self.fiber1.get_client().node_info()
-        print("node info :", node_info)
-        assert node_info["channel_count"] == "0x0"
+        # Cooperative close: Closed may precede channel actor removal.
+        self.wait_for_node_info_counts(self.fiber1.get_client(), channel_count=0)
         after_balance1 = self.Ckb_cli.wallet_get_capacity(
             self.account1["address"]["testnet"]
         )
@@ -167,9 +166,8 @@ class TestRestart(FiberTest):
         assert result["status"] == "unknown"
         print(f"result=:{result}")
         # 2.检查channel被close成功
-        node_info = self.fiber1.get_client().node_info()
-        print("node info :", node_info)
-        assert node_info["channel_count"] == "0x0"
+        # Cooperative close: Closed may precede channel actor removal.
+        self.wait_for_node_info_counts(self.fiber1.get_client(), channel_count=0)
         after_balance1 = self.Ckb_cli.wallet_get_capacity(
             self.account1["address"]["testnet"]
         )
@@ -260,9 +258,8 @@ class TestRestart(FiberTest):
         # todo wait close tx commit
         time.sleep(20)
         # 2.检查channel被close成功
-        node_info = self.fiber1.get_client().node_info()
-        print("node info :", node_info)
-        assert node_info["channel_count"] == "0x0"
+        # Cooperative close: Closed may precede channel actor removal.
+        self.wait_for_node_info_counts(self.fiber1.get_client(), channel_count=0)
         after_balance1 = self.Ckb_cli.wallet_get_capacity(
             self.account1["address"]["testnet"]
         )

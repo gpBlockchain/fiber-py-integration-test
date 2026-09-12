@@ -1,5 +1,3 @@
-import time
-
 import pytest
 
 from framework.basic_fiber import FiberTest
@@ -82,81 +80,70 @@ class TestNodeInfo(FiberTest):
         assert node_info["features"] is not None, "features should not be None"
 
     def test_channel_count(self):
-        """
-        check channel_count
-        Returns:
-        """
-        before_open_channel_node1_info = self.fiber1.get_client().node_info()
-        before_open_channel_node2_info = self.fiber2.get_client().node_info()
-        # open channel
-        self.fiber2.get_client().open_channel(
-            {
-                "pubkey": self.fiber1.get_pubkey(),
-                "funding_amount": hex(1000 * 100000000),
-                "public": True,
-            }
-        )
-        time.sleep(1)
+        """Count actors through funding and cooperative-close cleanup."""
+        client1 = self.fiber1.get_client()
+        client2 = self.fiber2.get_client()
+        before_node1_info = client1.node_info()
+        before_node2_info = client2.node_info()
 
-        # pending_channel_count
-        pending_node1_info = self.fiber1.get_client().node_info()
-        pending_node2_info = self.fiber2.get_client().node_info()
-        assert (
-            int(pending_node1_info["pending_channel_count"], 16)
-            == int(before_open_channel_node1_info["pending_channel_count"], 16) + 1
-        )
+        # Hold funding unconfirmed so neither peer can skip the pending stage.
+        self.node.stop_miner()
+        try:
+            client2.open_channel(
+                {
+                    "pubkey": self.fiber1.get_pubkey(),
+                    "funding_amount": hex(1000 * 100000000),
+                    "public": True,
+                }
+            )
+            for client, before in (
+                (client1, before_node1_info),
+                (client2, before_node2_info),
+            ):
+                self.wait_for_node_info_counts(
+                    client,
+                    channel_count=int(before["channel_count"], 16) + 1,
+                    pending_channel_count=int(before["pending_channel_count"], 16) + 1,
+                )
+        finally:
+            self.node.start_miner()
 
-        assert (
-            int(pending_node2_info["pending_channel_count"], 16)
-            == int(before_open_channel_node2_info["pending_channel_count"], 16) + 1
+        channel_id = self.wait_for_channel_state(
+            client1, self.fiber2.get_pubkey(), "ChannelReady"
         )
-
         self.wait_for_channel_state(
-            self.fiber2.get_client(), self.fiber1.get_pubkey(), "ChannelReady"
+            client2, self.fiber1.get_pubkey(), "ChannelReady", channel_id=channel_id
         )
-        after_node1_info = self.fiber1.get_client().node_info()
-        after_node2_info = self.fiber2.get_client().node_info()
-        assert (
-            int(after_node1_info["pending_channel_count"], 16)
-            == int(pending_node1_info["pending_channel_count"], 16) - 1
-        )
-        assert int(after_node1_info["channel_count"], 16) == int(
-            pending_node1_info["channel_count"], 16
-        )
-        assert (
-            int(after_node2_info["pending_channel_count"], 16)
-            == int(pending_node1_info["pending_channel_count"], 16) - 1
-        )
-        assert int(after_node2_info["channel_count"], 16) == int(
-            pending_node1_info["channel_count"], 16
-        )
-        channel = self.fiber1.get_client().list_channels({})
+        for client, before in (
+            (client1, before_node1_info),
+            (client2, before_node2_info),
+        ):
+            self.wait_for_node_info_counts(
+                client,
+                channel_count=int(before["channel_count"], 16) + 1,
+                pending_channel_count=int(before["pending_channel_count"], 16),
+            )
 
-        # shutdown channel
-        self.fiber1.get_client().shutdown_channel(
+        client1.shutdown_channel(
             {
-                "channel_id": channel["channels"][0]["channel_id"],
+                "channel_id": channel_id,
                 "close_script": self.get_account_script(self.fiber1.account_private),
                 "fee_rate": "0x3FC",
             }
         )
-        time.sleep(20)
-        after_shutdown_node1_info = self.fiber1.get_client().node_info()
-        after_shutdown_node2_info = self.fiber2.get_client().node_info()
-        assert (
-            int(after_shutdown_node1_info["channel_count"], 16)
-            == int(after_node1_info["channel_count"], 16) - 1
-        )
-        assert (
-            int(after_shutdown_node2_info["channel_count"], 16)
-            == int(after_node1_info["channel_count"], 16) - 1
-        )
-
-    # def test_pending_channel_count(self):
-    #     """
-    #     check pending_channel_count
-    #     Returns:
-    #     """
+        for client, pubkey, before in (
+            (client1, self.fiber2.get_pubkey(), before_node1_info),
+            (client2, self.fiber1.get_pubkey(), before_node2_info),
+        ):
+            self.wait_for_channel_state(
+                client, pubkey, "Closed", include_closed=True, channel_id=channel_id
+            )
+            # Closed is persisted before NetworkActor removes the channel actor.
+            self.wait_for_node_info_counts(
+                client,
+                channel_count=int(before["channel_count"], 16),
+                pending_channel_count=int(before["pending_channel_count"], 16),
+            )
 
     @pytest.mark.skip("")
     def test_network_sync_status(self):
