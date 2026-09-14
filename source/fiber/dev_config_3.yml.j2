@@ -23,6 +23,9 @@ fiber:
   {% if fiber_gossip_policy is defined %}
 {{ fiber_gossip_policy | indent(2, true) }}
   {% endif %}
+  {% if fiber_peer_message_policy is defined %}
+  peer_message_policy: {{ fiber_peer_message_policy | to_json }}
+  {% endif %}
   open_channel_auto_accept_min_ckb_funding_amount: {{ fiber_open_channel_auto_accept_min_ckb_funding_amount | default(10000000000)}}
   {% if fiber_auto_accept_channel_ckb_funding_amount is defined %}
   auto_accept_channel_ckb_funding_amount: {{ fiber_auto_accept_channel_ckb_funding_amount }}

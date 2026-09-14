@@ -18,7 +18,7 @@ on:
         default: 'https://github.com/nervosnetwork/fiber.git'
       GitBranch:
         description: 'fiber -git branch'
-        default: 'v0.9.0'
+        default: 'v0.9.1'
   schedule:
     - cron: '0 0 */7 * *'
 
@@ -45,7 +45,7 @@ jobs:
         run: make prepare
         env:
           GitUrl: '${{ github.event.inputs.GitUrl }}'
-          GitBranch: '${{ github.event.inputs.GitBranch }}'
+          GitBranch: ${{ github.event.inputs.GitBranch || 'v0.9.1' }}
 
 
       - name: Tar backup
@@ -425,7 +425,7 @@ jobs:
           cd ../
         env:
           GitUrl: '${{ github.event.inputs.GitUrl }}'
-          GitBranch: '${{ github.event.inputs.GitBranch }}'
+          GitBranch: ${{ github.event.inputs.GitBranch || 'v0.9.1' }}
       - name: Run fiber_test_demo
         run: |
            make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/wasm"
