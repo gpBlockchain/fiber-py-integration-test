@@ -1,8 +1,8 @@
 """PR #1355 regression: explicit large u128 channel constraints must migrate.
 
 This covers the bug class fixed by avoiding JSON round-trips in channel data
-migration. A v0.8.1 channel can persist u128-sized constraint fields; current
-fnn must migrate that data and still read the channel normally.
+migration. While a payment is Inflight, both v0.8.1 nodes are replaced with
+current fnn; the large u128 constraint and pending payment must resume together.
 """
 
 import time
@@ -11,6 +11,7 @@ import pytest
 
 from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 from framework.test_fiber import FiberConfigPath
+from test_cases.fiber.devnet.settle_invoice.test_settle_invoice import sha256_hex
 
 from ._helpers import (
     LATEST_DB_VERSION_AFTER_PR1323,
@@ -63,11 +64,41 @@ class TestLargeU128ChannelConstraints(MigrationFiberTest):
             old_a.get_client(), old_b.get_pubkey(), "ChannelReady"
         )
 
-        self.send_invoice_payment(old_a, old_b, 1, False)
-        self.send_invoice_payment(old_b, old_a, 1, False)
-        old_channel_count = len(old_a.get_client().list_channels({})["channels"])
+        # Start a payment and keep it Inflight at the receiver.  The hold invoice
+        # makes the replacement point deterministic: AddTlc is committed on both
+        # sides, but RemoveTlc has not started yet.
+        preimage = self.generate_random_preimage()
+        payment_hash = sha256_hex(preimage)
+        invoice = old_b.get_client().new_invoice(
+            {
+                "amount": hex(1),
+                "currency": "Fibd",
+                "description": "large u128 migration hold invoice",
+                "expiry": hex(3600),
+                "final_cltv": hex(40),
+                "payment_hash": payment_hash,
+                "hash_algorithm": "sha256",
+            }
+        )
+        payment = old_a.get_client().send_payment(
+            {"invoice": invoice["invoice_address"]}
+        )
+        assert payment["payment_hash"] == payment_hash
+        self.wait_invoice_state(old_b, payment_hash, "Received", 120, 1)
+        payment_before_replace = old_a.get_client().get_payment(
+            {"payment_hash": payment_hash}
+        )
+        assert payment_before_replace["status"] == "Inflight"
+
+        old_a_channels = old_a.get_client().list_channels({})["channels"]
+        old_b_channels = old_b.get_client().list_channels({})["channels"]
+        assert any(channel["pending_tlcs"] for channel in old_a_channels)
+        assert any(channel["pending_tlcs"] for channel in old_b_channels)
+
+        old_channel_count = len(old_a_channels)
         assert old_channel_count >= 1
 
+        # Replace both v0.8.1 nodes while the payment is still Inflight.
         old_a.stop()
         old_b.stop()
 
@@ -77,6 +108,7 @@ class TestLargeU128ChannelConstraints(MigrationFiberTest):
         start_with_confirm(old_b, confirm="y")
         old_a.connect_peer(old_b)
         wait_peer_connected(old_a, timeout=30)
+        wait_peer_connected(old_b, timeout=30)
 
         wait_log_matches(
             old_a, r"Migrating to {}".format(LATEST_DB_VERSION_AFTER_PR1323)
@@ -86,6 +118,44 @@ class TestLargeU128ChannelConstraints(MigrationFiberTest):
         chans = list_channels_with_timeout(old_a)
         assert len(chans) == old_channel_count, "channel must survive migration"
         assert all(c["state"]["state_name"] == "ChannelReady" for c in chans), chans
+        assert any(
+            c["pending_tlcs"] for c in chans
+        ), f"pending TLC must survive node replacement: {chans}"
+
+        invoice_after_restart = old_b.get_client().get_invoice(
+            {"payment_hash": payment_hash}
+        )
+        assert invoice_after_restart["status"] == "Received"
+        payment_after_replace = old_a.get_client().get_payment(
+            {"payment_hash": payment_hash}
+        )
+        assert payment_after_replace["status"] == "Inflight"
+
+        # Complete the same payment after replacement and prove the migrated
+        # channel remains usable for new payments in both directions.
+        old_b.get_client().settle_invoice(
+            {"payment_hash": payment_hash, "payment_preimage": preimage}
+        )
+        self.wait_payment_state(old_a, payment_hash, "Success", 120, 1)
+        invoice_after_settle = old_b.get_client().get_invoice(
+            {"payment_hash": payment_hash}
+        )
+        assert invoice_after_settle["status"] == "Paid"
+
+        for _ in range(30):
+            migrated_a_channels = old_a.get_client().list_channels({})["channels"]
+            migrated_b_channels = old_b.get_client().list_channels({})["channels"]
+            if all(
+                not channel["pending_tlcs"]
+                for channel in migrated_a_channels + migrated_b_channels
+            ):
+                break
+            time.sleep(1)
+        else:
+            assert False, (
+                "migrated TLC did not fully settle: "
+                f"old_a={migrated_a_channels}, old_b={migrated_b_channels}"
+            )
 
         send_invoice_payment_with_retry(self, old_a, old_b, 1)
         send_invoice_payment_with_retry(self, old_b, old_a, 1)

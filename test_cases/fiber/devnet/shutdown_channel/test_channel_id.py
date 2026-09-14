@@ -70,9 +70,8 @@ class TestChannelId(FiberTest):
         self.wait_for_channel_state(
             self.fiber1.get_client(), self.fiber2.get_pubkey(), "Closed", 120, True
         )
-        node_info = self.fiber1.get_client().node_info()
-        print("node info :", node_info)
-        assert node_info["channel_count"] == "0x0"
+        # Cooperative close: Closed may precede channel actor removal.
+        self.wait_for_node_info_counts(self.fiber1.get_client(), channel_count=0)
         after_balance1 = self.Ckb_cli.wallet_get_capacity(
             self.account1["address"]["testnet"]
         )

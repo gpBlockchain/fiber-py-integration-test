@@ -67,23 +67,47 @@ class TestFundingAbortDetail(FiberTest):
 
     def test_peer_input_uses_our_funding_lock_detail_propagates(self):
         """
-        If the peer adds a funding input locked by our own funding source lock,
-        the opener should abort with the specific PeerInputUsesOurFundingLock
-        detail, and the peer should receive the same detail via TxAbort.
+        If a peer adds a funding input locked by our own funding source lock,
+        the peer that runs funding-tx verification aborts with the specific
+        PeerInputUsesOurFundingLock detail.
+
+        In this shared-funding-key setup both nodes use the same funding
+        source lock, but the acceptor receives the opener's TxUpdate first and
+        is therefore the one that verifies the funding tx and detects the
+        conflict.  The opener is still awaiting the acceptor's collaboration
+        message when the abort arrives, so it never runs its own verification.
+
+        The TxAbort wire message is deliberately public-safe: the detailed
+        local diagnostic is NOT sent to the peer (see the "Do not send local
+        diagnostics to the peer" note in channel.rs).  So the acceptor (the
+        detector) records the specific detail, while the opener (the aborted
+        party) records only the generic "Funding aborted" detail.
         """
         same_funding_key_peer = self._open_channel_to_same_funding_key_peer()
 
-        expected_detail = [
+        # The acceptor detects PeerInputUsesOurFundingLock during funding-tx
+        # verification and records the specific detail locally.
+        specific_detail = [
             "Funding tx rejected: peer-added input #",
             "local funding source lock args",
         ]
-        peer_failed = self._failed_opening_with_detail(
-            same_funding_key_peer, expected_detail
+        detector_failed = self._failed_opening_with_detail(
+            same_funding_key_peer, specific_detail
         )
 
+        # The opener only receives the public-safe generic TxAbort, so it
+        # records the generic detail.  Restart first to prove the persisted
+        # opening record (not the transient funding_abort_detail) keeps it.
         self._restart_fiber(self.fiber1)
-        opener_failed = self._failed_opening_with_detail(self.fiber1, expected_detail)
-        assert peer_failed["failure_detail"] == opener_failed["failure_detail"]
+        generic_detail = ["Received TxAbort from peer", "Funding aborted"]
+        opener_failed = self._failed_opening_with_detail(self.fiber1, generic_detail)
+
+        # The detector keeps the specific cause; the aborted peer must NOT
+        # leak the detector's local diagnostics.
+        assert all(
+            part in detector_failed["failure_detail"] for part in specific_detail
+        )
+        assert "Funding tx rejected" not in opener_failed["failure_detail"]
 
     def test_detailed_funding_abort_failure_detail_survives_restart(self):
         """

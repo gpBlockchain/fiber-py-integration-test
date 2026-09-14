@@ -3,6 +3,8 @@ import time
 from framework.basic_fiber import FiberTest
 from framework.util import ckb_hash
 
+COMMIT_CELL_SWEEP_ROUNDS = 10
+
 
 class TestOneToOne(FiberTest):
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 2}
@@ -61,10 +63,22 @@ class TestOneToOne(FiberTest):
             self.fibers[2].get_client().settle_invoice(
                 {"payment_hash": ckb_hash(preimage), "payment_preimage": preimage}
             )
-        while len(self.get_commit_cells()) > 0:
+        for _ in range(COMMIT_CELL_SWEEP_ROUNDS):
+            commit_cells = self.get_commit_cells()
+            if not commit_cells:
+                break
             for i in range(600):
                 self.Miner.miner_with_version(self.node, "0x0")
             time.sleep(10)
+        else:
+            commit_cells = self.get_commit_cells()
+            if commit_cells:
+                raise TimeoutError(
+                    "Commit cells were not consumed after "
+                    f"{COMMIT_CELL_SWEEP_ROUNDS} mining rounds: "
+                    f"tip={self.node.getClient().get_tip_block_number()}, "
+                    f"remaining_commit_cells={commit_cells}"
+                )
         after_balance = self.get_fibers_balance()
         result = self.get_balance_change(before_balance, after_balance)
         assert abs(result[0]["ckb"] - 800800000) < 20000

@@ -9,7 +9,7 @@ from test_cases.fiber.devnet.settle_invoice.test_settle_invoice import sha256_he
 class TestWatchTower(FiberCchTest):
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 5}
 
-    @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/1222")
+    # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/1222")
     def test_shutdown_fiber(self):
         payment_hash = (
             "0xb00ce15c1a83174e2ea4576a4d7cfbcbe79ce1a6c364501c2910403ff635a116"
@@ -67,8 +67,19 @@ class TestWatchTower(FiberCchTest):
             {"payment_hash": payment_hash, "payment_preimage": preimage}
         )
         self.node.getClient().generate_epochs("0x1")
-        self.wait_cch_order_state(self.fiber1, payment_hash)
-        # todo wait fiber success
+        self.wait_cch_order_state(self.fiber1, payment_hash, "Success", timeout=720)
+        payment = self.fiber1.get_client().get_payment({"payment_hash": payment_hash})
+        assert payment["status"] == "Success"
+        self.wait_invoice_state(self.fiber2, payment_hash, "Paid", timeout=120)
+        self.fiber1.get_client().list_channels({"include_closed": True})
+        self.fiber2.get_client().list_channels({"include_closed": True})
+        invoice = self.LNDs[0].ln_cli_with_cmd(
+            f"lookupinvoice {payment_hash.replace('0x', '')}"
+        )
+        assert invoice["state"] == "SETTLED"
+        payment = self.LNDs[1].ln_cli_with_cmd(f"listpayments")
+        assert payment["payments"][0]["status"] == "SUCCEEDED"
+        assert payment["payments"][0]["payment_hash"] == payment_hash.replace("0x", "")
 
     def test_shutdown_lnd(self):
         # lnd force shutdown

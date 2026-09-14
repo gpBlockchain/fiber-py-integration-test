@@ -80,6 +80,8 @@ class TestMPPWithSamePaymentHash(FiberTest):
             {"payment_hash": payment_hash, "payment_preimage": preimage}
         )
         self._wait_force_close_unlock()
+        self.wait_invoice_state(fiber3, payment_hash, "Paid", timeout=350)
+        self.wait_payment_state(self.fiber1, payment_hash, "Success", timeout=350)
 
     def test_mpp_with_same_payment_hash_2(self):
         """
@@ -132,3 +134,5 @@ class TestMPPWithSamePaymentHash(FiberTest):
             {"payment_hash": payment_hash, "payment_preimage": preimage}
         )
         self._wait_force_close_unlock()
+        self.wait_invoice_state(fiber3, payment_hash, "Paid", timeout=350)
+        self.wait_payment_state(self.fiber1, payment_hash, "Success", timeout=350)

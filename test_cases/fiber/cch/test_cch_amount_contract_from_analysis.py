@@ -49,6 +49,19 @@ class TestCchAmountContractFromAnalysis(CchAnalysisBase):
         """CCH-T004 positive observable for the real incoming LND amount."""
         amount_sats = 1000
         fee_sats = 500
+        self.faucet(
+            self.fiber2.account_private,
+            0,
+            self.fiber1.account_private,
+            10000 * 100000000,
+        )
+        self.open_channel(
+            self.fiber2,
+            self.fiber1,
+            1000 * 100000000,
+            1000 * 100000000,
+            udt=self.get_account_udt_script(self.fiber1.account_private),
+        )
         order, decoded = self._create_receive_btc_order_with_base_fee(
             amount_sats=amount_sats,
             fee_sats=fee_sats,
@@ -66,7 +79,7 @@ class TestCchAmountContractFromAnalysis(CchAnalysisBase):
     #     ),
     # )
 
-    @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/1499")
+    # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/1499")
     def test_cch_t004_receive_btc_response_and_get_order_amount_sats_include_fee(self):
         """Regression for receive_btc amount_sats excluding the charged fee.
 
@@ -77,6 +90,19 @@ class TestCchAmountContractFromAnalysis(CchAnalysisBase):
         """
         amount_sats = 1000
         fee_sats = 500
+        self.faucet(
+            self.fiber2.account_private,
+            0,
+            self.fiber1.account_private,
+            10000 * 100000000,
+        )
+        self.open_channel(
+            self.fiber2,
+            self.fiber1,
+            1000 * 100000000,
+            1000 * 100000000,
+            udt=self.get_account_udt_script(self.fiber1.account_private),
+        )
         expected_total_sats = amount_sats + fee_sats
         order, decoded = self._create_receive_btc_order_with_base_fee(
             amount_sats=amount_sats,

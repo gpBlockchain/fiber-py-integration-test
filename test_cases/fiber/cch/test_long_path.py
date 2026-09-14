@@ -1,408 +1,247 @@
-# import time
-#
-# from framework.basic_fiber_with_cch import FiberCchTest
-#
-#
-# class TestLongPath(FiberCchTest):
-#     debug = True
-#
-#     def test_long_path(self):
-#         """Build a long Fiber path and validate LND->Fiber reachability per hop.
-#
-#         Env:
-#             FIBER_CCH_LONG_PATH_HOPS: total Fiber nodes in the line topology (default: 10).
-#         """
-#         total_nodes = 7
-#         assert total_nodes >= 2, "FIBER_CCH_LONG_PATH_HOPS must be >= 2"
-#
-#         udt_script = self.get_account_udt_script(self.fiber1.account_private)
-#         channel_balance = 300 * 100000000
-#         payment_amount = 100000
-#
-#         # Ensure existing nodes have enough UDT to open/forward through many channels.
-#         self.faucet(
-#             self.fiber2.account_private,
-#             0,
-#             self.fiber1.account_private,
-#             2000 * 100000000,
-#         )
-#
-#         fibers = [self.fiber1, self.fiber2]
-#         for _ in range(total_nodes - 2):
-#             account_private = self.generate_account(
-#                 10000,
-#                 self.fiber1.account_private,
-#                 2000 * 100000000,
-#             )
-#             fibers.append(self.start_new_fiber(account_private))
-#         self.faucet(
-#             self.fiber1.account_private,
-#             0,
-#             self.fiber1.account_private,
-#             5000 * 100000000,
-#         )
-#         # Build line topology: fiber1 -> fiber2 -> ... -> fiberN.
-#         for i in range(len(fibers) - 1):
-#             self.open_channel(
-#                 fibers[i],
-#                 fibers[i + 1],
-#                 channel_balance,
-#                 0,
-#                 udt=udt_script,
-#             )
-#
-#         # Validate increasing route depth: lnd -> fiber1(CCH) -> fiber2...fiberN.
-#         for index, payee in enumerate(fibers[1:], start=1):
-#             self.send_payment(self.fiber1, payee, 1, True, udt_script)
-#             invoice = payee.get_client().new_invoice(
-#                 {
-#                     "amount": hex(payment_amount),
-#                     "currency": "Fibd",
-#                     "description": f"long-path-hop-{index}",
-#                     "udt_type_script": udt_script,
-#                     "payment_preimage": self.generate_random_preimage(),
-#                     "hash_algorithm": "sha256",
-#                 }
-#             )
-#             print(f"current i:{index}")
-#
-#             order = self.fiber1.get_client().receive_btc(
-#                 {"fiber_pay_req": invoice["invoice_address"]}
-#             )
-#             self.LNDs[1].payinvoice(order["incoming_invoice"]["Lightning"])
-#             self.wait_cch_order_state(self.fiber1, order["payment_hash"], "Success", 30)
-#             final_order = self.fiber1.get_client().get_cch_order(
-#                 {"payment_hash": order["payment_hash"]}
-#             )
-#             assert final_order["status"] == "Success"
-#
-#     def test_send_btc_long_path(self):
-#         """Build a long LND path and validate Fiber->LND reachability per hop.
-#
-#         send_btc flow: fiber2 --pays--> fiber1(CCH/LND0) --pays--> LND1 -> ... -> LNDM
-#
-#         Extends the LND side with multiple nodes to test increasing LND hop depth.
-#         """
-#         total_lnd_nodes = 7
-#         assert total_lnd_nodes >= 2, "total_lnd_nodes must be >= 2"
-#
-#         udt_script = self.get_account_udt_script(self.fiber1.account_private)
-#         payment_amount = 100
-#
-#         # Fiber side: open UDT channel fiber2 -> fiber1 with enough liquidity.
-#         self.faucet(
-#             self.fiber2.account_private,
-#             0,
-#             self.fiber1.account_private,
-#             10000 * 100000000,
-#         )
-#         self.open_channel(
-#             self.fiber2,
-#             self.fiber1,
-#             1000 * 100000000,
-#             1000 * 100000000,
-#             udt=udt_script,
-#         )
-#
-#         # LND side: build line topology LND0 -> LND1 -> LND2 -> ... -> LNDM.
-#         # LND0 <-> LND1 already have channels from setup_class.
-#         lnds = [self.LNDs[0], self.LNDs[1]]
-#         for _ in range(total_lnd_nodes - 2):
-#             new_lnd = self.start_new_lnd()
-#             # Fund the previous LND so it can open a channel to the new one.
-#             self.faucetBtc(lnds[-1], 5)
-#             lnds[-1].open_channel(new_lnd, 1000000, 1, 0)
-#             self.btcNode.miner(6)
-#             lnds.append(new_lnd)
-#
-#         # Validate increasing route depth on LND side:
-#         # fiber2 -> fiber1(CCH/LND0) -> LND1 -> ... -> LND[index].
-#         for index, payee_lnd in enumerate(lnds[1:], start=1):
-#             lnd_invoice = payee_lnd.addinvoice(payment_amount)
-#
-#             # fiber1 (CCH) creates a send_btc order bridging Fiber -> LND.
-#             send_btc_response = self.fiber1.get_client().send_btc(
-#                 {
-#                     "btc_pay_req": lnd_invoice["payment_request"],
-#                     "currency": "Fibd",
-#                 }
-#             )
-#             print(f"send_btc long path - current LND hop depth: {index}")
-#
-#             # fiber2 pays the Fiber invoice issued by fiber1 (CCH).
-#             payment = self.fiber2.get_client().send_payment(
-#                 {"invoice": send_btc_response["incoming_invoice"]["Fiber"]}
-#             )
-#
-#             # Wait for CCH order to complete end-to-end.
-#             self.wait_cch_order_state(
-#                 self.fiber1, send_btc_response["payment_hash"], "Success", 60
-#             )
-#             final_order = self.fiber1.get_client().get_cch_order(
-#                 {"payment_hash": send_btc_response["payment_hash"]}
-#             )
-#             assert final_order["status"] == "Success"
-#
-#             # Verify the payee LND node received the payment.
-#             lnd_invoice_status = payee_lnd.ln_cli_with_cmd(
-#                 f"lookupinvoice {lnd_invoice['r_hash']}"
-#             )
-#             assert lnd_invoice_status["state"] == "SETTLED"
-#
-#     def test_tttttt(self):
-#         for i in range(5):
-#             self.start_new_mock_lnd()
-#         for i in range(1, 6):
-#             invoice = self.LNDs[i].addinvoice(1000)
-#             self.LNDs[0].payinvoice(invoice["payment_request"])
-#
-#     def test_bbbb(self):
-#         for i in range(5):
-#             self.start_new_mock_lnd()
-#         self.LNDs[2].addinvoice(1000)
-#
-#     def test_start_mock(self):
-#         for i in range(5):
-#             self.start_new_mock_lnd()
-#
-#         payee_lnd = self.LNDs[2]
-#         lnd_invoice = payee_lnd.addinvoice(100, "demo")
-#
-#         # fiber1 (CCH) creates a send_btc order bridging Fiber -> LND.
-#         send_btc_response = self.fiber1.get_client().send_btc(
-#             {
-#                 "btc_pay_req": lnd_invoice["payment_request"],
-#                 "currency": "Fibd",
-#             }
-#         )
-#         print(f"send_btc long path - current LND hop depth: {2}")
-#         self.fiber2.get_client().parse_invoice(
-#             {"invoice": send_btc_response["incoming_invoice"]["Fiber"]}
-#         )
-#         # fiber2 pays the Fiber invoice issued by fiber1 (CCH).
-#         payment = self.fiber2.get_client().send_payment(
-#             {"invoice": send_btc_response["incoming_invoice"]["Fiber"]}
-#         )
-#
-#         # Wait for CCH order to complete end-to-end.
-#         self.wait_cch_order_state(
-#             self.fiber1, send_btc_response["payment_hash"], "Success", 60
-#         )
-#         final_order = self.fiber1.get_client().get_cch_order(
-#             {"payment_hash": send_btc_response["payment_hash"]}
-#         )
-#         assert final_order["status"] == "Success"
-#
-#         # Verify the payee LND node received the payment.
-#         lnd_invoice_status = payee_lnd.ln_cli_with_cmd(
-#             f"lookupinvoice {lnd_invoice['r_hash']}"
-#         )
-#         assert lnd_invoice_status["state"] == "SETTLED"
-#
-#     def test_send_btc_long_path_max_hops(self):
-#         """Build a longer LND path for send_btc and only test from the farthest LND node.
-#
-#         This validates that send_btc can traverse the maximum LND hop depth in a single shot.
-#         """
-#         total_lnd_nodes = 10
-#         assert total_lnd_nodes >= 2, "total_lnd_nodes must be >= 2"
-#
-#         udt_script = self.get_account_udt_script(self.fiber1.account_private)
-#         payment_amount = 100000
-#
-#         # Fiber side: open UDT channel fiber2 -> fiber1.
-#         self.faucet(
-#             self.fiber2.account_private,
-#             0,
-#             self.fiber1.account_private,
-#             10000 * 100000000,
-#         )
-#         self.open_channel(
-#             self.fiber2,
-#             self.fiber1,
-#             1000 * 100000000,
-#             1000 * 100000000,
-#             udt=udt_script,
-#         )
-#
-#         # LND side: build line topology LND0 -> LND1 -> ... -> LNDM.
-#         lnds = [self.LNDs[0], self.LNDs[1]]
-#         for _ in range(total_lnd_nodes - 2):
-#             new_lnd = self.start_new_lnd()
-#             self.faucetBtc(lnds[-1], 5)
-#             lnds[-1].open_channel(new_lnd, 1000000, 1, 0)
-#             self.btcNode.miner(6)
-#             lnds.append(new_lnd)
-#
-#         # Only test the farthest LND node.
-#         farthest_lnd = lnds[-1]
-#         lnd_invoice = farthest_lnd.addinvoice(payment_amount)
-#         send_btc_response = self.fiber1.get_client().send_btc(
-#             {
-#                 "btc_pay_req": lnd_invoice["payment_request"],
-#                 "currency": "Fibd",
-#             }
-#         )
-#         print(
-#             f"send_btc max hops - payee is LND[{total_lnd_nodes - 1}], "
-#             f"LND hops={total_lnd_nodes - 1}"
-#         )
-#
-#         # fiber2 pays the Fiber invoice.
-#         payment = self.fiber2.get_client().send_payment(
-#             {"invoice": send_btc_response["incoming_invoice"]["Fiber"]}
-#         )
-#
-#         self.wait_cch_order_state(
-#             self.fiber1, send_btc_response["payment_hash"], "Success", 60
-#         )
-#         final_order = self.fiber1.get_client().get_cch_order(
-#             {"payment_hash": send_btc_response["payment_hash"]}
-#         )
-#         assert final_order["status"] == "Success"
-#
-#         lnd_invoice_status = farthest_lnd.ln_cli_with_cmd(
-#             f"lookupinvoice {lnd_invoice['r_hash']}"
-#         )
-#         assert lnd_invoice_status["state"] == "SETTLED"
-#
-#     def test_send_btc_long_path_both_sides(self):
-#         """Build long paths on both Fiber and LND sides for send_btc.
-#
-#         Full path: fiberN -> ... -> fiber2 -> fiber1(CCH/LND0) -> LND1 -> ... -> LNDM
-#
-#         Tests the maximum end-to-end hop count across both networks.
-#         """
-#         total_fiber_nodes = 5
-#         total_lnd_nodes = 5
-#         udt_script = self.get_account_udt_script(self.fiber1.account_private)
-#         channel_balance = 300 * 100000000
-#         payment_amount = 100000
-#
-#         # --- Fiber side: build long path toward fiber1 (CCH hub) ---
-#         self.faucet(
-#             self.fiber2.account_private,
-#             0,
-#             self.fiber1.account_private,
-#             2000 * 100000000,
-#         )
-#         fibers = [self.fiber1, self.fiber2]
-#         for _ in range(total_fiber_nodes - 2):
-#             account_private = self.generate_account(
-#                 10000,
-#                 self.fiber1.account_private,
-#                 2000 * 100000000,
-#             )
-#             fibers.append(self.start_new_fiber(account_private))
-#         self.faucet(
-#             self.fiber1.account_private,
-#             0,
-#             self.fiber1.account_private,
-#             5000 * 100000000,
-#         )
-#         # fibers[i+1] opens channel to fibers[i] => outbound liquidity toward fiber1.
-#         for i in range(len(fibers) - 1):
-#             self.open_channel(
-#                 fibers[i + 1],
-#                 fibers[i],
-#                 channel_balance,
-#                 0,
-#                 udt=udt_script,
-#             )
-#
-#         # --- LND side: build long path from LND0 outward ---
-#         lnds = [self.LNDs[0], self.LNDs[1]]
-#         for _ in range(total_lnd_nodes - 2):
-#             new_lnd = self.start_new_lnd()
-#             self.faucetBtc(lnds[-1], 5)
-#             lnds[-1].open_channel(new_lnd, 1000000, 1, 0)
-#             self.btcNode.miner(6)
-#             lnds.append(new_lnd)
-#
-#         # Warm up Fiber routing with a small keysend.
-#         farthest_fiber = fibers[-1]
-#         self.send_payment(farthest_fiber, self.fiber1, 1, True, udt_script)
-#
-#         # Invoice on the farthest LND node.
-#         farthest_lnd = lnds[-1]
-#         lnd_invoice = farthest_lnd.addinvoice(payment_amount)
-#         send_btc_response = self.fiber1.get_client().send_btc(
-#             {
-#                 "btc_pay_req": lnd_invoice["payment_request"],
-#                 "currency": "Fibd",
-#             }
-#         )
-#         print(
-#             f"send_btc both sides - Fiber hops={total_fiber_nodes - 1}, "
-#             f"LND hops={total_lnd_nodes - 1}"
-#         )
-#
-#         # Farthest Fiber node pays the Fiber invoice through the full path.
-#         payment = farthest_fiber.get_client().send_payment(
-#             {"invoice": send_btc_response["incoming_invoice"]["Fiber"]}
-#         )
-#
-#         self.wait_cch_order_state(
-#             self.fiber1, send_btc_response["payment_hash"], "Success", 60
-#         )
-#         final_order = self.fiber1.get_client().get_cch_order(
-#             {"payment_hash": send_btc_response["payment_hash"]}
-#         )
-#         assert final_order["status"] == "Success"
-#
-#         lnd_invoice_status = farthest_lnd.ln_cli_with_cmd(
-#             f"lookupinvoice {lnd_invoice['r_hash']}"
-#         )
-#         assert lnd_invoice_status["state"] == "SETTLED"
-#
-#     def test_0000(self):
-#         for i in range(5):
-#             self.start_new_mock_fiber("")
-#         i = 4
-#         payee = self.fibers[i]
-#         udt_script = self.get_account_udt_script(self.fiber1.account_private)
-#         invoice = payee.get_client().new_invoice(
-#             {
-#                 "amount": hex(10000),
-#                 "currency": "Fibd",
-#                 "description": f"long-path-hop-{i}",
-#                 "udt_type_script": udt_script,
-#                 "payment_preimage": self.generate_random_preimage(),
-#                 "hash_algorithm": "sha256",
-#             }
-#         )
-#
-#         # print(f"current i:{i}")
-#         #
-#         order = self.fiber1.get_client().receive_btc(
-#             {"fiber_pay_req": invoice["invoice_address"]}
-#         )
-#         self.LNDs[1].payinvoice(order["incoming_invoice"]["Lightning"])
-#         # self.send_payment(self.fiber1,self.fibers[6],1000,udt=udt_script)
-#
-#     def test_0003(self):
-#         self.fiber1.get_client().get_payment(
-#             {
-#                 "payment_hash": "0xbb9960f03f3cd247e631db3dbef9a8e4014af9ac50decc89d8adc268c928a14a",
-#             }
-#         )
-#
-#     def test_0001(self):
-#         for i in range(5):
-#             self.start_new_mock_fiber("")
-#         udt_script = self.get_account_udt_script(self.fiber1.account_private)
-#         self.send_payment(self.fiber1, self.fibers[5], 100000000, udt=udt_script)
-#
-#     def test_rrr(self):
-#         for i in range(5):
-#             self.start_new_mock_lnd()
-#
-#         payee_lnd = self.LNDs[2]
-#         payee_lnd.ln_cli_with_cmd(
-#             f"decodepayreq lnbcrt1u1p5aelrfpp5x2kwr5s99wws9jtzyxpgl3kc5w8qrm4upvfn25vaag0yp9j7gycsdq8v3jk6mccqzzsxqyz5vqsp582ydrey9mrpu24zncgqkag5a2jmcl0m8vkm8h6wfz79th46n603q9qxpqysgqgljhpknv2mzfrge9lahdk4pzqj2tf7e4dhdg9kkddrxjnmvmkl5zzjurzjfjdwz6yfld3wqayt4srkczh8elu2cv4qrxsqz3f9upd5sqh459f7"
-#         )
-#         #
-#
-#     def test_rs(self):
-#         self.fiber1.stop()
-#         self.fiber1.start()
+import time
+
+from framework.basic_fiber_with_cch import FiberCchTest
+
+
+class TestLongPath(FiberCchTest):
+
+    # LND's production default is 90 seconds; regtest can relay immediately.
+    start_lnd_config = {"lnd_trickle_delay": 100}
+    start_fiber_config = {
+        "cch_base_fee_sats": 0,
+        "cch_fee_rate_per_million_sats": 50000,
+        "cch_btc_final_tlc_expiry_delta_blocks": 720,
+        "cch_ckb_final_tlc_expiry_delta_seconds": 432000,
+    }
+
+    def _wait_lnd_invoice_state(self, lnd, payment_hash, expected, timeout=120):
+        rhash = payment_hash[2:] if payment_hash.startswith("0x") else payment_hash
+        last = None
+        for _ in range(timeout):
+            last = lnd.ln_cli_with_cmd(f"lookupinvoice {rhash}")
+            if last["state"] == expected:
+                return last
+            time.sleep(1)
+        raise TimeoutError(
+            f"LND invoice {payment_hash} did not reach {expected}, last={last}"
+        )
+
+    def _wait_cch_success(self, payment_hash):
+        self.wait_cch_order_state(self.fiber1, payment_hash, "Success", 180)
+        order = self.fiber1.get_client().get_cch_order({"payment_hash": payment_hash})
+        assert order["status"] == "Success"
+        return order
+
+    def _new_fiber_invoice(self, payee, amount_sats, udt_script, description):
+        return payee.get_client().new_invoice(
+            {
+                "amount": hex(amount_sats),
+                "currency": "Fibd",
+                "description": description,
+                "udt_type_script": udt_script,
+                "payment_preimage": self.generate_random_preimage(),
+                "hash_algorithm": "sha256",
+            }
+        )
+
+    def _assert_fiber_invoice_amount(self, fiber, invoice, expected_sats):
+        parsed = fiber.get_client().parse_invoice({"invoice": invoice})
+        assert int(parsed["invoice"]["amount"], 16) == expected_sats
+
+    def _complete_send_btc(self, payer_fiber, payee_lnd, amount_sats):
+        lnd_invoice = payee_lnd.addinvoice(amount_sats, "long-path-send-btc")
+        order = self.fiber1.get_client().send_btc(
+            {
+                "btc_pay_req": lnd_invoice["payment_request"],
+                "currency": "Fibd",
+            }
+        )
+        assert "Fiber" in order["incoming_invoice"]
+        self._assert_fiber_invoice_amount(
+            payer_fiber,
+            order["incoming_invoice"]["Fiber"],
+            int(order["amount_sats"], 16),
+        )
+
+        payment = payer_fiber.get_client().send_payment(
+            {
+                "invoice": order["incoming_invoice"]["Fiber"],
+                "max_fee_rate": hex(1000000000000000),
+            }
+        )
+        assert payment["payment_hash"] == order["payment_hash"]
+        self.wait_payment_state(payer_fiber, payment["payment_hash"], "Success", 600)
+
+        final_order = self._wait_cch_success(payment["payment_hash"])
+        assert int(final_order["amount_sats"], 16) >= amount_sats
+        self._wait_lnd_invoice_state(payee_lnd, payment["payment_hash"], "SETTLED")
+
+    def _complete_receive_btc(
+        self, payer_lnd, payee_fiber, amount_sats, udt_script, description
+    ):
+        invoice = self._new_fiber_invoice(
+            payee_fiber, amount_sats, udt_script, description
+        )
+        order = self.fiber1.get_client().receive_btc(
+            {"fiber_pay_req": invoice["invoice_address"]}
+        )
+        assert "Lightning" in order["incoming_invoice"]
+        self._assert_fiber_invoice_amount(
+            payee_fiber, order["outgoing_pay_req"], amount_sats
+        )
+
+        payer_lnd.payinvoice(order["incoming_invoice"]["Lightning"])
+
+        final_order = self._wait_cch_success(order["payment_hash"])
+        assert int(final_order["amount_sats"], 16) == amount_sats + int(
+            amount_sats * 0.05
+        )
+        self.wait_invoice_state(payee_fiber, order["payment_hash"], "Paid", 120)
+        self._wait_lnd_invoice_state(self.LNDs[0], order["payment_hash"], "SETTLED")
+
+    def test_send_btc_with_receive_btc_long_path_both_sides(self):
+        """Build long paths on both Fiber and LND sides for CCH swaps.
+
+        Covered paths:
+            send_btc: fiberN -> ... -> fiber2 -> fiber1(CCH/LND0) -> LND1 -> ... -> LNDN
+            receive_btc: LNDN -> ... -> LND1 -> LND0(CCH/fiber1) -> fiber2
+            receive_btc: LNDN -> ... -> LND1 -> LND0(CCH/fiber1) -> fiber2 -> ... -> fiberN
+            receive_btc: LND1 -> LND0(CCH/fiber1) -> fiber2 -> ... -> fiberN
+
+        The channel graph is funded in both directions so the receive_btc paths
+        prove long-route delivery instead of only proving order creation.
+        """
+        total_fiber_nodes = 6
+        total_lnd_nodes = 5
+        assert total_fiber_nodes >= 2
+        assert total_lnd_nodes >= 2
+
+        udt_script = self.get_account_udt_script(self.fiber1.account_private)
+        channel_balance = 300 * 100000000
+        payment_amount = 100000
+
+        self.faucet(
+            self.fiber2.account_private,
+            0,
+            self.fiber1.account_private,
+            2000 * 100000000,
+        )
+        fibers = [self.fiber1, self.fiber2]
+        for _ in range(total_fiber_nodes - 2):
+            account_private = self.generate_account(
+                10000,
+                self.fiber1.account_private,
+                2000 * 100000000,
+            )
+            fibers.append(
+                self.start_new_fiber(account_private, fiber_version=self.fiber_version)
+            )
+        self.faucet(
+            self.fiber1.account_private,
+            0,
+            self.fiber1.account_private,
+            5000 * 100000000,
+        )
+
+        # Bidirectional liquidity supports both send_btc incoming and receive_btc outgoing legs.
+        for i in range(len(fibers) - 1):
+            self.open_channel(
+                fibers[i + 1],
+                fibers[i],
+                channel_balance,
+                channel_balance,
+                fiber1_fee=0,
+                fiber2_fee=0,
+                udt=udt_script,
+            )
+
+        lnds = [self.LNDs[0], self.LNDs[1]]
+        for _ in range(total_lnd_nodes - 2):
+            previous_lnd = lnds[-1]
+            new_lnd = self.start_new_lnd()
+            self.faucetBtc(previous_lnd, 5)
+            previous_lnd.open_channel(new_lnd, 1000000, 1, 0)
+            self.btcNode.miner(6)
+            self.faucetBtc(new_lnd, 5)
+            new_lnd.open_channel(previous_lnd, 1000000, 1, 0)
+            self.btcNode.miner(6)
+            lnds.append(new_lnd)
+
+        # Each adjacent pair has two public channels. Wait until every LND sees
+        # both graph edges and their directional policies before routing.
+        lnd_pubkeys = [lnd.getinfo()["identity_pubkey"] for lnd in lnds]
+        expected_channel_pairs = {
+            frozenset((lnd_pubkeys[i], lnd_pubkeys[i + 1]))
+            for i in range(len(lnd_pubkeys) - 1)
+        }
+        graph_sync_timeout = 60
+        graph_sync_deadline = time.monotonic() + graph_sync_timeout
+        last_missing_pairs = {}
+        while time.monotonic() < graph_sync_deadline:
+            last_missing_pairs = {}
+            for index, lnd in enumerate(lnds):
+                graph_edges = lnd.ln_cli_with_cmd("describegraph").get("edges", [])
+                synced_channel_counts = {
+                    channel_pair: 0 for channel_pair in expected_channel_pairs
+                }
+                for edge in graph_edges:
+                    channel_pair = frozenset((edge["node1_pub"], edge["node2_pub"]))
+                    if (
+                        channel_pair in expected_channel_pairs
+                        and edge.get("node1_policy") is not None
+                        and edge.get("node2_policy") is not None
+                    ):
+                        synced_channel_counts[channel_pair] += 1
+                missing_pairs = {
+                    channel_pair: channel_count
+                    for channel_pair, channel_count in synced_channel_counts.items()
+                    if channel_count < 2
+                }
+                if missing_pairs:
+                    last_missing_pairs[index] = missing_pairs
+            if not last_missing_pairs:
+                break
+            time.sleep(1)
+        else:
+            assert False, (
+                "LND graph channels and policies did not sync within "
+                f"{graph_sync_timeout} seconds; "
+                f"ready channel counts below 2 by node: {last_missing_pairs}"
+            )
+
+        for lnd in lnds[1:]:
+            invoice = lnd.addinvoice(1000)
+            self.LNDs[0].payinvoice(invoice["payment_request"])
+
+        farthest_fiber = fibers[-1]
+        farthest_lnd = lnds[-1]
+
+        self.send_payment(farthest_fiber, self.fiber1, 1, True, udt_script)
+        self.send_payment(self.fiber1, farthest_fiber, 1, True, udt_script)
+
+        print(
+            f"CCH long path - Fiber hops={total_fiber_nodes - 1}, "
+            f"LND hops={total_lnd_nodes - 1}"
+        )
+        self._complete_send_btc(farthest_fiber, farthest_lnd, payment_amount)
+        self._complete_receive_btc(
+            farthest_lnd,
+            self.fiber2,
+            payment_amount,
+            udt_script,
+            "long-path-receive-btc-lndN-to-fiber2",
+        )
+        self._complete_receive_btc(
+            farthest_lnd,
+            farthest_fiber,
+            payment_amount,
+            udt_script,
+            "long-path-receive-btc-lndN-to-fiberN",
+        )
+        self._complete_receive_btc(
+            self.LNDs[1],
+            farthest_fiber,
+            payment_amount,
+            udt_script,
+            "long-path-receive-btc-lnd1-to-fiberN",
+        )

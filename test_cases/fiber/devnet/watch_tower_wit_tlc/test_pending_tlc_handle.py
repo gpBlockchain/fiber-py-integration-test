@@ -6,6 +6,8 @@ import pytest
 from framework.basic_fiber import FiberTest
 from framework.util import ckb_hash
 
+COMMIT_CELL_SWEEP_ROUNDS = 10
+
 
 class TestPendingTlcHandle(FiberTest):
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 3}
@@ -792,10 +794,22 @@ class TestPendingTlcHandle(FiberTest):
         )
         force_shutdown_tx_hash = self.wait_and_check_tx_pool_fee(1000, False)
         self.Miner.miner_until_tx_committed(self.node, force_shutdown_tx_hash)
-        while len(self.get_commit_cells()) > 0:
+        for _ in range(COMMIT_CELL_SWEEP_ROUNDS):
+            commit_cells = self.get_commit_cells()
+            if not commit_cells:
+                break
             for i in range(600):
                 self.Miner.miner_with_version(self.node, "0x0")
             time.sleep(10)
+        else:
+            commit_cells = self.get_commit_cells()
+            if commit_cells:
+                raise TimeoutError(
+                    "Commit cells were not consumed after "
+                    f"{COMMIT_CELL_SWEEP_ROUNDS} mining rounds: "
+                    f"tip={self.node.getClient().get_tip_block_number()}, "
+                    f"remaining_commit_cells={commit_cells}"
+                )
         after_balance = self.get_fibers_balance()
         result = self.get_balance_change(before_balance, after_balance)
         tx_trace = self.get_ln_tx_trace(force_shutdown_tx_hash)
@@ -1007,10 +1021,22 @@ class TestPendingTlcHandle(FiberTest):
         )
         force_shutdown_tx_hash = self.wait_and_check_tx_pool_fee(1000, False)
         self.Miner.miner_until_tx_committed(self.node, force_shutdown_tx_hash)
-        while len(self.get_commit_cells()) > 0:
+        for _ in range(COMMIT_CELL_SWEEP_ROUNDS):
+            commit_cells = self.get_commit_cells()
+            if not commit_cells:
+                break
             for i in range(600):
                 self.Miner.miner_with_version(self.node, "0x0")
             time.sleep(10)
+        else:
+            commit_cells = self.get_commit_cells()
+            if commit_cells:
+                raise TimeoutError(
+                    "Commit cells were not consumed after "
+                    f"{COMMIT_CELL_SWEEP_ROUNDS} mining rounds: "
+                    f"tip={self.node.getClient().get_tip_block_number()}, "
+                    f"remaining_commit_cells={commit_cells}"
+                )
         txs = self.get_ln_tx_trace(force_shutdown_tx_hash)
         for tx in txs:
             print("tx:", tx)
@@ -1052,10 +1078,22 @@ class TestPendingTlcHandle(FiberTest):
         )
         force_shutdown_tx_hash = self.wait_and_check_tx_pool_fee(1000, False)
         self.Miner.miner_until_tx_committed(self.node, force_shutdown_tx_hash)
-        while len(self.get_commit_cells()) > 0:
+        for _ in range(COMMIT_CELL_SWEEP_ROUNDS):
+            commit_cells = self.get_commit_cells()
+            if not commit_cells:
+                break
             for i in range(600):
                 self.Miner.miner_with_version(self.node, "0x0")
             time.sleep(10)
+        else:
+            commit_cells = self.get_commit_cells()
+            if commit_cells:
+                raise TimeoutError(
+                    "Commit cells were not consumed after "
+                    f"{COMMIT_CELL_SWEEP_ROUNDS} mining rounds: "
+                    f"tip={self.node.getClient().get_tip_block_number()}, "
+                    f"remaining_commit_cells={commit_cells}"
+                )
         txs = self.get_ln_tx_trace(force_shutdown_tx_hash)
         for tx in txs:
             print("tx:", tx)
@@ -1106,10 +1144,22 @@ class TestPendingTlcHandle(FiberTest):
         )
         force_shutdown_tx_hash = self.wait_and_check_tx_pool_fee(1000, False)
         self.Miner.miner_until_tx_committed(self.node, force_shutdown_tx_hash)
-        while len(self.get_commit_cells()) > 0:
+        for _ in range(COMMIT_CELL_SWEEP_ROUNDS):
+            commit_cells = self.get_commit_cells()
+            if not commit_cells:
+                break
             for i in range(600):
                 self.Miner.miner_with_version(self.node, "0x0")
             time.sleep(20)
+        else:
+            commit_cells = self.get_commit_cells()
+            if commit_cells:
+                raise TimeoutError(
+                    "Commit cells were not consumed after "
+                    f"{COMMIT_CELL_SWEEP_ROUNDS} mining rounds: "
+                    f"tip={self.node.getClient().get_tip_block_number()}, "
+                    f"remaining_commit_cells={commit_cells}"
+                )
         after_balance = self.get_fibers_balance()
         result = self.get_balance_change(before_balance, after_balance)
         tx_trace = self.get_ln_tx_trace(force_shutdown_tx_hash)

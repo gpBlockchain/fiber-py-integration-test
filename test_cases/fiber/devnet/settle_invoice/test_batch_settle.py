@@ -4,6 +4,39 @@ from framework.basic_fiber import FiberTest
 from test_cases.fiber.devnet.settle_invoice.test_settle_invoice import sha256_hex
 
 
+def _wait_all_payments_success(payment_groups, timeout=120):
+    pending = [
+        (fiber, payment_hash)
+        for fiber, payment_hashes in payment_groups
+        for payment_hash in payment_hashes
+    ]
+    deadline = time.monotonic() + timeout
+    last_states = {}
+    while pending and time.monotonic() < deadline:
+        still_pending = []
+        for fiber, payment_hash in pending:
+            client = fiber.get_client()
+            rpc_url = client.url
+            payment = client.get_payment({"payment_hash": payment_hash})
+            last_states[(rpc_url, payment_hash)] = payment["status"]
+            if payment["status"] == "Failed":
+                assert False, f"payment failed on {rpc_url}: {payment}"
+            if payment["status"] != "Success":
+                still_pending.append((fiber, payment_hash))
+        pending = still_pending
+        if pending:
+            time.sleep(1)
+    remaining = [
+        {
+            "rpc_url": fiber.get_client().url,
+            "payment_hash": payment_hash,
+            "status": last_states.get((fiber.get_client().url, payment_hash)),
+        }
+        for fiber, payment_hash in pending
+    ]
+    assert not pending, f"payments timed out after {timeout}s: {remaining}"
+
+
 class BatchSettle(FiberTest):
 
     def test_batch_settle(self):
@@ -27,6 +60,7 @@ class BatchSettle(FiberTest):
             fiber1_invoices = []
             fiber1_preimages = []
             fiber1_invoice_hashes = []
+            fiber3_sent_payment_hashes = []
             for i in range(fiber1_invoice_size):
                 preimage = self.generate_random_preimage()
                 invoice_hash = sha256_hex(preimage)
@@ -48,6 +82,7 @@ class BatchSettle(FiberTest):
             fiber3_invoices = []
             fiber3_preimages = []
             fiber3_invoice_hashes = []
+            fiber1_sent_payment_hashes = []
             for i in range(fiber3_invoice_size):
                 preimage = self.generate_random_preimage()
                 invoice_hash = sha256_hex(preimage)
@@ -66,19 +101,21 @@ class BatchSettle(FiberTest):
                 fiber3_invoice_hashes.append(invoice_hash)
             # fiber3 -> fiber1
             for invoice in fiber1_invoices:
-                self.fiber3.get_client().send_payment(
+                payment = self.fiber3.get_client().send_payment(
                     {
                         "invoice": invoice["invoice_address"],
                     }
                 )
+                fiber3_sent_payment_hashes.append(payment["payment_hash"])
 
             # fiber1 -> fiber3
             for invoice in fiber3_invoices:
-                self.fiber1.get_client().send_payment(
+                payment = self.fiber1.get_client().send_payment(
                     {
                         "invoice": invoice["invoice_address"],
                     }
                 )
+                fiber1_sent_payment_hashes.append(payment["payment_hash"])
 
             # wait all invoice ture receive
             for invoice in fiber3_invoices:
@@ -117,6 +154,14 @@ class BatchSettle(FiberTest):
                 self.wait_invoice_state(
                     self.fiber3, invoice["invoice"]["data"]["payment_hash"], "Paid"
                 )
+
+            _wait_all_payments_success(
+                (
+                    (self.fiber3, fiber3_sent_payment_hashes),
+                    (self.fiber1, fiber1_sent_payment_hashes),
+                )
+            )
+
             time.sleep(10)
             after_balances = self.get_fibers_balance()
             print(
@@ -196,3 +241,41 @@ class BatchSettle(FiberTest):
             )
             assert before_balances[2]["ckb"]["received_tlc_balance"] == 0
             assert after_balances[2]["ckb"]["received_tlc_balance"] == 0
+
+            fiber1_peers = {
+                peer["pubkey"]
+                for peer in self.fiber1.get_client().list_peers()["peers"]
+            }
+            fiber2_peers = {
+                peer["pubkey"]
+                for peer in self.fiber2.get_client().list_peers()["peers"]
+            }
+            fiber3_peers = {
+                peer["pubkey"]
+                for peer in self.fiber3.get_client().list_peers()["peers"]
+            }
+            assert self.fiber2.get_pubkey() in fiber1_peers
+            assert {
+                self.fiber1.get_pubkey(),
+                self.fiber3.get_pubkey(),
+            } <= fiber2_peers
+            assert self.fiber2.get_pubkey() in fiber3_peers
+
+            final_payment_hash = self.send_payment(
+                self.fiber1, self.fiber3, 1 * 100000000
+            )
+            assert (
+                self.fiber1.get_client().get_payment(
+                    {"payment_hash": final_payment_hash}
+                )["status"]
+                == "Success"
+            )
+            reverse_payment_hash = self.send_payment(
+                self.fiber3, self.fiber1, 1 * 100000000
+            )
+            assert (
+                self.fiber3.get_client().get_payment(
+                    {"payment_hash": reverse_payment_hash}
+                )["status"]
+                == "Success"
+            )

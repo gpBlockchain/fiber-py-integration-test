@@ -57,6 +57,11 @@ class FiberConfigPath(Enum):
         "download/fiber/current/fnn.debug",
     )
 
+    ATTACK_DEV = (
+        "/source/fiber/dev_config_3.yml.j2",
+        "download/fiber/attack/fnn",
+    )
+
     CURRENT_MAINNET = (
         "/source/template/fiber/mainnet_config_3.yml.j2",
         "download/fiber/0.9.0/fnn",
