@@ -1,324 +1,155 @@
-# Fiber Network Integration Test
+# Fiber Integration Tests — Agent Guide
 
-## Project Overview
+本仓库使用 Python / pytest 验证 Fiber Network Node（FNN）在 CKB 上的通道、付款、发票、路由、Watchtower 和 CCH 行为。指导原则：**先让人看懂并确认用例，再维护自动化；测试保持简单、直接、易维护。**
 
-Fiber Network Node (FNN) is a Lightning Network implementation on Nervos CKB blockchain. This test project provides Python integration tests covering channel lifecycle, payments, invoices, watchtower, cross-chain hub (CCH), and more.
+## 1. 工作范围与现有状态
 
-For detailed Lightning Network concepts mapped to Fiber, see [docs/references/lightning-concepts.md](docs/references/lightning-concepts.md).
+- 修改前检查 Git 状态，保留已有暂存、未暂存和未跟踪内容；只处理当前请求涉及的文件。
+- 每次只推进一个接口、一组连贯行为或一份评审文档的一个阶段；完成后交接，不自动扩展到其他模块。
+- 先用 `rg` 定位，再读最近的 `AGENTS.md`、相关评审文档、反馈、映射测试和必要的源码片段或 diff。避免全仓库内容转储。
+- 对新用例、评审、映射维护和 PR 测试影响分析使用 `$ai-test-agent`。没有评审或映射工作流的普通单元测试修改按原有风格处理。
 
-## Test Framework Architecture
+## 2. 两份事实来源与目录约定
 
+| 位置 | 职责 |
+| --- | --- |
+| `reviews/` | 全仓库集中存放可供人工判断的行为用例，可按模块分子目录 |
+| `reviews/review-feedback.md` | 记录人工纠正意见、涉及的用例 ID 和可复用约束 |
+| `test_cases/` | 可执行测试；测试附近的 `TEST-MAP` 注释是映射事实来源 |
+| `framework/` | 节点生命周期、RPC 客户端、环境与通道/付款辅助方法 |
+| `scripts/check_test_map.py` | 检查评审 ID、代码映射、孤儿映射和重复评审 ID |
+| `docs/references/` | API、测试模式及背景资料；按需阅读 |
+
+`ai-test-agent` 中的 `suites/<suite>/` 是独立项目的通用布局。本仓库沿用已有的 `test_cases/`，检查器已支持此目录；更新文档或新增映射不触发目录迁移。
+
+- Devnet 测试：`test_cases/fiber/devnet/<category>/test_<feature>.py`。
+- CCH 测试：`test_cases/fiber/cch/`；框架测试：`test_cases/framework/`。
+- Testnet / Mainnet 测试保留在各自现有目录，只在当前用例确有需要时运行。
+- 旧测试不批量补 ID、不搬目录；仅在当前范围接入评审映射。
+- 不新增覆盖率台账、审批状态字段或内部 ID 链。映射数量按需计算，不维护第二份清单。
+
+## 3. 用例评审契约
+
+每个独立可观察行为使用一个稳定 ID，如 `RPC-01`；该 ID 同时就是 Test Point ID。使用下面的精确表头与行格式：
+
+```markdown
+| 用例 | 场景 | 预期结果 | 防止的问题 | 优先级 |
+| --- | --- | --- | --- | --- |
+| `RPC-01` | - [ ] 提交有效请求 | 返回结果并产生一次预期副作用 | 正常请求失败或被重复处理 | P0 |
 ```
-framework/
-├── basic.py              # CkbTest base (unittest.TestCase → CKB node)
-├── basic_fiber.py        # FiberTest base (2 Fiber nodes + helpers)
-├── basic_share_fiber.py  # SharedFiberTest base (shared env across methods)
-├── basic_fiber_with_cch.py  # FiberCchTest (+ BTC + LND for cross-chain)
-├── fiber_rpc.py          # FiberRPCClient (JSON-RPC 2.0)
-├── fnn_cli.py            # FNN CLI wrapper used by fnn-cli integration tests
-├── rpc.py                # RPCClient for CKB
-├── test_cluster.py       # Cluster lifecycle helpers for multi-node tests
-├── test_btc.py           # Bitcoin node lifecycle helpers (CCH)
-├── test_fiber.py         # Fiber node lifecycle
-├── test_lnd.py           # LND node lifecycle helpers (CCH)
-├── test_node.py          # CKB node lifecycle
-├── test_wasm_fiber.py    # WASM Fiber service lifecycle helpers
-├── config.py             # Constants (DEFAULT_MIN_DEPOSIT_CKB = 99 * 100000000)
-├── util.py               # Utilities (run_command, generate_account, change_time)
-└── helper/               # miner.py, ckb_cli.py, contract.py, udt_contract.py, tx.py
-```
 
-**Inheritance**:
+- 每行自包含，写清必要前提、操作和可观察结果；同一操作和判断依据能证明的相关字段合并描述。
+- 场景列以任务复选框开头。新用例从 `- [ ]` 开始；存在匹配的 `TEST-MAP` 时使用 `- [x]`。复选框只表示映射存在，不表示人工确认或测试通过。
+- 优先级：`P0` 为阻断发布的核心行为，`P1` 为重要失败与边界，`P2` 为低影响边缘情况。
+- 产品行为不明确时，在预期结果中写 `待确认：<decision>`；别把当前实现或一次失败当成产品契约。
+- 修改措辞、预期或优先级时保留 ID；仅为新的独立行为新增 ID。
+- 文件路径、实现步骤、证据和运行记录放在表外。表内只用场景复选框显示自动化状态。
+- 参数、状态或协议缩写影响理解时，在表前简述接口输入、状态流转和观察方式。
+- 创建或实质修改用例行、记录纠正反馈时，按需阅读 skill 的 `references/review-cases.md`。
 
-```
-unittest.TestCase → CkbTest → FiberTest → FiberCchTest
-                                  ↓
-                            SharedFiberTest
-```
+## 4. 强制人工确认门禁
 
-- **FiberTest**: Each test method (`setup_method`) starts fresh Fiber nodes, issues UDT, connects peers, then tears down everything in `teardown_method`. Isolated but slow.
-- **SharedFiberTest**: Fiber environment is initialized once in `setup_class` and shared across all test methods. Only `teardown_class` cleans up. Much faster for multi-test classes that build on the same topology.
+对每一批新增、删除或实质修改的用例行：
 
-Each test method auto-gets: CKB dev node (`self.node`), two connected Fiber nodes (`self.fiber1`, `self.fiber2`), UDT contract (`self.udtContract`).
+1. 先编辑完整的本批变更行。
+2. 展示这些行，然后停止；该轮仅交接评审，不修改这些行对应的自动化。
+3. 等待用户对当前行集的明确确认；未指定对象的“继续”不视为确认。
+4. 根据纠正意见更新文档，并在 `reviews/review-feedback.md` 记录相关 ID 与纠正内容。预期发生实质变化时，再次展示并等待确认。
+5. 确认后，下一阶段才生成或同步对应的测试输入、步骤、断言和映射。
 
-### Choosing FiberTest vs SharedFiberTest
+本批未变化且已确认的用例仍可进入自动化阶段。只修改文档不等于代码已对齐；本次只更新指导文档时，不顺带重写评审行或测试。
 
-| Criteria | FiberTest | SharedFiberTest |
-|----------|-----------|-----------------|
-| **Environment lifecycle** | Per-method (fresh each test) | Per-class (shared across tests) |
-| **Speed** | Slow (full setup/teardown per test) | Fast (one-time setup, reused) |
-| **Test isolation** | Full isolation | Tests share state — order may matter |
-| **Use when** | Tests need clean state, destructive ops (force close, revoke) | Multiple tests build on same topology (routing, fee, payment params) |
-| **Extra nodes** | `self.start_new_fiber(key)` in test method | `self.start_new_fiber(key)` in `setUp()` with `_channel_inited` guard |
-| **Cleanup** | Automatic per-method | Automatic per-class |
+## 5. TEST-MAP 与自动化同步
 
-## Writing Tests - Quick Templates
-
-### Template A: FiberTest (isolated per-method environment)
+在已确认用例对应的测试附近使用 Python 原生注释；下例仅展示注释位置，不是待实现的占位测试：
 
 ```python
-import time
-import pytest
-from framework.basic_fiber import FiberTest
-
-class TestMyFeature(FiberTest):
-    # Optional config override
-    # start_fiber_config = {"fiber_auto_accept_amount": "0"}
-
-    def test_basic_scenario(self):
-        self.open_channel(self.fiber1, self.fiber2, 200 * 100000000, 100 * 100000000)
-        payment_hash = self.send_payment(self.fiber1, self.fiber2, 10 * 100000000)
-        result = self.fiber1.get_client().get_payment({"payment_hash": payment_hash})
-        assert result["status"] == "Success"
-
-    def test_error_scenario(self):
-        with pytest.raises(Exception) as exc_info:
-            self.fiber1.get_client().open_channel({
-                "pubkey": self.fiber2.get_pubkey(),
-                "funding_amount": hex(0), "public": True,
-            })
-        assert "should be greater than or equal to" in exc_info.value.args[0]
+# TEST-MAP: RPC-02
+def test_missing_parameter(...):
+    ...
 ```
 
-### Template B: SharedFiberTest (shared environment, one-time topology setup)
+- 无匹配注释：未自动化，场景使用 `- [ ]`；有匹配注释：已映射，使用 `- [x]`。
+- 注释引用未知用例 ID 属于孤儿映射；同一 ID 出现在多条评审行中属于重复 ID，应在相关范围修正。
+- 一个用例有多处映射时，逐一检查对应测试；别因找到第一处就忽略其余输入或断言。
+- 增删映射时，同一变更中同步场景复选框。用例预期变更经确认后，同步所有相关测试，而非只替换注释。
+- 维护现有映射、实现已确认用例或分析 PR 时，按需阅读 skill 的 `references/automation-maintenance.md`。
+- 运行 `python3 scripts/check_test_map.py`；仅在要求全量自动化的范围与检查范围一致时加 `--require-complete`。
+- 当前检查器扫描项目级范围，检查 ID 与映射关系，**不校验复选框或断言语义**。这些仍需检查 diff 和对应测试；退出码 0 不代表测试行为通过。
 
-Use when multiple tests share the same channel topology (routing tests, fee tests, parameter boundary tests).
+## 6. Fiber 测试框架与代码风格
 
-```python
-import pytest
-from framework.basic_share_fiber import SharedFiberTest
-from framework.test_fiber import Fiber
+继承关系：`unittest.TestCase → CkbTest → FiberTest → FiberCchTest`；`SharedFiberTest` 继承 `FiberTest`。
 
-class TestMySharedFeature(SharedFiberTest):
-    # Optional config override
-    # start_fiber_config = {"fiber_auto_accept_amount": "0"}
+| 基类 | 环境生命周期与适用场景 |
+| --- | --- |
+| `FiberTest` | CKB 在类级初始化；Fiber 节点在 `setup_method` / `teardown_method` 创建和清理。适合需要独立 Fiber 状态、强关和重启等场景 |
+| `SharedFiberTest` | CKB / Fiber 环境在类内共享，`teardown_class` 清理。适合复用拓扑的路由、费率、付款参数测试；留意状态污染 |
+| `FiberCchTest` | 在 Fiber 基础上提供 BTC / LND 跨链环境；使用前检查其额外依赖 |
 
-    fiber3: Fiber
-    fiber4: Fiber
+- 常用对象：`self.node`、`self.fiber1`、`self.fiber2`、`self.udtContract`；检查当前基类和配置，不假设整个链状态逐方法重置。
+- 复用 `open_channel`、`send_payment`、`send_invoice_payment`、`wait_payment_state`、`wait_invoice_state` 等已有方法，先核对真实签名。
+- 额外节点使用 `self.start_new_fiber(self.generate_account(...))`。共享拓扑可在 `setUp()` 中用类级 `_channel_inited` 守卫，节点保存在 `self.__class__.fiberN`；拓扑成功建立后再设置守卫。
+- 金额使用 Shannon：`1 CKB = 100000000 Shannon`；RPC 中按接口要求使用 `hex()`。调用 `open_channel` 时传 UDT 使用 `udt=...`，避免与费用位置参数混淆。
+- 每个功能或 PR 回归使用一个文件或类，方法命名为 `test_<scenario>`；文件顶部简短注明行为或 PR。
+- 测试按准备、操作、等待、断言线性展开。只有逻辑确实复用时才抽取辅助方法，优先复用框架而非新增抽象。
+- 本文件专用等待使用有上限的循环、明确间隔和超时失败信息；优先使用匹配语义的现有 `wait_*`。避免无限重试和仅靠长时间 sleep 判断成功。
+- 断言 RPC 结果、通道状态、余额、付款结果及副作用；仅当错误文本本身是契约时断言具体措辞。只要求调用失败时可用 `pytest.raises(Exception)`。
+- 被测操作的重试、断线恢复或最终失败本身是测试目标时，别让辅助方法的自动重试掩盖问题。
+- 空实现、跳过或只有日志的测试不算行为验证；映射注释存在也不改变这一点。
 
-    def setUp(self):
-        """One-time topology setup, guarded by _channel_inited flag."""
-        if getattr(TestMySharedFeature, "_channel_inited", False):
-            return
-        TestMySharedFeature._channel_inited = True
+## 7. PR 影响分析与最小验证
 
-        # Create extra nodes
-        self.__class__.fiber3 = self.start_new_fiber(self.generate_account(10000))
-        self.__class__.fiber4 = self.start_new_fiber(self.generate_account(10000))
+1. 明确被测源码仓库、实际基准和目标提交；对已定位的源码 diff 分析，不硬编码 `develop` 或旧源码路径。
+2. 将变更落到对应功能目录：通道生命周期、付款/路由、连接、发票、图/gossip、Watchtower 或 CCH。
+3. 从相关评审 ID 查找全部映射测试，判断现有预期与断言是否仍适用。需要新增、删除或实质修改用例时，回到人工确认门禁。
+4. 先运行最小确定性或聚焦测试，再运行映射检查；聚焦测试通过且范围有必要时，才扩大到一个相关套件。
 
-        # Build topology: fiber1 -- fiber2 -- fiber3 -- fiber4
-        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 0)
-        self.open_channel(self.fiber2, self.fiber3, 1000 * 100000000, 0)
-        self.open_channel(self.fiber3, self.fiber4, 1000 * 100000000, 0)
-
-    def test_multi_hop_payment(self):
-        payment_hash = self.send_payment(self.fiber1, self.fiber4, 1 * 100000000)
-        result = self.fiber1.get_client().get_payment({"payment_hash": payment_hash})
-        assert result["status"] == "Success"
-
-    def test_dry_run_fee(self):
-        payment = self.fiber1.get_client().send_payment({
-            "target_pubkey": self.fiber4.get_client().node_info()["pubkey"],
-            "amount": hex(1 * 100000000),
-            "keysend": True,
-            "dry_run": True,
-        })
-        assert int(payment["fee"], 16) > 0
-```
-
-**Key pattern**: `setUp()` (unittest-style, called before each test) + `_channel_inited` class-level flag ensures topology is built only once. Use `self.__class__.fiberN` to store extra nodes on the class.
-
-## Key Helper Methods
-
-| Method | Purpose |
-|--------|---------|
-| `self.open_channel(f1, f2, bal1, bal2, udt=None)` | Open channel with balances |
-| `self.send_payment(f1, f2, amount)` | Keysend with retry |
-| `self.send_invoice_payment(f1, f2, amount)` | Invoice payment with retry |
-| `self.wait_for_channel_state(client, pubkey, state)` | Wait channel state |
-| `self.wait_payment_state(fiber, hash, status)` | Wait payment Success/Failed |
-| `self.wait_invoice_state(client, hash, status)` | Wait invoice status |
-| `self.generate_account(ckb_balance)` | Create funded account |
-| `self.start_new_fiber(private_key)` | Start fiber3, fiber4, ... |
-| `self.generate_random_preimage()` | Random 32-byte hex |
-| `self.get_fiber_balance(fiber)` | Chain + channel balances |
-| `self.wait_and_check_tx_pool_fee(rate, check)` | Wait for tx in pool |
-| `self.get_ln_tx_trace(tx_hash)` | Trace on-chain LN txs |
-
-**Amounts**: All in Shannon (1 CKB = 100000000). Use `hex()` for RPC.
-
-**States**: Channel: `NEGOTIATING_FUNDING → CHANNEL_READY → SHUTTING_DOWN → CLOSED`. Payment: `Created → Inflight → Success/Failed`. Invoice: `Open → Received → Paid/Cancelled/Expired`.
-
-For complete API reference, see [docs/references/api-reference.md](docs/references/api-reference.md).
-For detailed test patterns, see [docs/references/test-patterns.md](docs/references/test-patterns.md).
-
-## Test style: simple, obvious, easy to maintain
-
-New and refactored integration tests should be **straightforward** (“stupid” is good): a reader should follow the flow without hunting through helpers or clever abstractions.
-
-- **Linear setup and assertions**: Put steps in `setUp` / test methods in order. Avoid one-off private helpers unless the same logic is reused across tests or files.
-- **Obvious waits**: Prefer a plain `for` loop with `time.sleep(1)` and a clear timeout / `assert False, "…"` message over nested wait utilities when the condition is local to one test file.
-- **Assert behavior, not prose**: Prefer checks on RPC results (e.g. `list_peers`, channel state, payment status). Do not assert on many alternate error substrings unless the product contract requires it; `pytest.raises(Exception)` is acceptable when only “must fail” matters.
-- **Reuse the framework first**: Use `FiberTest` / `SharedFiberTest` helpers (`open_channel`, `send_payment`, `wait_*`, etc.) before adding new shared utilities in `framework/`.
-- **Scope**: One file (or class) per feature or PR regression; a short top-of-file comment naming the PR or behavior is enough—no long essays.
-
----
-
-## Test Coverage Gap Analysis: Fiber vs Bitcoin LND
-
-The following is a systematic comparison between LND's integration test suite (160+ test cases) and Fiber's current coverage (500+ test methods). Gaps are categorized by priority.
-
-For the complete gap analysis with recommended test cases, see [docs/references/gap-analysis.md](docs/references/gap-analysis.md).
-
-### Critical Gaps (P0 - Must Fix)
-
-| Gap Area | LND Coverage | Fiber Status | Impact |
-|----------|-------------|--------------|--------|
-| **Cooperative close with pending TLCs** | `testCoopCloseWithHtlcs`, `testCoopCloseWithHtlcsWithRestart` | `shutdown_channel/` has close-path tests, but pending-TLC coop-close remains only in commented `test_pending_tlc.py` | Fund loss risk |
-| **Channel update tests** | `testUpdateChanStatus`, `testSendUpdateDisableChannel` | `update_channel/` has baseline tests (e.g. `test_update_channel.py`, `test_enabled.py`), but disable/propagation coverage is still limited | Routing broken |
-| **Offline payment delivery** | `testSwitchOfflineDelivery*` (4 tests) | `send_payment/offline/` has restart suites, but some cases are still stubs (`test_disconnect.py` empty, `test_send_payment_with_stop.py` pass) | Payment loss |
-| **Payment error propagation** | `testHtlcErrorPropagation`, `testSendToRouteErrorPropagation` | No dedicated error propagation test | Silent failures |
-| **Channel reestablishment** | `testDataLossProtection` | No channel reestablish test after disconnect | State corruption |
-
-### High Priority Gaps (P1)
-
-| Gap Area | LND Coverage | Fiber Status | Recommended Tests |
-|----------|-------------|--------------|-------------------|
-| **Gossip protocol sync** | `testGraphTopologyNotifications`, `testNodeAnnouncement` | No gossip sync validation tests | Test gossip message propagation, stale message handling |
-| **Payment retry & backoff** | Built-in retry logic (DEFAULT_PAYMENT_TRY_LIMIT=5) | No explicit retry behavior test | Test retry after transient failures, backoff timing |
-| **Max pending channels** | `testMaxPendingChannels` | No test | Test concurrent channel opens exceed limit |
-| **Channel balance accounting** | `testChannelBalance`, `testChannelUnsettledBalance` | Balance checked incidentally, no dedicated test | Test balance accuracy during TLC lifecycle |
-| **Invoice subscription/streaming** | `testInvoiceSubscriptions` | No subscription test | Test real-time invoice state notifications |
-| **List payments query** | `testListPayments` | Only `get_payment` tested | Test payment history query, filtering |
-| **Connection timeout** | `testNetworkConnectionTimeout` | No timeout test | Test peer connection timeout behavior |
-| **Reconnect after address change** | `testReconnectAfterIPChange` | No IP change test | Test node reconnection after address update |
-
-### Medium Priority Gaps (P2)
-
-| Gap Area | LND Coverage | Fiber Status | Recommended Tests |
-|----------|-------------|--------------|-------------------|
-| **Revoked close retribution (remote hodl)** | `testRevokedCloseRetributionRemoteHodl` | `test_revert_tx.py` covers basic case only | Test with pending TLCs during revoked close |
-| **Circuit persistence** | `testSwitchCircuitPersistence` | No test | Test payment circuit survives node restart |
-| **Payment address mismatch** | `testWrongPaymentAddr` | No test | Test payment with wrong payment secret |
-| **Funding expiry edge cases** | `testFundingExpiryBlocksOnPending`, `testFundingManagerFundingTimeout` | `test_funding_timeout.py` basic only | Test various funding timeout scenarios |
-| **Max channel size** | `testMaxChannelSize`, `testWumboChannels` | No max size test | Test channel size limits |
-| **Hold invoice persistence** | `testHoldInvoicePersistence` | `test_settle_invoice.py` has restart test | Enhance with multi-hop hold persistence |
-| **Sphinx replay persistence** | `testSphinxReplayPersistence` | No test | Test onion packet replay protection |
-| **Async bidirectional payments** | `testBidirectionalAsyncPayments` | `test_send_payment_each_other` partial | Test high-throughput bidirectional stress |
-| **Fee estimation (route)** | `testEstimateRouteFee` | `test_dry_run.py` basic | Enhance dry_run with multi-hop fee estimation |
-
-### Fiber-Specific Gaps (Features in code but not tested)
-
-| Feature | Source Location | Current Test Status |
-|---------|----------------|-------------------|
-| `max_tlc_number_in_flight` enforcement | channel.rs (max 125, system 253) | open_channel test only, no enforcement test during payment |
-| `max_tlc_value_in_flight` enforcement | channel.rs | open_channel test only, no enforcement test during payment |
-| Custom records (max 2KB) | payment.rs | `test_custom_records.py` basic, no overflow test |
-| Trampoline MPP restriction | payment.rs (only 1 hop with MPP) | No test for this constraint |
-| Payment `max_parts` limit | payment.rs (PAYMENT_MAX_PARTS_LIMIT) | `test_max_parts.py` is empty (pass) |
-| Gossip message ordering | gossip.rs | No test |
-| Gossip stale message handling | gossip.rs (SOFT_BROADCAST_MESSAGES_CONSIDERED_STALE_DURATION) | No test |
-| Watchtower external (standalone) | config: standalone_watchtower_rpc_url | No test |
-| CCH order expiry | cch/ (DEFAULT_ORDER_EXPIRY_DELTA_SECONDS) | No test |
-| CCH order pruning | cch/ (PRUNE_DELAY_SECONDS = 21 days) | No test |
-| CCH fee calculation | cch/ (base_fee_sats, fee_rate_per_million_sats) | No test |
-| Biscuit token time-based validation | rpc/biscuit.rs | No time-based auth test |
-| Channel funding_timeout_seconds | channel.rs | Basic test, no edge cases |
-| TLC waiting ACK timeout (30s) | channel.rs | No test |
-| Commitment number sequence validation | channel.rs | No test |
-| Network max_service_protocol_data_size (130KB) | network.rs | No test |
-| Payment session retry from Failed state | payment.rs | No test |
-| Graph cursor pagination | graph.rs (default 500) | `test_graph_nodes.py` tests pagination, graph_channels not tested |
-
----
-
-## Writing New Tests for PR Regression
-
-When a new PR lands, follow this workflow:
-
-### 1. Identify Changed Components
+在仓库根目录使用项目现有 Python 环境执行，例如：
 
 ```bash
-# Check what changed
-git diff develop..PR_BRANCH --stat
-# Focus on fiber-lib/src/ changes
-git diff develop..PR_BRANCH -- fiber/fiber-lib/src/
-```
+# 已有单条 devnet 用例（会启动本地节点）
+python -m pytest test_cases/fiber/devnet/open_channel/test_funding_amount.py::FundingAmount::test_funding_amount_ckb_is_zero -v -s
 
-### 2. Map Changes to Test Categories
+# 映射检查，不启动节点
+python3 scripts/check_test_map.py
 
-| Changed File | Test Directory |
-|-------------|---------------|
-| `fiber/channel.rs` | `open_channel/`, `shutdown_channel/`, `update_channel/`, `list_channels/` |
-| `fiber/payment.rs` | `send_payment/`, `send_payment_with_router/` |
-| `fiber/network.rs` | `connect_peer/`, `disconnect_peer/`, general integration |
-| `fiber/invoice.rs` | `new_invoice/`, `get_invoice/`, `settle_invoice/`, `cancel_invoice/` |
-| `fiber/graph.rs` | `graph_channels/`, `graph_nodes/`, `build_router/`, `send_payment/path/` |
-| `fiber/gossip.rs` | `graph_channels/`, `graph_nodes/` (gossip sync) |
-| `watchtower/` | `watch_tower/`, `watch_tower_wit_tlc/`, `watch_tower_debug/` |
-| `cch/` | `cch/` |
-| `rpc/` | Corresponding feature directory |
-
-### 3. Test Template for New PR
-
-```python
-import time
-import pytest
-from framework.basic_fiber import FiberTest
-
-class TestPR<number>(FiberTest):
-    """
-    PR-<number>: <title>
-    Test coverage for: <brief description of changes>
-    """
-
-    def test_<feature>_happy_path(self):
-        """Test the normal/expected behavior introduced by this PR."""
-        # Setup
-        self.open_channel(self.fiber1, self.fiber2, 200 * 100000000, 100 * 100000000)
-        # Execute the new feature
-        # Assert expected behavior
-
-    def test_<feature>_edge_case(self):
-        """Test boundary conditions."""
-        pass
-
-    def test_<feature>_error_handling(self):
-        """Test error cases."""
-        with pytest.raises(Exception) as exc_info:
-            # Trigger error condition
-            pass
-        assert "expected error" in exc_info.value.args[0]
-
-    def test_<feature>_backward_compatible(self):
-        """Ensure existing functionality still works."""
-        pass
-```
-
-### 4. Test Naming Convention
-
-- File: `test_cases/fiber/devnet/<category>/test_<feature>.py`
-- Class: `Test<Feature>(FiberTest)` or `<FeatureName>(FiberTest)`
-- Method: `test_<scenario_description>(self)`
-
-### 5. CI Integration
-
-Add new test to `Makefile` test targets if new category. Existing categories auto-discover.
-
----
-
-## Running Tests
-
-```bash
-# Specific test
-pytest test_cases/fiber/devnet/open_channel/test_funding_amount.py -v -s
-
-# Specific method
-pytest test_cases/fiber/devnet/open_channel/test_funding_amount.py::FundingAmount::test_funding_amount_ckb_is_zero -v -s
-
-# All devnet
+# 仅当范围确有需要时运行 Makefile 已列出的测试目录
 make fiber_test
+```
 
-# With HTML report
-python -m pytest test_cases/fiber/devnet/ --html=report/report.html
+- 运行前检查当前 Python 环境、所需节点二进制、端口和数据目录；保留无关运行环境。
+- 新测试放入现有分类时检查 pytest 发现规则；新增分类需检查 `Makefile` 的显式目录列表及相关 CI，不假设全目录自动接入。
+- 文档专用改动检查内容、链接与 diff，并运行映射检查即可；无需启动节点或跑完整 devnet。
+- 映射检查发现既有问题时，区分原有问题与本次回归，不跨范围修改其他评审文档。
+- 仅在用例需要时访问实时网络，重试有界；持续不可用时报告残余风险。CI 默认只检查一次，持续等待需用户明确要求。
+- 报告实际命令、关键原始输出和退出码；区分未运行、环境失败、断言失败与成功，不把收集成功当成执行成功。
+
+## 8. 按需参考与简短交接
+
+### 外部背景资料
+
+- **合约**：[nervosnetwork/fiber-scripts](https://github.com/nervosnetwork/fiber-scripts)。查阅 Fiber 链上合约，包括 `funding-lock`、`commitment-lock`，以及合约测试和部署资料。
+- **节点代码**：[nervosnetwork/fiber](https://github.com/nervosnetwork/fiber)。查阅 FNN 实现、RPC 与 P2P 协议文档，分析被测行为及 PR 影响。
+- **P2P 测试**：[gpBlockchain/fiber · p2p-tap](https://github.com/gpBlockchain/fiber/tree/p2p-tap)。本项目指定的 P2P 测试代码参考分支；具体测试扩展与使用方法以该分支代码为准。
+
+分析前确认实际使用的仓库、分支或提交，以及节点二进制和合约版本；区分上游节点实现与 `p2p-tap` 测试分支的差异，不把测试专用行为当作上游协议契约。只读取当前用例所需内容，不因补充资料自动克隆、切换或更新这些仓库。
+
+### 本仓库参考
+
+- [API 与辅助方法](docs/references/api-reference.md)
+- [测试模式](docs/references/test-patterns.md)
+- [Lightning / Fiber 概念](docs/references/lightning-concepts.md)
+- [历史覆盖缺口分析](docs/references/gap-analysis.md)：仅作候选线索，使用前核对当前源码、评审与测试，不在本文件维护容易过期的缺口列表。
+
+交接只报告相关字段，省略无关项，不重复未变化的用例表：
+
+```text
+Scope: 本次接口、行为、文档或 PR
+Changed cases: ID 与预期变化
+Added automation: 按相同原因或判断依据分组，单列例外
+Coverage: 已映射/已评审；未映射 ID（映射不等于通过）
+Verification: 命令 -> 关键原始输出及退出码
+Residual risk: 待确认、人工项、环境限制或无
+Next gate: 需要确认的具体行集或下一步操作
 ```
