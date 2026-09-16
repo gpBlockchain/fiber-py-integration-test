@@ -8,6 +8,9 @@ Each test method gets:
 - ``self.channel_id``: a ChannelReady channel (unless ``auto_open_channel``
   is set to False)
 
+Debug reruns only attach to retained nodes and read existing channels, even if
+they are no longer ready. No channel is created when none remains.
+
 Write a new scenario like this::
 
     from framework.basic_p2p import P2pFiberTest
@@ -53,7 +56,9 @@ class P2pFiberTest(FiberTest):
     fiber2_p2p_port = 18230
     extra_fiber_rpc_port = 18251
     extra_fiber_p2p_port = 18402
-    fnn_log_level = "error"
+    extra_mock_fiber_rpc_port = 18251
+    extra_mock_fiber_p2p_port = 18402
+    fnn_log_level = "debug"
     attacker_auto_accept = True
     channel_local_balance = 200 * 100000000
     channel_remote_balance = 0
@@ -67,6 +72,17 @@ class P2pFiberTest(FiberTest):
     def setup_method(self, method):
         super().setup_method(method)
         self.victim = self.fiber1
+        if self.debug:
+            self.fibers.remove(self.fiber2)
+            self.attacker = self.start_new_mock_fiber(
+                None, fiber_version=FiberConfigPath.ATTACK_DEV
+            )
+            self.peer = P2pPeer(self.attacker)
+            self.channel_id = None
+            self.temporary_channel_id = None
+            if self.auto_open_channel:
+                self.open_ready_channel()
+            return
         # P2P cases use the stock victim plus the debug attacker.  The second
         # stock node created by FiberTest is not part of this topology; release
         # it before starting the attacker so focused fault-injection runs stay
@@ -90,7 +106,26 @@ class P2pFiberTest(FiberTest):
         if self.auto_open_channel:
             self.open_ready_channel()
 
+    def teardown_method(self, method):
+        super().teardown_method(method)
+        if self.first_debug:
+            # Later methods in this class must reattach to the retained nodes.
+            self.__class__.debug = True
+
+    def _existing_channel(self, local, remote):
+        channels = local.get_client().list_channels(
+            {"pubkey": remote.get_pubkey(), "include_closed": True}
+        )["channels"]
+        for channel in channels:
+            if channel["state"]["state_name"] == "ChannelReady":
+                return channel["channel_id"]
+        return channels[0]["channel_id"] if channels else None
+
     def open_ready_channel(self, local=None, remote=None):
+        """Read the retained channel in debug mode; otherwise create a ready one."""
+        if self.debug:
+            self.channel_id = self._existing_channel(self.victim, self.attacker)
+            return self.channel_id
         self.channel_id = self.open_channel(
             self.victim,
             self.attacker,
@@ -246,6 +281,14 @@ class P2pRouterTest(P2pFiberTest):
         super().setup_method(method)
         self.alice = self.victim
         self.router = self.attacker
+        if self.debug:
+            self.bob = self.start_new_mock_fiber(
+                None, fiber_version=FiberConfigPath.CURRENT_DEV
+            )
+            self.ch_alice = self._existing_channel(self.alice, self.router)
+            self.ch_bob = self._existing_channel(self.router, self.bob)
+            self.channel_id = self.ch_alice
+            return
         self.bob = self.start_new_fiber(
             self.generate_account(10000),
             fiber_version=FiberConfigPath.CURRENT_DEV,

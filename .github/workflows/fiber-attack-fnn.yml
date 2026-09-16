@@ -96,7 +96,22 @@ jobs:
 
           cat download/fiber/provenance.env
 
-      - name: Run tests marked requires_attack_fnn
+      - name: Run pending TLC on-chain settlement regressions
+        run: |
+          set -euo pipefail
+          mkdir -p attack-fnn-artifacts
+          cp download/fiber/provenance.env attack-fnn-artifacts/
+          ./venv/bin/python -m pytest \
+            -o addopts= \
+            --strict-markers \
+            -vv -s --tb=short \
+            --junitxml=attack-fnn-artifacts/onchain-settlement-junit.xml \
+            -m requires_attack_fnn \
+            test_cases/fiber/devnet/security/test_announce_wait_prev_ack_onchain_panic.py \
+            test_cases/fiber/devnet/security/test_stale_commitment_raa_pending_tlc_stuck.py \
+            2>&1 | tee attack-fnn-artifacts/onchain-settlement-pytest.log
+
+      - name: Run remaining tests marked requires_attack_fnn
         run: |
           set -euo pipefail
           mkdir -p attack-fnn-artifacts
@@ -107,6 +122,8 @@ jobs:
             -vv -s --tb=short \
             --junitxml=attack-fnn-artifacts/junit.xml \
             -m requires_attack_fnn \
+            --ignore=test_cases/fiber/devnet/security/test_announce_wait_prev_ack_onchain_panic.py \
+            --ignore=test_cases/fiber/devnet/security/test_stale_commitment_raa_pending_tlc_stuck.py \
             test_cases/fiber/devnet/security \
             2>&1 | tee attack-fnn-artifacts/pytest.log
 
