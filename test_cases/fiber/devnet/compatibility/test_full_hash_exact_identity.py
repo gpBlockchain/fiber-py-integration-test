@@ -45,6 +45,7 @@ import socket
 import subprocess
 import tempfile
 import time
+from pathlib import Path
 
 from framework.config import ALWAYS_SUCCESS_CONTRACT_PATH
 from framework.helper.settlement_witness import SettlementWitness
@@ -236,7 +237,7 @@ class TestFullHashExactIdentity(FullHashChannelSupport):
     # ------------------------------------------------------- negative control A
 
     def always_success_lock(self):
-        data = ALWAYS_SUCCESS_CONTRACT_PATH.read_bytes()
+        data = Path(ALWAYS_SUCCESS_CONTRACT_PATH).read_bytes()
         return {
             "code_hash": ckb_hash("0x" + data.hex()),
             "hash_type": "data",
@@ -256,7 +257,7 @@ class TestFullHashExactIdentity(FullHashChannelSupport):
             key=lambda cell: int(float(str(cell["capacity"]).split()[0]) * CKB),
         )
 
-    def send_account_tx(self, private_key, outputs, outputs_data):
+    def send_account_tx(self, private_key, input_cell, outputs, outputs_data):
         fd, tx_file = tempfile.mkstemp(prefix="exact-identity-", suffix=".json")
         os.close(fd)
         try:
@@ -264,6 +265,15 @@ class TestFullHashExactIdentity(FullHashChannelSupport):
             account = self.Ckb_cli.util_key_info_by_private_key(private_key)
             self.Ckb_cli.tx_add_multisig_config(
                 account["address"]["testnet"], tx_file, self.node.rpcUrl
+            )
+            # Spend the wallet cell explicitly: with no input, tx_sign_inputs has
+            # nothing to sign and returns an empty signature list. tx_add_input
+            # also registers the secp256k1 cell dep this input needs.
+            self.Ckb_cli.tx_add_input(
+                input_cell["tx_hash"],
+                int(input_cell["output_index"]),
+                tx_file,
+                self.node.rpcUrl,
             )
             for output, output_data in zip(outputs, outputs_data):
                 self.Ckb_cli.tx_add_output(output, output_data, tx_file)
@@ -290,32 +300,49 @@ class TestFullHashExactIdentity(FullHashChannelSupport):
         transaction consumes no watched outpoint. See the module docstring for
         what this control does and does not prove.
         """
-        budget = FAKE_CELL_CAPACITY + 10 * CKB
+        # An always-success locked input is only valid when the transaction also
+        # carries the always-success code itself as a code dep (hash_type "data"),
+        # so the funding tx has to mint that code cell on chain first.
+        code_data = Path(ALWAYS_SUCCESS_CONTRACT_PATH).read_bytes()
+        code_capacity = (len(code_data) + 100) * CKB
+        # The wallet-locked outputs (code cell and change) each occupy 61 CKB, so
+        # the funding must cover them, not just FAKE_CELL_CAPACITY + fee.
+        budget = FAKE_CELL_CAPACITY + code_capacity + 100 * CKB
         private_key = self.generate_account(budget // CKB)
         account_lock = self.get_account_script(private_key)
         source = self.largest_wallet_cell(private_key)
         source_capacity = int(float(str(source["capacity"]).split()[0]) * CKB)
-        assert source_capacity > FAKE_CELL_CAPACITY + CKB, source
+        assert source_capacity > FAKE_CELL_CAPACITY + code_capacity + CKB, source
         funding_tx = self.send_account_tx(
             private_key,
+            source,
             [
                 {
                     "capacity": hex(FAKE_CELL_CAPACITY),
                     "lock": self.always_success_lock(),
                 },
                 {
-                    "capacity": hex(source_capacity - FAKE_CELL_CAPACITY - FAKE_TX_FEE),
+                    "capacity": hex(code_capacity),
+                    "lock": account_lock,
+                },
+                {
+                    "capacity": hex(
+                        source_capacity
+                        - FAKE_CELL_CAPACITY
+                        - code_capacity
+                        - FAKE_TX_FEE
+                    ),
                     "lock": account_lock,
                 },
             ],
-            ["0x", "0x"],
+            ["0x", "0x" + code_data.hex(), "0x"],
         )
         self.Miner.miner_until_tx_committed(self.node, funding_tx)
         fake_tx = {
             "version": "0x0",
             "cell_deps": [
                 {
-                    "out_point": {"tx_hash": funding_tx, "index": "0x0"},
+                    "out_point": {"tx_hash": funding_tx, "index": "0x1"},
                     "dep_type": "code",
                 }
             ],
@@ -551,11 +578,36 @@ class TestFullHashExactIdentity(FullHashChannelSupport):
     # 8) 负对照 A：提交一笔消费无关 always-success cell、却携带同前缀“结算 witness”副本的交易，
     #    它不消费被监控 outpoint，B 的状态不得改变（局限见模块 docstring）。
     # 9) 负对照 B：节点持久化快照没有 RPC 观测点，不做日志抓取式伪造，明确记为未实现。
-    def test_v1_prefix_pair_keeps_exact_identity(self):
-        settlement, hash_a, hash_b = self.exact_identity_case("v1")
-        self.submit_unwatched_same_prefix_settlement(settlement)
+    def sibling_status(self, hash_b):
+        """Observable state of the untouched sibling B: TLC + payment + invoice."""
+        return {
+            "tlc": self.tlc_of(self.fiber2, hash_b)["status"],
+            "payment": self.fiber1.get_client().get_payment(
+                {"payment_hash": hash_b}
+            )["status"],
+            "invoice": self.fiber2.get_client().get_invoice(
+                {"payment_hash": hash_b}
+            )["status"],
+        }
+
+    def assert_control_leaves_sibling_unchanged(self, checkpoint, hash_b, description):
+        """Negative control A must leave B's observable state byte-identical.
+
+        B has already followed its own preimage-free timeout lifecycle before this
+        point, so the confirmed contract (review H32V2-13: "无关交易/快照不改变
+        状态") is "nothing changes", not "B is still pending".
+        """
+        before = self.sibling_status(hash_b)
+        self.submit_unwatched_same_prefix_settlement(checkpoint)
         self.watchtower_rounds(3)
-        self.assert_sibling_survives(hash_a, hash_b, "负对照 A 上链后")
+        after = self.sibling_status(hash_b)
+        assert after == before, (
+            f"{description}: 无关同前缀交易改变了 B 的状态: {before} -> {after}"
+        )
+
+    def test_v1_prefix_pair_keeps_exact_identity(self):
+        settlement, _hash_a, hash_b = self.exact_identity_case("v1")
+        self.assert_control_leaves_sibling_unchanged(settlement, hash_b, "负对照 A 上链后")
 
     # TEST-MAP: H32V2-13
     # TEST-EVIDENCE-BEGIN: H32V2-13

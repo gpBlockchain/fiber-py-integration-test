@@ -6,6 +6,7 @@ import socket
 import subprocess
 import time
 
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 from test_cases.fiber.devnet.compatibility.contract_upgrade_support import (
     CKB,
     NEW_CONTRACT,
@@ -89,7 +90,9 @@ class TestFullHashPersistence(ContractUpgradeSupport):
         outpoint = bytes.fromhex(channels[0]["channel_outpoint"][2:])
         assert outpoint[32:] == bytes(4)
         self.funding_tx = "0x" + outpoint[:32].hex()
-        self.principals = [int(c["local_balance"], 16) + 100 * CKB for c in channels]
+        self.principals = [
+            int(c["local_balance"], 16) + DEFAULT_MIN_DEPOSIT_CKB for c in channels
+        ]
         self.wallet_before = self.wallet_balances()
         preimage = "0x" + secrets.token_hex(32)
         payment_hash = "0x" + hashlib.sha256(bytes.fromhex(preimage[2:])).hexdigest()

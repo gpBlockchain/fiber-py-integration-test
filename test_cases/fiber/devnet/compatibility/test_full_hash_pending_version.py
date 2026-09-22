@@ -29,6 +29,7 @@ import socket
 import subprocess
 import time
 
+from framework.config import DEFAULT_MIN_LEDGER_DEPOSIT_CKB
 from framework.test_fiber import FiberConfigPath
 from test_cases.fiber.devnet.compatibility.contract_upgrade_support import (
     CKB,
@@ -205,7 +206,9 @@ class TestFullHashPendingVersion(ContractUpgradeSupport):
         return sender.get_client().open_channel(
             {
                 "pubkey": receiver.get_pubkey(),
-                "funding_amount": hex(1099 * CKB),
+                "funding_amount": hex(
+                    1000 * CKB + DEFAULT_MIN_LEDGER_DEPOSIT_CKB
+                ),
                 "public": True,
             }
         )

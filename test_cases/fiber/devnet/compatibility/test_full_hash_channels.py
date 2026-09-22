@@ -12,6 +12,10 @@ import subprocess
 import time
 
 from framework.basic_fiber import COMMIT_LOCK_CODE_HASH
+from framework.config import (
+    DEFAULT_MIN_DEPOSIT_CKB,
+    DEFAULT_MIN_LEDGER_DEPOSIT_CKB,
+)
 from framework.test_fiber import FiberConfigPath
 from framework.util import ckb_hash
 from framework.helper.settlement_witness import SettlementWitness
@@ -131,7 +135,9 @@ class TestFullHashChannels(ContractUpgradeSupport):
                 [
                     {
                         "pubkey": self.fiber2.get_pubkey(),
-                        "funding_amount": hex(1099 * CKB),
+                        "funding_amount": hex(
+                            1000 * CKB + DEFAULT_MIN_LEDGER_DEPOSIT_CKB
+                        ),
                         "public": True,
                         "shutdown_script": funding_lock,
                         "funding_lock_script": funding_lock,
@@ -173,7 +179,11 @@ class TestFullHashChannels(ContractUpgradeSupport):
         self.funding_tx = "0x" + outpoint[:32].hex()
         self.signed_hashes = [c["latest_commitment_transaction_hash"] for c in channels]
         if udt is None:
-            reserve = (100 if self.commitment_version == "v1" else 99) * CKB
+            reserve = (
+                DEFAULT_MIN_DEPOSIT_CKB
+                if self.commitment_version == "v1"
+                else DEFAULT_MIN_LEDGER_DEPOSIT_CKB
+            )
             self.principals = [int(c["local_balance"], 16) + reserve for c in channels]
             self.wallet_before = self.wallet_balances()
             return
@@ -310,9 +320,12 @@ class TestFullHashChannels(ContractUpgradeSupport):
                         )
         # xUDT 转账本身不计费，收款人净增量恰为 TLC 金额。
         assert net == [0, amount], net
-        # 只有本次花费留下了派生承诺 cell 才断言其仍 live；收尾那笔的 output 0 不是
-        # commitment-lock，会被后续 sweep 立刻花掉，由 assert_settled_udt 核对。
-        if tx["outputs"][0]["lock"]["code_hash"] == COMMIT_LOCK_CODE_HASH:
+        # 派生 cell 里还有未结算 TLC 时节点不能 sweep 它，必然 live；收尾那笔（本次结算后
+        # 不再有待结算 TLC）的派生 cell 会被随即 sweep，CKB 0.202 对已花费的承诺 cell 返回
+        # "unknown" 而不是 "dead"，其去向由 assert_settled_udt 的 sweep 断言核对，不能在这里
+        # 要求 live。注意 output 0 恒为 commitment-lock（见上方 assert），不能拿它的 code_hash
+        # 当“是否收尾”的判断依据。
+        if len(pending) > 1:
             assert self.ckb.get_live_cell("0x0", tx["hash"])["status"] == "live"
         self.assert_nodes_running()
 
@@ -622,7 +635,9 @@ class TestFullHashChannels(ContractUpgradeSupport):
         request = self.fiber1.get_client().open_channel(
             {
                 "pubkey": self.fiber2.get_pubkey(),
-                "funding_amount": hex(1099 * CKB),
+                "funding_amount": hex(
+                    1000 * CKB + DEFAULT_MIN_LEDGER_DEPOSIT_CKB
+                ),
                 "public": True,
             }
         )
@@ -712,9 +727,14 @@ class TestFullHashChannels(ContractUpgradeSupport):
                 self.open_ready()
                 # H32V2-19：普通开通（短锁 CKB）后，链上 funding 容量减去两端可结算余额，必须
                 # 恰好等于两端各自预留的一份（occupied capacity + shutdown fee）。
-                # 本拓扑两端都会出资/自动接受（发起方 1099 CKB = 1000 + DEFAULT_MIN_DEPOSIT_CKB，
-                # 接收方自动出资 100 CKB），因此预留共 2 份；若将来有一端不出资，这里需按实际端数改。
-                reserve = (100 if version == "v1" else 99) * CKB
+                # 本拓扑两端都会出资/自动接受（发起方 1099 CKB = 1000 +
+                # DEFAULT_MIN_LEDGER_DEPOSIT_CKB，接收方自动出资 100 CKB），
+                # 因此预留共 2 份；若将来有一端不出资，这里需按实际端数改。
+                reserve = (
+                    DEFAULT_MIN_DEPOSIT_CKB
+                    if version == "v1"
+                    else DEFAULT_MIN_LEDGER_DEPOSIT_CKB
+                )
                 funding_capacity = int(
                     self.ckb.get_transaction(self.funding_tx)["transaction"]["outputs"][
                         0
@@ -729,7 +749,8 @@ class TestFullHashChannels(ContractUpgradeSupport):
                 assert locked == 2 * reserve, (
                     f"{version}: funding {funding_capacity} - Σlocal {sum(locals_.values())} = "
                     f"{locked}，期望 2×{reserve}（两端各一份 "
-                    f"{100 if version == 'v1' else 99} CKB 预留）; local_balances={locals_}"
+                    f"{DEFAULT_MIN_DEPOSIT_CKB if version == 'v1' else DEFAULT_MIN_LEDGER_DEPOSIT_CKB} CKB 预留）; "
+                    f"local_balances={locals_}"
                 )
                 payment_hash, preimage = self.hold_one_payment()
                 self.settle_held_channel(code_tx, payment_hash, preimage)

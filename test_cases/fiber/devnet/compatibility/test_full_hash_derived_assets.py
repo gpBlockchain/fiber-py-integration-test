@@ -10,6 +10,7 @@ import socket
 import time
 
 from framework.basic_fiber import COMMIT_LOCK_CODE_HASH
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 from framework.helper.settlement_witness import SettlementWitness
 from framework.util import ckb_hash
 from test_cases.fiber.devnet.compatibility.contract_upgrade_support import (
@@ -228,7 +229,7 @@ class TestFullHashDerivedAssets(ContractUpgradeSupport):
         self.funding_tx = "0x" + point[:32].hex()
         # 期望本金必须与链上 funding 输出的本资产金额自洽，而不是写死的数字。
         principals = [
-            int(c["local_balance"], 16) + (100 * CKB if udt is None else 0)
+            int(c["local_balance"], 16) + (DEFAULT_MIN_DEPOSIT_CKB if udt is None else 0)
             for c in channels
         ]
         funding = self.ckb.get_transaction(self.funding_tx)["transaction"]

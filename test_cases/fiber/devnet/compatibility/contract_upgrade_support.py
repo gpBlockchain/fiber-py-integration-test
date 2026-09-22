@@ -15,6 +15,10 @@ from framework.basic_fiber import (
     TYPE_CONTRACT_CODE_HASH,
 )
 from framework.basic_share_fiber import SharedFiberTest
+from framework.config import (
+    DEFAULT_MIN_DEPOSIT_CKB,
+    DEFAULT_MIN_LEDGER_DEPOSIT_CKB,
+)
 from framework.helper.settlement_witness import SettlementWitness
 from framework.util import ckb_hash, get_project_root
 
@@ -42,6 +46,25 @@ def tlc_is_terminal(tlc):
         {"Outbound": "RemoveAckConfirmed"},
         {"Inbound": "RemoveAckConfirmed"},
     )
+
+
+def process_start_marker(pid):
+    """A process-start identity that survives the intentional system-clock jumps.
+
+    `ps -o lstart=` is derived from the wall clock, so the H32V2-10/25 tests that
+    step the system time forward would make every node look restarted. Linux
+    exposes a boot-relative start tick in /proc, which is immune to that; only
+    fall back to the wall-clock rendering where /proc is unavailable (macOS).
+    """
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        # Field 22 is starttime in clock ticks since boot; comm may itself contain
+        # spaces and parentheses, so take the fields after the last ')'.
+        return "starttime:" + stat.rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        return subprocess.check_output(
+            ["ps", "-p", pid, "-o", "lstart="], text=True
+        ).strip()
 
 
 class ContractUpgradeSupport(SharedFiberTest):
@@ -257,7 +280,10 @@ class ContractUpgradeSupport(SharedFiberTest):
                 f"{fiber.tmp_path} args={len(args)} lock={lock}"
             )
         # 57 字节 Legacy 布局对应 99 CKB 预留；布局本身由链上承诺交易核对。
-        self.principals = [int(c["local_balance"], 16) + 99 * CKB for c in channels]
+        self.principals = [
+            int(c["local_balance"], 16) + DEFAULT_MIN_LEDGER_DEPOSIT_CKB
+            for c in channels
+        ]
         self.wallet_before = self.wallet_balances()
 
     def force_close(self, fiber):
@@ -376,10 +402,7 @@ class ContractUpgradeSupport(SharedFiberTest):
             pid = subprocess.check_output(
                 ["lsof", "-nP", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"], text=True
             ).strip()
-            started = subprocess.check_output(
-                ["ps", "-p", pid, "-o", "lstart="], text=True
-            ).strip()
-            processes.append((pid, started))
+            processes.append((pid, process_start_marker(pid)))
         return processes
 
     def assert_nodes_running(self):
@@ -420,7 +443,9 @@ class FullHashChannelSupport(ContractUpgradeSupport):
                 [
                     {
                         "pubkey": self.fiber2.get_pubkey(),
-                        "funding_amount": hex(1099 * CKB),
+                        "funding_amount": hex(
+                            1000 * CKB + DEFAULT_MIN_LEDGER_DEPOSIT_CKB
+                        ),
                         "public": True,
                         "shutdown_script": funding_lock,
                         "funding_lock_script": funding_lock,
@@ -459,7 +484,11 @@ class FullHashChannelSupport(ContractUpgradeSupport):
         assert outpoint[32:] == bytes(4)
         self.funding_tx = "0x" + outpoint[:32].hex()
         self.signed_hashes = [c["latest_commitment_transaction_hash"] for c in channels]
-        reserve = (100 if self.commitment_version == "v1" else 99) * CKB
+        reserve = (
+            DEFAULT_MIN_DEPOSIT_CKB
+            if self.commitment_version == "v1"
+            else DEFAULT_MIN_LEDGER_DEPOSIT_CKB
+        )
         self.principals = [int(c["local_balance"], 16) + reserve for c in channels]
         self.wallet_before = self.wallet_balances()
 

@@ -15,7 +15,7 @@ import socket
 import subprocess
 import time
 
-from framework.config import get_tmp_path
+from framework.config import DEFAULT_MIN_LEDGER_DEPOSIT_CKB, get_tmp_path
 from framework.test_fiber import FiberConfigPath
 from framework.util import ckb_hash
 from test_cases.fiber.devnet.migration._helpers import start_with_confirm
@@ -319,7 +319,10 @@ class TestFullHashOldData(ContractUpgradeSupport):
             ]
             # Use the pre-hold baseline. The two post-restart payments above
             # transfer the same amount in opposite directions on this channel.
-            self.principals = [int(c["local_balance"], 16) + 99 * CKB for c in restored]
+            self.principals = [
+                int(c["local_balance"], 16) + DEFAULT_MIN_LEDGER_DEPOSIT_CKB
+                for c in restored
+            ]
             self.wallet_before = self.wallet_balances()
             commitment = self.force_close(self.fiber2)
             # 强关承诺锁仍为 57 字节 → 旧库通道语义仍是 Legacy，没有被静默切到 V1。

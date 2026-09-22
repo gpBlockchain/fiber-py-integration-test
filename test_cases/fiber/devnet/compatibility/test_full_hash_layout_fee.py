@@ -440,10 +440,12 @@ class TestFullHashLayoutFee(FullHashChannelSupport):
                         )
         # xUDT 转账本身不计费，收款人净增量恰为 TLC 金额。
         assert net == [0, amount], net
-        # 派生 cell 仍 live 只在“这笔花费留下了派生承诺 cell”时可断言：若本次已是收尾
-        # （output 0 不是 commitment-lock），它会被后续 sweep 立刻花掉，此时由 assert_settled_udt
-        # 核对剩余 cell 与资产守恒。
-        if tx["outputs"][0]["lock"]["code_hash"] == COMMIT_LOCK_CODE_HASH:
+        # 派生 cell 里还有未结算 TLC 时节点不能 sweep 它，必然 live；收尾那笔（本次结算后
+        # 不再有待结算 TLC）的派生 cell 会被随即 sweep，CKB 0.202 对已花费的承诺 cell 返回
+        # "unknown" 而不是 "dead"，其去向由 assert_settled_udt 的 sweep 断言核对，不能在这里
+        # 要求 live。注意 output 0 恒为 commitment-lock（见上方 assert），不能拿它的 code_hash
+        # 当“是否收尾”的判断依据。
+        if len(pending) > 1:
             assert self.ckb.get_live_cell("0x0", tx["hash"])["status"] == "live"
         self.assert_nodes_running()
 

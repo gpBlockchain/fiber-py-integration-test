@@ -10,6 +10,10 @@ import time
 
 import requests
 
+from framework.config import (
+    DEFAULT_MIN_DEPOSIT_CKB,
+    DEFAULT_MIN_LEDGER_DEPOSIT_CKB,
+)
 from framework.test_fiber import FiberConfigPath
 from framework.util import ckb_hash
 from test_cases.fiber.devnet.compatibility.contract_upgrade_support import (
@@ -174,7 +178,11 @@ class TestFullHashStandaloneWatchtower(ContractUpgradeSupport):
             raw = bytes.fromhex(channels[0]["channel_outpoint"][2:])
             assert raw[32:] == bytes(4)
             self.funding_tx = "0x" + raw[:32].hex()
-            reserve = (100 if version == "v1" else 99) * CKB
+            reserve = (
+                DEFAULT_MIN_DEPOSIT_CKB
+                if version == "v1"
+                else DEFAULT_MIN_LEDGER_DEPOSIT_CKB
+            )
             self.principals = [int(c["local_balance"], 16) + reserve for c in channels]
             # Standalone watchtower's signer receives the watched party's payout.
             # Track the sender + tower wallets; the watched node's built-in service is disabled.
