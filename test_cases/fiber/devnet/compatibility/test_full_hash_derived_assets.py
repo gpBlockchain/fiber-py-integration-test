@@ -127,8 +127,13 @@ class TestFullHashDerivedAssets(ContractUpgradeSupport):
         # 收款人净增量扣除实际矿工费：CKB 承载费用，xUDT 转账不计费。
         expected_net = [0, amount - fee] if udt is None else [0, amount]
         assert net == expected_net
-        # 派生 cell 仍 live：第一次兑现后剩余资产没有被锁死。
-        assert self.ckb.get_live_cell("0x0", tx["hash"])["status"] == "live"
+        # 派生 cell 里还有未结算 TLC 时节点不能 sweep 它，必然 live；收尾那笔（本次结算后
+        # 不再有待结算 TLC）的派生 cell 会被随即 sweep，CKB 0.202 对已花费的承诺 cell 返回
+        # "unknown" 而不是 "dead"，其去向由 two_claims 的 sweep 循环与余额守恒断言核对，不能在
+        # 这里要求 live。注意 output 0 恒为 commitment-lock，不能拿它的 code_hash 当“是否收尾”
+        # 的判断依据。
+        if len(pending) > 1:
+            assert self.ckb.get_live_cell("0x0", tx["hash"])["status"] == "live"
         self.assert_nodes_running()
         print(
             "V1 derived claim:",

@@ -358,9 +358,6 @@ class TestFullHashEmptySnapshot(P2pFiberTest):
             time.time() * 1000 < expiry_ms
         ), f"{version}: local withdrawal only finished after S1 expiry: {offered}"
 
-    def test_00000(self):
-        self.victim.get_client().list_channels({"include_closed": True})
-
     # TEST-MAP: H32V2-24
     # TEST-EVIDENCE-BEGIN: H32V2-24
     # Evidence | covered | Legacy channel (counterparty build started with
