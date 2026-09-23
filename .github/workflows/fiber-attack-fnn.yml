@@ -15,6 +15,7 @@ on:
       - "framework/test_fiber.py"
       - "scripts/build_attack_fnn.sh"
       - "test_cases/fiber/devnet/security/**"
+      - "test_cases/fiber/devnet/compatibility/**"
   workflow_dispatch:
     inputs:
       stock_fiber_repository:
@@ -36,6 +37,16 @@ on:
         description: Branch used to build the instrumented FNN
         required: true
         default: p2p-tap
+        type: string
+      full_hash_stock_fiber_ref:
+        description: Branch used for the full-payment-hash stock node
+        required: true
+        default: fix/commitment-lock-full-payment-hash
+        type: string
+      full_hash_attack_fiber_ref:
+        description: Branch used for the full-payment-hash counterparty (p2p-tap adapted onto that head)
+        required: true
+        default: p2p-tap-full-payment-hash
         type: string
 
 permissions:
@@ -126,6 +137,44 @@ jobs:
             --ignore=test_cases/fiber/devnet/security/test_stale_commitment_raa_pending_tlc_stuck.py \
             test_cases/fiber/devnet/security \
             2>&1 | tee attack-fnn-artifacts/pytest.log
+
+      # Second, independent pair: stock at the full-payment-hash head plus the
+      # p2p-tap debug RPCs adapted onto it. It installs into its own path so the
+      # legacy attacker above stays untouched, and it replaces
+      # download/fiber/current/fnn only after the legacy suites have finished.
+      - name: Build full-payment-hash counterparty FNN
+        env:
+          FIBER_BUILD_DIR: ${{ runner.temp }}/fiber-attack-build
+          STOCK_FIBER_REF: ${{ inputs.full_hash_stock_fiber_ref || 'fix/commitment-lock-full-payment-hash' }}
+          ATTACK_FIBER_REF: ${{ inputs.full_hash_attack_fiber_ref || 'p2p-tap-full-payment-hash' }}
+          ATTACK_DESTINATION: ${{ github.workspace }}/download/fiber/attack-full-payment-hash/fnn
+          PROVENANCE_FILE: ${{ github.workspace }}/download/fiber/provenance-full-hash.env
+        run: ./scripts/build_attack_fnn.sh
+
+      - name: Verify full-payment-hash binary roles
+        run: |
+          set -euo pipefail
+          test -x download/fiber/current/fnn
+          test -x download/fiber/attack-full-payment-hash/fnn
+          test -s download/fiber/provenance-full-hash.env
+          grep -aFq set_fiber_message_intercept download/fiber/attack-full-payment-hash/fnn
+          grep -aFq send_raw_channel_message download/fiber/attack-full-payment-hash/fnn
+          cat download/fiber/provenance-full-hash.env
+
+      - name: Run full-payment-hash counterparty regressions
+        run: |
+          set -euo pipefail
+          mkdir -p attack-fnn-artifacts
+          cp download/fiber/provenance-full-hash.env attack-fnn-artifacts/
+          ./venv/bin/python -m pytest \
+            -o addopts= \
+            --strict-markers \
+            -vv -s --tb=short \
+            --junitxml=attack-fnn-artifacts/full-hash-junit.xml \
+            -m requires_attack_fnn \
+            test_cases/fiber/devnet/compatibility/test_full_hash_bad_preimage.py \
+            test_cases/fiber/devnet/compatibility/test_full_hash_empty_snapshot.py \
+            2>&1 | tee attack-fnn-artifacts/full-hash-pytest.log
 
       - name: Publish source provenance
         if: always()

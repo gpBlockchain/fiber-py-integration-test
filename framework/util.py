@@ -292,7 +292,8 @@ def restore_time():
             if is_docker:
                 cmd = f"date {time_str}"
             else:
-                cmd = f"echo '{password}' | sudo -S date {time_str}"
+                # 原先引用未定义的 password：改成非交互 sudo，无法免密时干净失败。
+                cmd = f"sudo -n date {time_str}"
 
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
             if result.returncode == 0:

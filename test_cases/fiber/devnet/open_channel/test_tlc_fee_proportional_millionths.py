@@ -20,7 +20,7 @@ class TestTlcFeeProportionalMillionths(FiberTest):
         temporary_channel_id = self.fiber1.get_client().open_channel(
             {
                 "pubkey": self.fiber2.get_pubkey(),
-                "funding_amount": hex(200 * 100000000),
+                "funding_amount": hex(201 * 100000000),
                 "public": True,
                 # "funding_fee_rate": "0xffff",
                 # "tlc_fee_proportional_millionths": "0x4B0",

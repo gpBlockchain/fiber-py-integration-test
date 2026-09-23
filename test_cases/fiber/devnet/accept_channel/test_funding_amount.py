@@ -7,6 +7,9 @@ from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 
 
 class TestFundingAmount(FiberTest):
+    start_fiber_config = {
+        "fiber_open_channel_auto_accept_min_ckb_funding_amount": 10100000000
+    }
 
     def test_ckb_funding_amount_zero(self):
         """
@@ -57,7 +60,7 @@ class TestFundingAmount(FiberTest):
             )
 
         # Step 6: Verify the exception message contains the expected error message
-        expected_error_message = "should be greater than or equal to 9900000000"
+        expected_error_message = "should be greater than or equal to 10000000000"
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "
             f"not found in actual string '{exc_info.value.args[0]}'"
@@ -279,7 +282,7 @@ class TestFundingAmount(FiberTest):
         print("before_balance2:", before_balance2)
         print("after_balance1:", after_balance1)
         print("after_balance2:", after_balance2)
-        assert int(after_balance2 - before_balance2) == 99
+        assert int(after_balance2 - before_balance2) == 100
 
     def test_ckb_funding_amount_gt_auto_accept_channel_ckb_funding_amount(self):
         """
@@ -387,7 +390,7 @@ class TestFundingAmount(FiberTest):
         print("before_balance2:", before_balance2)
         print("after_balance1:", after_balance1)
         print("after_balance2:", after_balance2)
-        assert int(after_balance2 - before_balance2) == 100
+        assert int(after_balance2 - before_balance2) == 101
 
     @pytest.mark.skip("repeat")
     def test_ckb_funding_amount_lt_account(self):

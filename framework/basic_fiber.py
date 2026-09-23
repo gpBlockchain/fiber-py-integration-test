@@ -21,6 +21,10 @@ XUDT_CODE_HASH = "0x102583443ba6cfe5a3ac268bbb4475fb63eb497dce077f126ad3b148d4f4
 COMMIT_LOCK_CODE_HASH = (
     "0xf3775d5328de71717f2c5614fa06b9b93c48b7d90c1e135c0812c74ee3126453"
 )
+COMMIT_LOCK_ARGS = "0x082d30abbb75c3db217a78eee4f3e0d5a46c90b56c11dec77f3060319f323808"
+TYPE_CONTRACT_CODE_HASH = (
+    "0x00000000000000000000000000000000000000000000000000545950455f4944"
+)
 
 
 class FiberTest(CkbTest):
@@ -90,7 +94,7 @@ class FiberTest(CkbTest):
 
         cls.node.prepare()
         tar_file(
-            f"{get_project_root()}/source/fiber/data.1117.tar.gz", cls.node.ckb_dir
+            f"{get_project_root()}/source/fiber/data.2026.0914.tar.gz", cls.node.ckb_dir
         )
         cls.node.start()
         cls.node.getClient().get_consensus()
@@ -259,6 +263,7 @@ class FiberTest(CkbTest):
         account_private_key,
         config=None,
         fiber_version=FiberConfigPath.CURRENT_DEV,
+        env=None,
     ):
         if self.debug:
             self.logger.debug("=================start  mock fiber ==================")
@@ -288,6 +293,7 @@ class FiberTest(CkbTest):
         )
         self.fibers.append(fiber)
         self.new_fibers.append(fiber)
+        fiber.extra_env = dict(env or {})
         fiber.prepare(update_config=update_config)
         fiber.start(fnn_log_level=self.fnn_log_level)
         return fiber
@@ -1296,7 +1302,8 @@ class FiberTest(CkbTest):
                 if is_docker:
                     cmd = f"date {time_str}"
                 else:
-                    cmd = f"echo '{password}' | sudo -S date {time_str}"
+                    # 原先引用未定义的 password：改成非交互 sudo，无法免密时干净失败。
+                    cmd = f"sudo -n date {time_str}"
 
                 result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
                 if result.returncode == 0:

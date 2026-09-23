@@ -72,7 +72,7 @@ class TestForceAwaitChannel(FiberTest):
         result = self.get_balance_change(before_balance, after_balance)
         print("get_balance_change result:", result)
         assert abs(1000 * 100000000 + result[0]["ckb"]) < 2000
-        assert abs(99 * 100000000 + result[1]["ckb"]) < 2000
+        assert abs(100 * 100000000 + result[1]["ckb"]) < 2000
 
         # assert result
         # check channel status
