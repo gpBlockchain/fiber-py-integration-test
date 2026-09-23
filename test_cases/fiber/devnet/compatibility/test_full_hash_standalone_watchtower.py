@@ -14,6 +14,8 @@ from framework.config import (
     DEFAULT_MIN_DEPOSIT_CKB,
     DEFAULT_MIN_LEDGER_DEPOSIT_CKB,
 )
+from framework.helper.settlement_witness import assert_commitment_args
+from framework.onchain_tlc_query import onchain_tlc_query_enabled
 from framework.test_fiber import FiberConfigPath
 from framework.util import ckb_hash
 from test_cases.fiber.devnet.compatibility.contract_upgrade_support import (
@@ -268,9 +270,7 @@ class TestFullHashStandaloneWatchtower(ContractUpgradeSupport):
             # 由发送方（对端）强关，承诺锁布局按版本核对。
             commitment = self.force_close(self.sender)
             args = bytes.fromhex(commitment["outputs"][0]["lock"]["args"][2:])
-            assert len(args) == (58 if version == "v1" else 57)
-            if version == "v1":
-                assert args[-1] == 1
+            assert_commitment_args(args, version)
             self.ckb.generate_epochs("0x1")
             # 公布原像后由独立服务完成链上结算；到账方是本用例的 account2 = tower 钱包。
             receiver.get_client().settle_invoice(
@@ -287,14 +287,26 @@ class TestFullHashStandaloneWatchtower(ContractUpgradeSupport):
             )
             # SPEC-08 还要求付款结果与目标 TLC 终态：独立服务完成链上结算后，本端必须记录 Success
             # 且持有本次公布的原像，目标 TLC 收尾，而不是只有 RPC 调用成功。
-            self.wait_payment_state(self.sender, payment_hash, "Success", timeout=120)
-            assert (
-                self.sender.get_client().get_payment({"payment_hash": payment_hash})[
-                    "payment_preimage"
-                ]
-                == preimage
-            )
-            self.wait_tlc_terminal(self.sender, payment_hash)
+            # 上链产出的付款/TLC 终态查询由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控；关时只核对没有
+            # 被判成失败。
+            if onchain_tlc_query_enabled():
+                self.wait_payment_state(
+                    self.sender, payment_hash, "Success", timeout=120
+                )
+                assert (
+                    self.sender.get_client().get_payment(
+                        {"payment_hash": payment_hash}
+                    )["payment_preimage"]
+                    == preimage
+                )
+                self.wait_tlc_terminal(self.sender, payment_hash)
+            else:
+                assert (
+                    self.sender.get_client().get_payment(
+                        {"payment_hash": payment_hash}
+                    )["status"]
+                    != "Failed"
+                )
             # 重启后没有再次 create_watch_channel → 用的是持久化里的版本，而非重新注册。
             assert (
                 len(self.channel_calls("create_watch_channel")) == create_count

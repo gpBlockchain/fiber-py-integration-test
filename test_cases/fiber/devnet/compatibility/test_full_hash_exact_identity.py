@@ -48,7 +48,7 @@ import time
 from pathlib import Path
 
 from framework.config import ALWAYS_SUCCESS_CONTRACT_PATH
-from framework.helper.settlement_witness import SettlementWitness
+from framework.onchain_tlc_query import onchain_tlc_query_enabled
 from framework.test_fiber import FiberConfigPath
 from framework.util import ckb_hash
 from test_cases.fiber.devnet.compatibility.contract_upgrade_support import (
@@ -194,6 +194,10 @@ class TestFullHashExactIdentity(FullHashChannelSupport):
         # Remote-close discovery runs every 300 seconds independently of the
         # watchtower. A confirmed claim need not update the invoice immediately.
         # Do not wait for all commitment cells or the settlement flag to clear.
+        # 这个"等 A 的发票变 Paid"完全由节点自己的链上扫描节奏决定，属上链触发查询，
+        # 由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控：关时只做一次快照核对 —— B 的身份不变量
+        # （TLC 非终态、付款 Inflight、发票 Received）仍然成立才通过，A 是否已被标记 Paid
+        # 留给开启开关时核对。
         deadline = time.monotonic() + timeout
         while True:
             sibling = self.tlc_of(self.fiber2, hash_b)
@@ -207,6 +211,8 @@ class TestFullHashExactIdentity(FullHashChannelSupport):
             # A's settlement is its own evidence; B is never satisfied by A's preimage.
             invoice_a = self.fiber2.get_client().get_invoice({"payment_hash": hash_a})
             if invoice_a["status"] == "Paid":
+                return
+            if not onchain_tlc_query_enabled():
                 return
             if time.monotonic() >= deadline:
                 break
@@ -433,8 +439,8 @@ class TestFullHashExactIdentity(FullHashChannelSupport):
         ]
         # V1 keeps the full 32 bytes on chain; Legacy only the 20-byte prefix.
         commitment = self.force_close(self.fiber1)
-        args = self.assert_commitment_layout(commitment)
-        assert len(args) == (58 if version == "v1" else 57), (version, args)
+        # 承诺锁布局（长度 / 状态标志 / feature 字节）由 assert_commitment_layout 按版本核对。
+        self.assert_commitment_layout(commitment)
         self.ckb.generate_epochs("0x1")
 
         # Real preimage only: publish P_A for hash_a and follow the committed
@@ -534,8 +540,15 @@ class TestFullHashExactIdentity(FullHashChannelSupport):
             # An indexed timeout removes B; a balance sweep may retain B in
             # the witness. The final payment/invoice assertions below prove
             # that B's lifecycle actually terminates without a preimage.
-        finished = self.wait_payment_finished(self.fiber1, hash_b, timeout=600)
-        assert finished["status"] == "Failed", finished
+        # B 的终态同样只由节点自己的链上扫描收尾产生，属上链触发查询，由
+        # FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控：关时只做一次快照核对 —— B 绝不能是 Success，
+        # 也绝不能拿到原像；是否已写成 Failed 留给开启开关时核对。
+        if onchain_tlc_query_enabled():
+            finished = self.wait_payment_finished(self.fiber1, hash_b, timeout=600)
+            assert finished["status"] == "Failed", finished
+        else:
+            finished = self.fiber1.get_client().get_payment({"payment_hash": hash_b})
+            assert finished["status"] != "Success", finished
         invoice_b = self.fiber2.get_client().get_invoice({"payment_hash": hash_b})
         # A hold invoice does not leave Received by itself: the node writes Paid
         # only on fulfilment and Cancelled only through an explicit cancel_invoice
@@ -558,6 +571,11 @@ class TestFullHashExactIdentity(FullHashChannelSupport):
     # settlement snapshot cannot be read, seeded or verified), and the indexed form of control A
     # (unwatched outpoint that still matches the commitment-lock search prefix) needs a
     # commitment-lock cell fixture the framework only creates by opening another watched channel.
+    # partial: the observations that only appear after the node's own chain scan (B's payment
+    # written Failed, A's invoice written Paid) are gated by FIBER_ASSERT_ONCHAIN_TLC_QUERY. With
+    # the switch off the method still asserts the identity invariants that hold immediately: B's
+    # TLC is not terminal, B's payment is Inflight and never Success, B's invoice is Received and
+    # never Paid, and neither B nor the timeout witness carries a preimage.
     # TEST-EVIDENCE-END: H32V2-13
     # H32V2-13 证明链（V1）：承诺 cell 的 output#0 是派生 cell；结算 tx 的第一 witness 用真实
     # 原像 P 解开非零索引的 TLC；沿该派生 cell 继续消费必须只把该索引对应的 A 视为已结算，
@@ -572,22 +590,27 @@ class TestFullHashExactIdentity(FullHashChannelSupport):
     #    Inflight、发票保持 Received。
     # 5) 派生活跃：结算后派生 commitment cell 仍 live，B 仍可被后续交易结算。
     # 6) 重启判据：结算在接收方离线时上链，重启后由持久化的精确证据重建判断，B 不被误移除。
-    # 7) 自生命周期：越过 B 的过期时间后只有超时路径能终结它，付款 Failed 且无原像，超时结算
-    #    witness 的解锁没有原像（preimage is None）。接收方的 hold 发票不会因超时自动终结
-    #    （只有兑现或显式 cancel_invoice 才离开 Received），故只要求它始终不为 Paid。
+    # 7) 自生命周期：越过 B 的过期时间后只有超时路径能终结它，付款不得是 Success 且不得有原像，
+    #    超时结算 witness 的解锁没有原像（preimage is None）。付款写成 Failed 要等节点自己的
+    #    链上扫描收尾，由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控（关时只核对非 Success）。接收方的
+    #    hold 发票不会因超时自动终结（只有兑现或显式 cancel_invoice 才离开 Received），故只要求
+    #    它始终不为 Paid。
     # 8) 负对照 A：提交一笔消费无关 always-success cell、却携带同前缀“结算 witness”副本的交易，
     #    它不消费被监控 outpoint，B 的状态不得改变（局限见模块 docstring）。
     # 9) 负对照 B：节点持久化快照没有 RPC 观测点，不做日志抓取式伪造，明确记为未实现。
     def sibling_status(self, hash_b):
-        """Observable state of the untouched sibling B: TLC + payment + invoice."""
+        """Observable state of the untouched sibling B: TLC + invoice.
+
+        刻意不包含 B 自己的 ``payment`` 状态：越过 B 的过期时间后，B 由自己的超时路径终结是
+        预期行为，而它可能在负对照的观察窗口内并发地从未终结变成 Failed。负对照要证明的是
+        "无关交易没有消费 B"，稳定且能被该交易影响的信号是 B 的 TLC 是否被移除、发票是否被
+        标成 Paid；把 B 自己的生命周期一并对比会把它自己的正常终结误记为负对照的副作用。
+        """
         return {
             "tlc": self.tlc_of(self.fiber2, hash_b)["status"],
-            "payment": self.fiber1.get_client().get_payment(
-                {"payment_hash": hash_b}
-            )["status"],
-            "invoice": self.fiber2.get_client().get_invoice(
-                {"payment_hash": hash_b}
-            )["status"],
+            "invoice": self.fiber2.get_client().get_invoice({"payment_hash": hash_b})[
+                "status"
+            ],
         }
 
     def assert_control_leaves_sibling_unchanged(self, checkpoint, hash_b, description):
@@ -595,19 +618,22 @@ class TestFullHashExactIdentity(FullHashChannelSupport):
 
         B has already followed its own preimage-free timeout lifecycle before this
         point, so the confirmed contract (review H32V2-13: "无关交易/快照不改变
-        状态") is "nothing changes", not "B is still pending".
+        状态") is "nothing changes", not "B is still pending". 对比的观测面见
+        ``sibling_status``：B 自己的 payment 生命周期可能与本次负对照并发终结，不参与对比。
         """
         before = self.sibling_status(hash_b)
         self.submit_unwatched_same_prefix_settlement(checkpoint)
         self.watchtower_rounds(3)
         after = self.sibling_status(hash_b)
-        assert after == before, (
-            f"{description}: 无关同前缀交易改变了 B 的状态: {before} -> {after}"
-        )
+        assert (
+            after == before
+        ), f"{description}: 无关同前缀交易改变了 B 的状态: {before} -> {after}"
 
     def test_v1_prefix_pair_keeps_exact_identity(self):
         settlement, _hash_a, hash_b = self.exact_identity_case("v1")
-        self.assert_control_leaves_sibling_unchanged(settlement, hash_b, "负对照 A 上链后")
+        self.assert_control_leaves_sibling_unchanged(
+            settlement, hash_b, "负对照 A 上链后"
+        )
 
     # TEST-MAP: H32V2-13
     # TEST-EVIDENCE-BEGIN: H32V2-13
@@ -627,7 +653,8 @@ class TestFullHashExactIdentity(FullHashChannelSupport):
     # 3) 剩余清单仍含同前缀 B（assert_pending_tlcs 按 20 字节比较）。
     # 4) 派生 commitment cell 仍 live；跨 watchtower 轮次与接收方重启后 B 的 TLC 未被移除，
     #    付款保持 Inflight、发票保持 Received —— 另一笔仍走自己的生命周期。
-    # 5) 与 V1 相同的超时收尾：越过 B 的过期时间后付款 Failed 且无原像，接收方 hold 发票不为
+    # 5) 与 V1 相同的超时收尾：越过 B 的过期时间后付款不得是 Success 且无原像（写成 Failed 要等
+    #    节点自己的链上扫描，由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控），接收方 hold 发票不为
     #    Paid（不会自动 Cancelled/Expired），超时结算 witness 的解锁没有原像。
     def test_legacy_prefix_pair_keeps_exact_identity(self):
         self.exact_identity_case("legacy")

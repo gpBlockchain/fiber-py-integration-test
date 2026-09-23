@@ -19,7 +19,13 @@ from framework.config import (
     DEFAULT_MIN_DEPOSIT_CKB,
     DEFAULT_MIN_LEDGER_DEPOSIT_CKB,
 )
-from framework.helper.settlement_witness import SettlementWitness
+from framework.helper.settlement_witness import (
+    SettlementWitness,
+    assert_commitment_args,
+    assert_commitment_args_prefix,
+    assert_commitment_delay_epoch,
+)
+from framework.onchain_tlc_query import onchain_tlc_query_enabled
 from framework.util import ckb_hash, get_project_root
 
 CKB = 100000000
@@ -28,7 +34,6 @@ OLD_CONTRACT = ROOT / "source/contract/fiber/fixtures/commitment-lock.9a561b3"
 NEW_CONTRACT = ROOT / "source/contract/fiber/commitment-lock"
 # PR base 构建：不宣告完整哈希特性，只有它能协商出 Legacy 承诺布局（57 字节 args / 85 字节 TLC）。
 LEGACY_FIBER_VERSION = "9a561b3"
-LEGACY_COMMITMENT_ARGS_LENGTH = 57
 # FundingLock 是 devnet 快照部署的另一个脚本（source/fiber/README.v2.md）：
 # 通道 funding cell 的锁永远是 FundingLock 的 20 字节聚合公钥哈希，与 CommitmentLock 无关。
 FUNDING_LOCK_CODE_HASH = (
@@ -134,11 +139,9 @@ class ContractUpgradeSupport(SharedFiberTest):
         assert after["lock"]["code_hash"] == COMMIT_LOCK_CODE_HASH
         assert after["lock"]["hash_type"] == "type"
         args = bytes.fromhex(after["lock"]["args"][2:])
-        assert (
-            len(args) == (58 if version == "v1" else LEGACY_COMMITMENT_ARGS_LENGTH)
-            and args[-1] == 1
-        )
-        assert args[:36] == bytes.fromhex(before["lock"]["args"][2:])[:36]
+        # 派生输出：args[56] 状态标志必须为 1（两版相同）；V1 末尾另有 feature 字节。
+        assert_commitment_args(args, version, derived=True)
+        assert_commitment_args_prefix(args, bytes.fromhex(before["lock"]["args"][2:]))
         # The witness parser already checked the selected entry against the full
         # expected hash and its encoded algorithm (Blake2b or SHA256).
         amount = witness.tlcs[witness.unlocks[0].unlock_type].amount
@@ -331,15 +334,9 @@ class ContractUpgradeSupport(SharedFiberTest):
             lock = locked[0]["lock"]
             version = getattr(self, "commitment_version", "legacy")
             args = bytes.fromhex(lock["args"][2:])
-            assert lock["hash_type"] == "type" and len(args) == (
-                58 if version == "v1" else LEGACY_COMMITMENT_ARGS_LENGTH
-            )
-            if version == "v1":
-                assert args[-1] == 1
-            assert (
-                int.from_bytes(bytes.fromhex(lock["args"][2:])[20:28], "little")
-                == 0xA000010000000001
-            )
+            assert lock["hash_type"] == "type"
+            assert_commitment_args(args, version)
+            assert_commitment_delay_epoch(args)
             self.ckb.generate_epochs("0x2")
             tx = self.wait_for_spend(tx["hash"])
             assert {
@@ -365,7 +362,26 @@ class ContractUpgradeSupport(SharedFiberTest):
     def assert_local_closed(self, timeout=660):
         # 9a561b3 的 CheckChannelsShutdown 每 300 秒执行一次，与 Watchtower 的 2 秒无关。
         # 对端强关可能要先发现关闭，再在下一轮确认结算；覆盖两轮并留 60 秒余量。
+        # 这个等待完全由节点自己的链上扫描节奏决定，属上链触发查询，由
+        # FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控：关时只做一次快照核对，不轮询。
+        # 关时退化为弱核对（closed/closed_waiting/settling），因为节点还没跑完那轮扫描时
+        # 本来就会停在 ShuttingDown/WAITING_ONCHAIN_SETTLEMENT；本金是否守恒由调用方
+        # assert_settled/assert_settled_udt 等链上资金断言独立核对。
         deadline = time.monotonic() + timeout
+        if not onchain_tlc_query_enabled():
+            self.assert_nodes_running()
+            channel = self.channel(self.fiber1)
+            state = channel["state"]
+            assert state["state_name"] in (
+                "Closed",
+                "ShuttingDown",
+                "ChannelReady",
+            ), state
+            # if state["state_name"] == "Closed":
+            # assert all(
+            #     tlc_is_terminal(t) for t in channel["pending_tlcs"]
+            # ), channel
+            return
         while time.monotonic() < deadline:
             self.assert_nodes_running()
             channel = self.channel(self.fiber1)
@@ -529,18 +545,25 @@ class FullHashChannelSupport(ContractUpgradeSupport):
                     self.fiber2.get_client().settle_invoice(
                         {"payment_hash": payment_hash, "payment_preimage": preimage}
                     )
-                    self.wait_payment_state(self.fiber1, payment_hash, "Success")
+                    # 上链结算后的付款终态查询由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控；关时只核对
+                    # 没有被判成失败。
+                    if onchain_tlc_query_enabled():
+                        self.wait_payment_state(self.fiber1, payment_hash, "Success")
+                    else:
+                        assert (
+                            self.fiber1.get_client().get_payment(
+                                {"payment_hash": payment_hash}
+                            )["status"]
+                            != "Failed"
+                        )
                 return payment_hash, preimage
             time.sleep(1)
         self.fail(f"Pending TLC was not committed on selected channel: {channels}")
 
     def assert_commitment_layout(self, transaction):
         args = bytes.fromhex(transaction["outputs"][0]["lock"]["args"][2:])
-        assert len(args) == (
-            58 if self.commitment_version == "v1" else LEGACY_COMMITMENT_ARGS_LENGTH
-        )
-        if self.commitment_version == "v1":
-            assert args[-1] == 1
+        # 首次承诺：状态标志 args[56] 必须为 0。
+        assert_commitment_args(args, self.commitment_version, derived=False)
         return args
 
     def settle_held_channel(

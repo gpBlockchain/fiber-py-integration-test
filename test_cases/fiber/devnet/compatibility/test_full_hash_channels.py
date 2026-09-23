@@ -18,7 +18,14 @@ from framework.config import (
 )
 from framework.test_fiber import FiberConfigPath
 from framework.util import ckb_hash
-from framework.helper.settlement_witness import SettlementWitness
+from framework.helper.settlement_witness import (
+    SettlementWitness,
+    assert_commitment_args,
+    assert_commitment_args_prefix,
+    assert_commitment_delay_epoch,
+    witness_size,
+)
+from framework.onchain_tlc_query import onchain_tlc_query_enabled
 from test_cases.fiber.devnet.compatibility.contract_upgrade_support import (
     CKB,
     ROOT,
@@ -279,19 +286,17 @@ class TestFullHashChannels(ContractUpgradeSupport):
         witness = SettlementWitness.from_hex(tx["witnesses"][0], version=version)
         assert witness.to_hex() == tx["witnesses"][0]
         witness.assert_single_tlc_claim(pending, preimage)
-        entry = 97 if version == "v1" else 85
-        assert (
-            len(bytes.fromhex(tx["witnesses"][0][2:])) == 90 + entry * len(pending) + 99
+        assert len(bytes.fromhex(tx["witnesses"][0][2:])) == witness_size(
+            version, len(pending)
         )
         amount = witness.tlcs[witness.unlocks[0].unlock_type].amount
         before, after = previous["outputs"][0], tx["outputs"][0]
         assert after["lock"]["code_hash"] == COMMIT_LOCK_CODE_HASH
         assert after["lock"]["hash_type"] == "type"
         args = bytes.fromhex(after["lock"]["args"][2:])
-        assert len(args) == (58 if version == "v1" else 57)
-        if version == "v1":
-            assert args[-1] == 1
-        assert args[:36] == bytes.fromhex(before["lock"]["args"][2:])[:36]
+        # 派生输出：args[56] 状态标志必须为 1（两版相同）；V1 末尾另有 feature 字节。
+        assert_commitment_args(args, version, derived=True)
+        assert_commitment_args_prefix(args, bytes.fromhex(before["lock"]["args"][2:]))
         # 只比较本资产：xUDT 读 output_data，不用 capacity。
         assert before["type"] == after["type"] == udt
         assert (
@@ -345,10 +350,8 @@ class TestFullHashChannels(ContractUpgradeSupport):
             lock = locked[0]["lock"]
             args = bytes.fromhex(lock["args"][2:])
             assert lock["hash_type"] == "type"
-            assert len(args) == (58 if self.commitment_version == "v1" else 57)
-            if self.commitment_version == "v1":
-                assert args[-1] == 1
-            assert int.from_bytes(args[20:28], "little") == 0xA000010000000001
+            assert_commitment_args(args, self.commitment_version)
+            assert_commitment_delay_epoch(args)
             assert locked[0]["type"] == udt
             self.ckb.generate_epochs("0x2")
             tx = self.wait_for_spend(tx["hash"])
@@ -417,9 +420,8 @@ class TestFullHashChannels(ContractUpgradeSupport):
     ):
         commitment = self.force_close(closer or self.fiber2)
         args = bytes.fromhex(commitment["outputs"][0]["lock"]["args"][2:])
-        assert len(args) == (58 if self.commitment_version == "v1" else 57)
-        if self.commitment_version == "v1":
-            assert args[-1] == 1
+        # 首次承诺：状态标志 args[56] 必须为 0；V1 末尾另有 feature 字节。
+        assert_commitment_args(args, self.commitment_version, derived=False)
         self.ckb.generate_epochs("0x1")
         self.fiber2.get_client().settle_invoice(
             {"payment_hash": payment_hash, "payment_preimage": preimage}
@@ -444,9 +446,18 @@ class TestFullHashChannels(ContractUpgradeSupport):
                 settled, code_tx, udt, self.get_tx_message(commitment["hash"])["fee"]
             )
         # 链上到账与本端付款终态分别核对，不能用前一笔链下付款替代这笔 TLC。
-        self.wait_payment_state(self.fiber1, payment_hash, "Success")
-        result = self.fiber1.get_client().get_payment({"payment_hash": payment_hash})
-        assert result["payment_preimage"] == preimage
+        # 上链产出的付款查询终态由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控；关时只核对没有被判成失败。
+        if onchain_tlc_query_enabled():
+            self.wait_payment_state(self.fiber1, payment_hash, "Success")
+            result = self.fiber1.get_client().get_payment(
+                {"payment_hash": payment_hash}
+            )
+            assert result["payment_preimage"] == preimage
+        else:
+            result = self.fiber1.get_client().get_payment(
+                {"payment_hash": payment_hash}
+            )
+            assert result["status"] != "Failed", result
         return SettlementWitness.from_hex(
             settled["witnesses"][0], version=self.commitment_version
         )
@@ -635,9 +646,7 @@ class TestFullHashChannels(ContractUpgradeSupport):
         request = self.fiber1.get_client().open_channel(
             {
                 "pubkey": self.fiber2.get_pubkey(),
-                "funding_amount": hex(
-                    1000 * CKB + DEFAULT_MIN_LEDGER_DEPOSIT_CKB
-                ),
+                "funding_amount": hex(1000 * CKB + DEFAULT_MIN_LEDGER_DEPOSIT_CKB),
                 "public": True,
             }
         )
@@ -758,11 +767,10 @@ class TestFullHashChannels(ContractUpgradeSupport):
                 commitment = self.wait_for_spend(self.funding_tx)
                 settled = self.wait_for_spend(commitment["hash"])
                 raw = bytes.fromhex(settled["witnesses"][0][2:])
-                assert len(raw) == 90 + (97 if version == "v1" else 85) * 1 + 99, (
-                    f"{version}: 1 笔已承诺 TLC 的 witness 宽度应为 "
-                    f"{90 + (97 if version == 'v1' else 85) * 1 + 99} "
-                    f"(90+{97 if version == 'v1' else 85}+99)，实测 {len(raw)}: "
-                    f"{settled['witnesses'][0]}"
+                expected = witness_size(version, 1)
+                assert len(raw) == expected, (
+                    f"{version}: 1 笔已承诺 TLC 的 witness 宽度应为 {expected}，"
+                    f"实测 {len(raw)}: {settled['witnesses'][0]}"
                 )
                 widths[version] = len(raw)
         # 1 字节 feature + 每笔 TLC 多出的 12 字节完整哈希。

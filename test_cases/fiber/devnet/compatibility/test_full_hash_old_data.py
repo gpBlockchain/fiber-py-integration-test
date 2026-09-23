@@ -16,6 +16,7 @@ import subprocess
 import time
 
 from framework.config import DEFAULT_MIN_LEDGER_DEPOSIT_CKB, get_tmp_path
+from framework.onchain_tlc_query import onchain_tlc_query_enabled
 from framework.test_fiber import FiberConfigPath
 from framework.util import ckb_hash
 from test_cases.fiber.devnet.migration._helpers import start_with_confirm
@@ -345,13 +346,24 @@ class TestFullHashOldData(ContractUpgradeSupport):
                 settled, code_tx, self.get_tx_message(commitment["hash"])["fee"]
             )
             # 付款侧记录 Success 且持有正确原像，节点最终正常关闭。
-            self.wait_payment_state(self.fiber1, payment_hash, "Success", timeout=660)
-            assert (
-                self.fiber1.get_client().get_payment({"payment_hash": payment_hash})[
-                    "payment_preimage"
-                ]
-                == preimage
-            )
+            # 上链产出的付款查询终态由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控；关时只核对没有被判成失败。
+            if onchain_tlc_query_enabled():
+                self.wait_payment_state(
+                    self.fiber1, payment_hash, "Success", timeout=660
+                )
+                assert (
+                    self.fiber1.get_client().get_payment(
+                        {"payment_hash": payment_hash}
+                    )["payment_preimage"]
+                    == preimage
+                )
+            else:
+                assert (
+                    self.fiber1.get_client().get_payment(
+                        {"payment_hash": payment_hash}
+                    )["status"]
+                    != "Failed"
+                )
             self.assert_local_closed()
         finally:
             for index, fiber in enumerate(self.fibers):

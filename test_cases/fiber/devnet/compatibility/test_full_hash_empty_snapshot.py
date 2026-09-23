@@ -36,7 +36,10 @@ import time
 from framework.attack_fnn import LEGACY_COUNTERPARTY_ENV, requires_full_hash_attack_fnn
 from framework.basic_fiber import COMMIT_LOCK_CODE_HASH
 from framework.basic_p2p import P2pFiberTest
-from framework.helper.settlement_witness import SettlementWitness
+from framework.helper.settlement_witness import (
+    SettlementWitness,
+    assert_commitment_args,
+)
 from framework.p2p_peer import P2pPeer
 from framework.test_fiber import FiberConfigPath
 
@@ -183,11 +186,8 @@ class TestFullHashEmptySnapshot(P2pFiberTest):
         lock = tx["outputs"][0]["lock"]
         assert lock["code_hash"] == COMMIT_LOCK_CODE_HASH, lock
         args = bytes.fromhex(lock["args"][2:])
-        if version == "v1":
-            assert len(args) == 58, tx
-            assert args[-1] == 1, tx
-        else:
-            assert len(args) == 57, tx
+        # 首次承诺：长度按版本，状态标志 args[56] 必须为 0，V1 末尾另有 feature 字节。
+        assert_commitment_args(args, version, derived=False)
         return tx
 
     def _settlement_tx(self, close_tx, timeout=150):

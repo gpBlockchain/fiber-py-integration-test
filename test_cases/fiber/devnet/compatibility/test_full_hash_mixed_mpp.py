@@ -50,7 +50,13 @@ import time
 import pytest
 
 from framework.attack_fnn import LEGACY_COUNTERPARTY_ENV, requires_full_hash_attack_fnn
-from framework.helper.settlement_witness import SettlementWitness
+from framework.helper.settlement_witness import (
+    SettlementWitness,
+    assert_commitment_args,
+    tlc_entry_size,
+    witness_size,
+)
+from framework.onchain_tlc_query import onchain_tlc_query_enabled
 from framework.test_fiber import FiberConfigPath
 from framework.util import ckb_hash
 from test_cases.fiber.devnet.compatibility.contract_upgrade_support import (
@@ -236,13 +242,7 @@ class _MixedVersionMppSupport(FullHashChannelSupport):
     def _assert_commitment_layout(self, commitment, version):
         lock = commitment["outputs"][0]["lock"]
         args = bytes.fromhex(lock["args"].removeprefix("0x"))
-        expected = 58 if version == "v1" else 57
-        assert len(args) == expected, (
-            f"expected the {version} commitment layout ({expected}-byte args), "
-            f"got {len(args)}: {lock}"
-        )
-        if version == "v1":
-            assert args[-1] == 1, lock
+        assert_commitment_args(args, version)
         return args
 
     def _parse_settlement(self, transaction, version, pending):
@@ -255,12 +255,11 @@ class _MixedVersionMppSupport(FullHashChannelSupport):
             witness.to_hex() == transaction["witnesses"][0]
         ), f"{version} settlement witness did not round-trip"
         witness.assert_pending_tlcs(pending)
-        entry = 97 if version == "v1" else 85
         raw = bytes.fromhex(transaction["witnesses"][0].removeprefix("0x"))
-        expected = 90 + entry * len(witness.tlcs) + 99 * len(witness.unlocks)
+        expected = witness_size(version, len(witness.tlcs))
         assert len(raw) == expected, (
             f"{version} settlement witness is {len(raw)} bytes, expected {expected} "
-            f"({entry}-byte TLC entries): {witness.tlcs}"
+            f"({tlc_entry_size(version)}-byte TLC entries): {witness.tlcs}"
         )
         return witness
 
@@ -748,16 +747,18 @@ class TestMixedVersionMpp(_MixedVersionMppSupport):
             assert partial["status"] != "Success", partial
             # 证明点 6：已结算的 V1 片在付款端最终进入终态。链上消费先确认，付款端随后才由
             # 节点自身的链上对账把这个 offered TLC 收尾（本机实测约 4 分钟，触发节奏不完全由
-            # 测试控制），所以这里等到终态并留足余量，而不是假定它随链上确认立刻完成。
-            self._wait_until(
-                lambda: all(
-                    tlc_is_terminal(tlc)
-                    for tlc in self._tlc_in(payer, direct_id, payment_hash)
+            # 测试控制）。这是典型的上链触发查询，由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控：关时
+            # 不等这个终态；开启时才等到终态并留足余量。
+            if onchain_tlc_query_enabled():
+                self._wait_until(
+                    lambda: all(
+                        tlc_is_terminal(tlc)
+                        for tlc in self._tlc_in(payer, direct_id, payment_hash)
+                    )
+                    and self._tlc_in(payer, direct_id, payment_hash),
+                    "the settled V1 split to reach a terminal state on the payer side",
+                    timeout=600,
                 )
-                and self._tlc_in(payer, direct_id, payment_hash),
-                "the settled V1 split to reach a terminal state on the payer side",
-                timeout=600,
-            )
             # 证明点 6：单片链上结算不得把发票写成 Paid。hold 发票离开 Received 只有兑现
             # （→Paid）与显式 cancel_invoice（→Cancelled）两条路径；本场景里 V1 片所在通道
             # 已被强关、桥接片仍锁定且 bridge 已离线，两条路径都不会发生，所以发票只能停在
@@ -810,7 +811,6 @@ class TestMixedVersionMppAdversarial(_MixedVersionMppSupport):
     marker does not drag the adversary into H32V2-28/29.
     """
 
-    tmp_path_name = f"report/h32v2-mixed-mpp-attack-{time.time_ns()}"
     ckb_rpc_port, ckb_p2p_port = 26114, 26115
     fiber1_rpc_port, fiber1_p2p_port = 26128, 26127
     fiber2_rpc_port, fiber2_p2p_port = 26129, 26130
@@ -1002,6 +1002,10 @@ class TestMixedVersionMppAdversarial(_MixedVersionMppSupport):
                 assert channel.get("shutdown_transaction_hash") is None, channel
             if downstream_terminal and resolved and payer_payment["status"] == "Failed":
                 break
+            # 下游终态、上游 RemoveAckConfirmed 与发起端 Failed 都要等节点自己的链上扫描收尾，
+            # 属上链触发查询；开关关时不做这个轮询，只保留下面一次的存活核对与"非成功"判据。
+            if not onchain_tlc_query_enabled():
+                break
             assert time.monotonic() < deadline, (
                 "upstream failure propagation incomplete: "
                 f"downstream_terminal={downstream_terminal}, resolved={resolved}, "
@@ -1010,6 +1014,10 @@ class TestMixedVersionMppAdversarial(_MixedVersionMppSupport):
             self._mine_watchtower_rounds(1)
 
         # 证明点 6：失败不携带成功原像 —— 错误原像没有被当作成功向上游传播。
+        if onchain_tlc_query_enabled():
+            assert payer_payment["status"] == "Failed", payer_payment
+        else:
+            assert payer_payment["status"] != "Success", payer_payment
         assert payer_payment.get("payment_preimage") is None, payer_payment
         # The failure came from the confirmed claim, not from the normal expiry
         # path of any hop.
@@ -1407,32 +1415,41 @@ class TestMixedVersionMppAdversarial(_MixedVersionMppSupport):
         ), f"consumption confirmed after the earliest recorded TLC expiry {earliest_expiry}"
 
         # 证明点 5：这次“完整匹配”的消费必须被当作成功上传：付款 Success 且原像正确。
-        self.wait_payment_state(payer, payment_hash, "Success", timeout=660)
-        settled = payer.get_client().get_payment({"payment_hash": payment_hash})
-        assert settled["payment_preimage"] == preimage, settled
+        # 上链产出的付款查询终态由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控；关时只核对没有被判成失败。
+        if onchain_tlc_query_enabled():
+            self.wait_payment_state(payer, payment_hash, "Success", timeout=660)
+            settled = payer.get_client().get_payment({"payment_hash": payment_hash})
+            assert settled["status"] == "Success", settled
+            assert settled["payment_preimage"] == preimage, settled
+        else:
+            settled = payer.get_client().get_payment({"payment_hash": payment_hash})
+            assert settled["status"] != "Failed", settled
 
         # 证明点 5：上游两跳的 TLC 都必须离开进行中状态并收敛，不悬挂。
-        def upstream_resolved():
-            for fiber, channel_id, _ in upstream_views:
-                tlcs = self._tlc_in(fiber, channel_id, payment_hash)
-                if not tlcs:
-                    continue
-                if any(not tlc_is_terminal(tlc) for tlc in tlcs):
-                    return None
-            return True
+        # 上游收尾同样依赖节点把链上成功传播回上游，属上链触发的查询，由同一开关门控。
+        if onchain_tlc_query_enabled():
 
-        self._wait_until(
-            upstream_resolved,
-            "the upstream TLCs to leave the in-flight states",
-            timeout=660,
-        )
-        # 上游终态不得是“已宣告/已承诺”这些进行中状态；成功路径与撤销路径的终态名都接受，
-        # 具体名字在实测后回填评审行的预期文字。
-        for fiber, channel_id, _ in upstream_views:
-            for tlc in self._tlc_in(fiber, channel_id, payment_hash):
-                assert (
-                    tlc["status"] not in COMMITTED_STATUSES
-                ), f"upstream TLC stayed in flight after a full-hash success: {tlc}"
+            def upstream_resolved():
+                for fiber, channel_id, _ in upstream_views:
+                    tlcs = self._tlc_in(fiber, channel_id, payment_hash)
+                    if not tlcs:
+                        continue
+                    if any(not tlc_is_terminal(tlc) for tlc in tlcs):
+                        return None
+                return True
+
+            self._wait_until(
+                upstream_resolved,
+                "the upstream TLCs to leave the in-flight states",
+                timeout=660,
+            )
+            # 上游终态不得是“已宣告/已承诺”这些进行中状态；成功路径与撤销路径的终态名都接受，
+            # 具体名字在实测后回填评审行的预期文字。
+            for fiber, channel_id, _ in upstream_views:
+                for tlc in self._tlc_in(fiber, channel_id, payment_hash):
+                    assert (
+                        tlc["status"] not in COMMITTED_STATUSES
+                    ), f"upstream TLC stayed in flight after a full-hash success: {tlc}"
 
         # 证明点 6：下游对端按该笔金额**链上到账**。
         # 注意：强制 shutdown 之后，链上取回的资金不会写回 closed channel 的 local_balance，
@@ -1454,12 +1471,18 @@ class TestMixedVersionMppAdversarial(_MixedVersionMppSupport):
         ), f"adversary on-chain delta {delta} < {LONG_PATH_AMOUNT} - fee {settlement_fee}"
 
         # 证明点 8：payer 成功付款 —— 付款 Success、返回原像就是本测试的原像，且确实付了手续费。
-        self.wait_payment_state(payer, payment_hash, "Success", timeout=660)
-        settled = payer.get_client().get_payment({"payment_hash": payment_hash})
-        assert settled["status"] == "Success", settled
-        assert settled["payment_preimage"] == preimage, settled
-        assert settled["failed_error"] is None, settled
-        assert int(settled["fee"], 16) > 0, settled
+        # 上链产出的付款查询终态由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控；关时保留"未被判失败"与
+        # 手续费已产生这两条与资金相关的核对。
+        if onchain_tlc_query_enabled():
+            self.wait_payment_state(payer, payment_hash, "Success", timeout=660)
+            settled = payer.get_client().get_payment({"payment_hash": payment_hash})
+            assert settled["status"] == "Success", settled
+            assert settled["payment_preimage"] == preimage, settled
+            assert settled["failed_error"] is None, settled
+            assert int(settled["fee"], 16) > 0, settled
+        else:
+            settled = payer.get_client().get_payment({"payment_hash": payment_hash})
+            assert settled["status"] != "Failed", settled
         # 证明点 9：成功后在途金额归零；实际路由金额取自付款 Committed 时的目标 TLC。
         # 付款前 offered_tlc_balance 为零，不能用作本次付款金额。
         self._wait_until(

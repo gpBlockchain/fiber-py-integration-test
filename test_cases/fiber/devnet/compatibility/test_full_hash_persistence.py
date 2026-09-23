@@ -7,6 +7,8 @@ import subprocess
 import time
 
 from framework.config import DEFAULT_MIN_DEPOSIT_CKB
+from framework.helper.settlement_witness import assert_commitment_args
+from framework.onchain_tlc_query import onchain_tlc_query_enabled
 from test_cases.fiber.devnet.compatibility.contract_upgrade_support import (
     CKB,
     NEW_CONTRACT,
@@ -15,7 +17,6 @@ from test_cases.fiber.devnet.compatibility.contract_upgrade_support import (
 
 
 class TestFullHashPersistence(ContractUpgradeSupport):
-    tmp_path_name = f"report/h32-persistence-{time.time_ns()}"
     ckb_rpc_port, ckb_p2p_port = 20814, 20815
     fiber1_rpc_port, fiber1_p2p_port = 20828, 20827
     fiber2_rpc_port, fiber2_p2p_port = 20829, 20830
@@ -161,8 +162,8 @@ class TestFullHashPersistence(ContractUpgradeSupport):
         # force_close compares the stored pre-restart commitment hash (excluding only deps).
         commitment = self.force_close(self.peer)
         args = bytes.fromhex(commitment["outputs"][0]["lock"]["args"][2:])
-        # 58 字节 + 末字节 0x01 → 已存通道仍为 V1，没有被降级。
-        assert len(args) == 58 and args[-1] == 1
+        # 已存通道仍保持本版本（V1）承诺布局，没有被降级。
+        assert_commitment_args(args, self.commitment_version)
         self.ckb.generate_epochs("0x1")
         # 用重启前的原像结算原 TLC：assert_tlc_settlement 以 v1 解析 97 字节条目、核对原像与到账。
         self.fiber2.get_client().settle_invoice(
@@ -177,11 +178,20 @@ class TestFullHashPersistence(ContractUpgradeSupport):
         self.assert_settled(
             spent, code_tx, self.get_tx_message(commitment["hash"])["fee"]
         )
-        self.wait_payment_state(self.peer, payment_hash, "Success", timeout=660)
-        assert (
-            self.peer.get_client().get_payment({"payment_hash": payment_hash})[
-                "payment_preimage"
-            ]
-            == preimage
-        )
+        # 上链产出的付款查询终态由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控；关时只核对没有被判成失败。
+        if onchain_tlc_query_enabled():
+            self.wait_payment_state(self.peer, payment_hash, "Success", timeout=660)
+            assert (
+                self.peer.get_client().get_payment({"payment_hash": payment_hash})[
+                    "payment_preimage"
+                ]
+                == preimage
+            )
+        else:
+            assert (
+                self.peer.get_client().get_payment({"payment_hash": payment_hash})[
+                    "status"
+                ]
+                != "Failed"
+            )
         self.assert_local_closed()

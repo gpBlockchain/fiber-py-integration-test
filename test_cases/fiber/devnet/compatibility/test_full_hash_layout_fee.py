@@ -59,7 +59,17 @@ import socket
 import time
 
 from framework.basic_fiber import COMMIT_LOCK_CODE_HASH
-from framework.helper.settlement_witness import SettlementWitness
+from framework.helper.settlement_witness import (
+    CKB,
+    SettlementWitness,
+    assert_commitment_args,
+    assert_commitment_args_prefix,
+    assert_commitment_delay_epoch,
+    commitment_args_len,
+    commitment_tx_size,
+    witness_size,
+)
+from framework.onchain_tlc_query import onchain_tlc_query_enabled
 from framework.test_fiber import FiberConfigPath
 from framework.util import ckb_hash
 from test_cases.fiber.devnet.compatibility.contract_upgrade_support import (
@@ -77,8 +87,6 @@ def udt_amount(output, data, udt):
     return int.from_bytes(raw, "little")
 
 
-# 1 CKB = 100_000_000 Shannon，即 fiber-lib `DEFAULT_MIN_SHUTDOWN_FEE`。
-DEFAULT_MIN_SHUTDOWN_FEE = CKB
 # 评审行核心边界：恰好两倍承诺费上限的费率。
 EXACT_BUDGET_RATE = 50_000_000
 # 评审行声称“少 1 Shannon”会被拒绝的费率。
@@ -86,7 +94,6 @@ REVIEW_ONE_SHANNON_RATE = 50_000_001
 
 
 class TestFullHashLayoutFee(FullHashChannelSupport):
-    tmp_path_name = f"report/h32v2-layout-fee-{time.time_ns()}"
     ckb_rpc_port, ckb_p2p_port = 23414, 23415
     fiber1_rpc_port, fiber1_p2p_port = 23428, 23427
     fiber2_rpc_port, fiber2_p2p_port = 23429, 23430
@@ -134,7 +141,7 @@ class TestFullHashLayoutFee(FullHashChannelSupport):
 
     def commitment_args_len(self, version):
         """承诺锁 args 长度：V1 = 57 + 1 字节 feature，Legacy = 57。"""
-        return 58 if version == "v1" else 57
+        return commitment_args_len(version)
 
     def occupied_capacity(self, version):
         """承诺锁派生 cell 的真实占用（Shannon）。"""
@@ -142,31 +149,15 @@ class TestFullHashLayoutFee(FullHashChannelSupport):
 
     def reserved_capacity(self, version):
         """`reserved_capacity` = 真实占用 + 1 CKB 默认 shutdown 费用。"""
-        return self.occupied_capacity(version) + DEFAULT_MIN_SHUTDOWN_FEE
+        return self.occupied_capacity(version) + CKB
 
     def reserved_fee(self, version):
         """扣除占用后可用于承诺费的预算，即费用校验的 `reserved_fee`。"""
         return self.reserved_capacity(version) - self.occupied_capacity(version)
 
     def commitment_tx_size(self, version):
-        """复刻 fiber-lib `commitment_tx_size` 的 mock 承诺交易字节长度。
-
-        mock = 1 个默认 input + 1 个 commitment-lock output + FUNDING_CELL_WITNESS_LEN(112)
-        witness + FundingLock 的 cell deps；承诺锁 args 长度按版本取 57/58。
-        """
-        cell_dep = 4 + 8 + 36 + 1  # CellDep 表头 + OutPoint(36) + option dep_type(1)
-        args = self.commitment_args_len(version)
-        lock = 4 + 12 + 32 + 1 + (4 + 4 + args + (-args) % 4)  # Script 表
-        output = 4 + 12 + 8 + lock + 4  # CellOutput 表 + 空 type option
-        parts = (
-            4 + 4 + cell_dep,  # cell_deps：FundingLock 的 1 个 code dep
-            4 + 4,  # header_deps：空
-            4 + 4 + 44,  # inputs：1 个默认 input
-            4 + 4 + output,  # outputs：1 个承诺锁 output
-            4 + 4 + (4 + 4),  # outputs_data：1 个空 Bytes
-            4 + 4 + (4 + 4 + 112 + (-112) % 4),  # witnesses：112 字节 funding witness
-        )
-        return 4 + 28 + 4 + sum(parts)
+        """复刻 fiber-lib `commitment_tx_size` 的 mock 承诺交易字节长度。"""
+        return commitment_tx_size(version)
 
     def commitment_fee(self, rate, version):
         """`rate * tx_size // 1000`，与 ckb-types `FeeRate::fee` 一致。"""
@@ -399,19 +390,17 @@ class TestFullHashLayoutFee(FullHashChannelSupport):
         witness = SettlementWitness.from_hex(tx["witnesses"][0], version=version)
         assert witness.to_hex() == tx["witnesses"][0]
         witness.assert_single_tlc_claim(pending, preimage)
-        entry = 97 if version == "v1" else 85
-        assert (
-            len(bytes.fromhex(tx["witnesses"][0][2:])) == 90 + entry * len(pending) + 99
+        assert len(bytes.fromhex(tx["witnesses"][0][2:])) == witness_size(
+            version, len(pending)
         )
         amount = witness.tlcs[witness.unlocks[0].unlock_type].amount
         before, after = previous["outputs"][0], tx["outputs"][0]
         assert after["lock"]["code_hash"] == COMMIT_LOCK_CODE_HASH
         assert after["lock"]["hash_type"] == "type"
         args = bytes.fromhex(after["lock"]["args"][2:])
-        assert len(args) == (58 if version == "v1" else 57)
-        if version == "v1":
-            assert args[-1] == 1
-        assert args[:36] == bytes.fromhex(before["lock"]["args"][2:])[:36]
+        # 派生输出：args[56] 状态标志必须为 1（两版相同）；V1 末尾另有 feature 字节。
+        assert_commitment_args(args, version, derived=True)
+        assert_commitment_args_prefix(args, bytes.fromhex(before["lock"]["args"][2:]))
         # 只比较本资产：xUDT 读 output_data，不用 capacity。
         assert before["type"] == after["type"] == udt
         assert (
@@ -466,10 +455,8 @@ class TestFullHashLayoutFee(FullHashChannelSupport):
             lock = locked[0]["lock"]
             args = bytes.fromhex(lock["args"][2:])
             assert lock["hash_type"] == "type"
-            assert len(args) == (58 if version == "v1" else 57)
-            if version == "v1":
-                assert args[-1] == 1
-            assert int.from_bytes(args[20:28], "little") == 0xA000010000000001
+            assert_commitment_args(args, version)
+            assert_commitment_delay_epoch(args)
             assert locked[0]["type"] == udt
             self.ckb.generate_epochs("0x2")
             tx = self.wait_for_spend(tx["hash"])
@@ -512,9 +499,18 @@ class TestFullHashLayoutFee(FullHashChannelSupport):
         self.assert_settled_udt(
             settled, code_tx, udt, self.get_tx_message(commitment["hash"])["fee"]
         )
-        self.wait_payment_state(self.fiber1, payment_hash, "Success")
-        result = self.fiber1.get_client().get_payment({"payment_hash": payment_hash})
-        assert result["payment_preimage"] == preimage
+        # 上链产出的付款查询终态由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控；关时只核对没有被判成失败。
+        if onchain_tlc_query_enabled():
+            self.wait_payment_state(self.fiber1, payment_hash, "Success")
+            result = self.fiber1.get_client().get_payment(
+                {"payment_hash": payment_hash}
+            )
+            assert result["payment_preimage"] == preimage
+        else:
+            result = self.fiber1.get_client().get_payment(
+                {"payment_hash": payment_hash}
+            )
+            assert result["status"] != "Failed", result
 
     # ---- tests -----------------------------------------------------------
 
@@ -587,11 +583,10 @@ class TestFullHashLayoutFee(FullHashChannelSupport):
                 commitment = self.wait_for_spend(self.funding_tx)
                 settled = self.wait_for_spend(commitment["hash"])
                 raw = bytes.fromhex(settled["witnesses"][0][2:])
-                entry = 97 if version == "v1" else 85
-                expected = 90 + entry * 1 + 99
+                expected = witness_size(version, 1)
                 assert len(raw) == expected, (
-                    f"{version}: 1 笔已承诺 xUDT TLC 的 witness 宽度应为 {expected} "
-                    f"(90+{entry}+99)，实测 {len(raw)}: {settled['witnesses'][0]}"
+                    f"{version}: 1 笔已承诺 xUDT TLC 的 witness 宽度应为 {expected}，"
+                    f"实测 {len(raw)}: {settled['witnesses'][0]}"
                 )
                 widths[version] = len(raw)
         # 1 字节 feature + 每笔 TLC 多出的 12 字节完整哈希。

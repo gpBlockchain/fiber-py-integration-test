@@ -441,7 +441,6 @@ class TestFullHashRevokedLegacyByOldPeer(
 ):
     """H32V2-11（旧证据）: 旧节点广播 57 字节 Legacy 已撤销承诺，head 节点惩罚。"""
 
-    tmp_path_name = f"report/h32v2-11-legacy-{time.time_ns()}"
     ckb_rpc_port, ckb_p2p_port = 24614, 24615
     fiber1_rpc_port, fiber1_p2p_port = 24628, 24627
     fiber2_rpc_port, fiber2_p2p_port = 24629, 24630

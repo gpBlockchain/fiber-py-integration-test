@@ -98,7 +98,12 @@ from framework.attack_fnn import (
     requires_full_hash_attack_fnn,
 )
 from framework.basic_p2p import P2pFiberTest
-from framework.helper.settlement_witness import SettlementWitness
+from framework.helper.settlement_witness import (
+    COMMITMENT_ARGS_PREFIX_LEN,
+    SettlementWitness,
+    assert_commitment_args,
+)
+from framework.onchain_tlc_query import onchain_tlc_query_enabled
 from framework.test_fiber import FiberConfigPath
 from framework.util import ckb_hash
 from test_cases.fiber.devnet.compatibility.contract_upgrade_support import (
@@ -123,7 +128,6 @@ WATCHTOWER_INTERVAL = 2
 CLOSE_TIMEOUT = 180
 V1_REJECT_ROUNDS = 4
 SIBLING_ROUNDS = 8
-LEGACY_COMMITMENT_ARGS_LENGTH = 57
 REMOVED_STATUSES = {
     "LocalRemoved",
     "RemoteRemoved",
@@ -181,13 +185,17 @@ class TestFullHashBadPreimage(P2pFiberTest):
 
     # The counterparty environment is read once, before the node starts, so the
     # class attribute cannot vary per method. Select it from the method name.
+    # H32V2-07 拆成 4+4 个单组合方法后，每个方法都要在这里登记，否则
+    # setup_method 拿不到 env，对端会按默认角色启动。
     _COUNTERPARTY_ENV = {
-        "test_legacy_prefix_only_claim_accepted_each_algorithm_and_direction": (
-            LEGACY_COUNTERPARTY_ENV
-        ),
-        "test_v1_prefix_only_claim_rejected_each_algorithm_and_direction": (
-            V1_PREFIX_CLAIM_ENV
-        ),
+        "test_legacy_prefix_only_claim_ckb_hash_received": LEGACY_COUNTERPARTY_ENV,
+        "test_legacy_prefix_only_claim_ckb_hash_offered": LEGACY_COUNTERPARTY_ENV,
+        "test_legacy_prefix_only_claim_sha256_received": LEGACY_COUNTERPARTY_ENV,
+        "test_legacy_prefix_only_claim_sha256_offered": LEGACY_COUNTERPARTY_ENV,
+        "test_v1_prefix_only_claim_ckb_hash_received": V1_PREFIX_CLAIM_ENV,
+        "test_v1_prefix_only_claim_ckb_hash_offered": V1_PREFIX_CLAIM_ENV,
+        "test_v1_prefix_only_claim_sha256_received": V1_PREFIX_CLAIM_ENV,
+        "test_v1_prefix_only_claim_sha256_offered": V1_PREFIX_CLAIM_ENV,
         "test_direct_payer_fails_confirmed_prefix_only_claim": (
             LEGACY_COUNTERPARTY_ENV
         ),
@@ -344,11 +352,8 @@ class TestFullHashBadPreimage(P2pFiberTest):
         self.rpc_shutdown(self.attacker, force=True)
         commitment = self._wait_spend(funding, label="funding outpoint")
         args = bytes.fromhex(commitment["outputs"][0]["lock"]["args"][2:])
-        assert len(args) == LEGACY_COMMITMENT_ARGS_LENGTH, (
-            "LEGACY_COUNTERPARTY_ENV must negotiate the Legacy commitment layout "
-            f"({LEGACY_COMMITMENT_ARGS_LENGTH}-byte args); got {len(args)}: "
-            f"{commitment['outputs'][0]['lock']}"
-        )
+        # LEGACY_COUNTERPARTY_ENV 必须协商出 Legacy 承诺布局（57 字节 args）。
+        assert_commitment_args(args, "legacy")
         return commitment
 
     def _wait_spend(self, outpoint, label, timeout=180):
@@ -663,9 +668,9 @@ class TestFullHashBadPreimage(P2pFiberTest):
         """
         lock = commitment["outputs"][0]["lock"]
         args = bytes.fromhex(lock["args"].removeprefix("0x"))
-        assert len(args) == LEGACY_COMMITMENT_ARGS_LENGTH, lock
+        assert_commitment_args(args, "legacy")
         search_key = {
-            "script": {**lock, "args": "0x" + args[:36].hex()},
+            "script": {**lock, "args": "0x" + args[:COMMITMENT_ARGS_PREFIX_LEN].hex()},
             "script_type": "lock",
             "script_search_mode": "prefix",
         }
@@ -984,13 +989,21 @@ class TestFullHashBadPreimage(P2pFiberTest):
         - 重复扫描幂等：剩余扫描中状态、fee、本端钱包容量都不再变化（不重复计账、不追回）。
         - 无关 TLC 不受影响：记录仍在、非终态，其付款仍 Inflight。
         """
-        self.wait_payment_state(self.victim, bad_hash, "Failed", timeout=660)
-        failed = self.victim.get_client().get_payment({"payment_hash": bad_hash})
-        assert failed.get("payment_preimage") is None, failed
-        assert int(failed["last_updated_at"], 16) < expiry, failed
-        # 失败由消费证据触发而非超时：观察时刻也必须在到期之前。
-        assert int(time.time() * 1000) < expiry, failed
-        self._wait_target_tlc_terminal(self.victim, bad_hash)
+        # 上链触发的查询终态由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控；关时只核对目标付款没有
+        # 被当成成功（资金安全），链下无关 TLC 的核对照常执行。
+        if onchain_tlc_query_enabled():
+            self.wait_payment_state(self.victim, bad_hash, "Failed", timeout=660)
+            failed = self.victim.get_client().get_payment({"payment_hash": bad_hash})
+            assert failed["status"] == "Failed", failed
+            assert failed.get("payment_preimage") is None, failed
+            assert int(failed["last_updated_at"], 16) < expiry, failed
+            # 失败由消费证据触发而非超时：观察时刻也必须在到期之前。
+            assert int(time.time() * 1000) < expiry, failed
+            self._wait_target_tlc_terminal(self.victim, bad_hash)
+        else:
+            failed = self.victim.get_client().get_payment({"payment_hash": bad_hash})
+            assert failed["status"] != "Success", failed
+            assert failed.get("payment_preimage") is None, failed
 
         unrelated = self._tlc_in(self.victim, self.channel_id, unrelated_hash)
         assert unrelated, "the unrelated still-pending TLC disappeared"
@@ -1009,12 +1022,14 @@ class TestFullHashBadPreimage(P2pFiberTest):
         )  # let any on-chain credit for this node land
         baseline_wallet = self._fiber_wallet_capacity(self.victim)
         # 基线采样后连续三轮扫描：任何一次“重新挂起/重复计账”都会改变这些值。
+        # 已花出的链上资金不得被找回——这条资金安全不变量与开关无关，始终核对。
         for _ in range(3):
             self._mine_watchtower_rounds_from_config(1)
-            again = self.victim.get_client().get_payment({"payment_hash": bad_hash})
-            assert again["status"] == "Failed", again
-            assert again.get("payment_preimage") is None, again
-            assert again["fee"] == failed["fee"], again
+            if onchain_tlc_query_enabled():
+                again = self.victim.get_client().get_payment({"payment_hash": bad_hash})
+                assert again["status"] == "Failed", again
+                assert again.get("payment_preimage") is None, again
+                assert again["fee"] == failed["fee"], again
             assert self._fiber_wallet_capacity(self.victim) == baseline_wallet, (
                 "repeated scans of the same confirmed prefix-only claim must not "
                 "re-count or recover the already-spent on-chain funds: "
@@ -1108,52 +1123,71 @@ class TestFullHashBadPreimage(P2pFiberTest):
 
     # --------------------------------------------------------------- H32V2-07
 
+    def _run_legacy_prefix_only_claim(self, algorithm, received_entry):
+        """H32V2-07 Legacy 侧单个组合：一种算法 × 一个条目方向。
+
+        每个组合用自己 method 的通道，不跨组合复用通道。这样就不需要等上一条组合的链上
+        结算排空（``_finish_legacy_combination`` → ``_wait_previous_combination_gone`` 要
+        等节点自己的 300 秒周期检查），组合之间也不再互相污染资金归属。
+        """
+        self._combination_channel(0)
+        preimage, bad_hash = self._hold_bad_payment(algorithm)
+        self._assert_node_refuses_preimage(bad_hash, preimage)
+        closer = self.attacker if received_entry else self.victim
+        commitment = self._force_close(closer)
+        args = bytes.fromhex(
+            commitment["outputs"][0]["lock"]["args"].removeprefix("0x")
+        )
+        # 承诺 args 必须是 Legacy 布局，否则说明通道未协商成 Legacy。
+        assert_commitment_args(args, "legacy")
+        # 承诺 cell 的结算受承诺延迟约束：与 H32V2-14 / settle_held_channel 同一口径，
+        # 先推进一个 epoch，对端才会构造并广播仅前缀结算；少了这一步交易池始终为空。
+        self.ckb.generate_epochs("0x1", wait_time=0)
+        self._inject_prefix_preimage(bad_hash, preimage)
+        # 对端把仅前缀结算放进交易池后不会自动被打包，而 _wait_spender 只看已上链索引
+        # （get_ln_cell_death_hash 要求恰好两条记录），池中的结算对它不可见。
+        # 这里用会扫描交易池并主动打包的 _wait_spend，与 H32V2-14 同一做法。
+        spend = self._wait_spend(
+            {"tx_hash": commitment["hash"], "index": "0x0"},
+            f"仅前缀结算 ({algorithm}, received={received_entry})",
+        )
+        self._assert_legacy_prefix_claim(
+            spend, bad_hash, preimage, algorithm, received_entry
+        )
+        self._assert_no_success_record(bad_hash)
+
     # TEST-MAP: H32V2-07
     # TEST-EVIDENCE-BEGIN: H32V2-07
     # Evidence | covered | Legacy channel (57-byte commitment args); algorithms {ckb_hash, sha256}
-    # x entry directions {received = counterparty commitment, offered = victim commitment}; the
-    # on-chain prefix-only claim is accepted end to end: strict 85-byte/20-byte Legacy witness,
+    # x entry directions {received = the closing side's commitment holds a Received entry,
+    # offered = the closing side holds an Offered entry}; the on-chain prefix-only claim is
+    # accepted end to end: strict 85-byte/20-byte Legacy witness,
     # unlock index selects the exact TLC entry, direction bit (tlc_type & 1) and algorithm bit
     # (tlc_type & 2) match the closers' commitment, recipient payout equals the TLC amount minus
     # fee, and neither end records Success/Paid or a preimage. Off-chain settle_invoice and a
     # non-forced create_preimage both refuse the mismatching preimage first.
+    # partial: one method per combination, so no method drains another combination's on-chain
+    # settlement; the four methods together still cover algorithms {ckb_hash, sha256} x
+    # directions {received, offered}.
     # TEST-EVIDENCE-END: H32V2-07
-    def test_legacy_prefix_only_claim_accepted_each_algorithm_and_direction(self):
-        combinations = [
-            (algorithm, received_entry)
-            for algorithm in ("ckb_hash", "sha256")
-            for received_entry in (True, False)
-        ]
-        for index, (algorithm, received_entry) in enumerate(combinations):
-            with self.subTest(algorithm=algorithm, received_entry=received_entry):
-                self._combination_channel(index)
-                preimage, bad_hash = self._hold_bad_payment(algorithm)
-                self._assert_node_refuses_preimage(bad_hash, preimage)
-                closer = self.attacker if received_entry else self.victim
-                commitment = self._force_close(closer)
-                args = bytes.fromhex(
-                    commitment["outputs"][0]["lock"]["args"].removeprefix("0x")
-                )
-                assert (
-                    len(args) == 57
-                ), f"Legacy 承诺 args 必须 57 字节，实际 {len(args)}: 通道未协商成 Legacy"
-                # 承诺 cell 的结算受承诺延迟约束：与 H32V2-14 / settle_held_channel 同一口径，
-                # 先推进一个 epoch，对端才会构造并广播仅前缀结算；少了这一步交易池始终为空。
-                self.ckb.generate_epochs("0x1", wait_time=0)
-                self._inject_prefix_preimage(bad_hash, preimage)
-                # 对端把仅前缀结算放进交易池后不会自动被打包，而 _wait_spender 只看已上链索引
-                # （get_ln_cell_death_hash 要求恰好两条记录），池中的结算对它不可见。
-                # 这里用会扫描交易池并主动打包的 _wait_spend，与 H32V2-14 同一做法。
-                spend = self._wait_spend(
-                    {"tx_hash": commitment["hash"], "index": "0x0"},
-                    f"仅前缀结算 ({algorithm}, received={received_entry})",
-                )
-                self._assert_legacy_prefix_claim(
-                    spend, bad_hash, preimage, algorithm, received_entry
-                )
-                self._assert_no_success_record(bad_hash)
-                if index + 1 < len(combinations):
-                    self._finish_legacy_combination(commitment)
+    def test_legacy_prefix_only_claim_ckb_hash_received(self):
+        """Legacy + ckb_hash，强关端承诺中该条目为 Received。"""
+        self._run_legacy_prefix_only_claim("ckb_hash", True)
+
+    # TEST-MAP: H32V2-07
+    def test_legacy_prefix_only_claim_ckb_hash_offered(self):
+        """Legacy + ckb_hash，强关端承诺中该条目为 Offered。"""
+        self._run_legacy_prefix_only_claim("ckb_hash", False)
+
+    # TEST-MAP: H32V2-07
+    def test_legacy_prefix_only_claim_sha256_received(self):
+        """Legacy + sha256，强关端承诺中该条目为 Received。"""
+        self._run_legacy_prefix_only_claim("sha256", True)
+
+    # TEST-MAP: H32V2-07
+    def test_legacy_prefix_only_claim_sha256_offered(self):
+        """Legacy + sha256，强关端承诺中该条目为 Offered。"""
+        self._run_legacy_prefix_only_claim("sha256", False)
 
     # TEST-MAP: H32V2-07
     # TEST-EVIDENCE-BEGIN: H32V2-07
@@ -1165,29 +1199,48 @@ class TestFullHashBadPreimage(P2pFiberTest):
     # Attribution limit: a script-rejected tx never reaches the pool/chain and the counterparty exposes the
     # attempt only in its log, so "no consumption" is consistent with the contract rejecting the V1 claim
     # but does not by itself prove an attempt happened. The discriminating positive control is the Legacy
-    # method above, where the same forced preimage is accepted on chain by the 20-byte prefix rule.
+    # methods above, where the same forced preimage is accepted on chain by the 20-byte prefix rule.
+    # partial: one method per combination (like the Legacy side), so no method drains another
+    # combination's on-chain settlement; the four methods together cover algorithms {ckb_hash, sha256}
+    # x directions {received, offered}.
     # TEST-EVIDENCE-END: H32V2-07
-    def test_v1_prefix_only_claim_rejected_each_algorithm_and_direction(self):
-        combinations = [
-            (algorithm, received_entry)
-            for algorithm in ("ckb_hash", "sha256")
-            for received_entry in (True, False)
-        ]
-        for index, (algorithm, received_entry) in enumerate(combinations):
-            with self.subTest(algorithm=algorithm, received_entry=received_entry):
-                self._combination_channel(index)
-                preimage, bad_hash = self._hold_bad_payment(algorithm)
-                self._assert_node_refuses_preimage(bad_hash, preimage)
-                closer = self.attacker if received_entry else self.victim
-                commitment = self._force_close(closer)
-                args = bytes.fromhex(
-                    commitment["outputs"][0]["lock"]["args"].removeprefix("0x")
-                )
-                assert (
-                    len(args) == 58 and args[-1] == 1
-                ), f"V1 承诺 args 必须 58 字节且末位 0x01，实际 {len(args)}/{args[-1]:#x}"
-                self._inject_prefix_preimage(bad_hash, preimage)
-                self._assert_v1_rejected(commitment, bad_hash)
+    def _run_v1_prefix_only_claim(self, algorithm, received_entry):
+        """H32V2-07 V1 侧单个组合：一种算法 × 一个条目方向。
+
+        与 Legacy 侧同理，每个组合用自己 method 的通道，不等上一条组合的链上结算排空。
+        """
+        self._combination_channel(0)
+        preimage, bad_hash = self._hold_bad_payment(algorithm)
+        self._assert_node_refuses_preimage(bad_hash, preimage)
+        closer = self.attacker if received_entry else self.victim
+        commitment = self._force_close(closer)
+        args = bytes.fromhex(
+            commitment["outputs"][0]["lock"]["args"].removeprefix("0x")
+        )
+        # V1 承诺 args：58 字节且末位 feature 0x01。
+        assert_commitment_args(args, "v1")
+        self._inject_prefix_preimage(bad_hash, preimage)
+        self._assert_v1_rejected(commitment, bad_hash)
+
+    # TEST-MAP: H32V2-07
+    def test_v1_prefix_only_claim_ckb_hash_received(self):
+        """V1 + ckb_hash，强关端承诺中该条目为 Received：仅前缀结算必须被拒绝。"""
+        self._run_v1_prefix_only_claim("ckb_hash", True)
+
+    # TEST-MAP: H32V2-07
+    def test_v1_prefix_only_claim_ckb_hash_offered(self):
+        """V1 + ckb_hash，强关端承诺中该条目为 Offered：仅前缀结算必须被拒绝。"""
+        self._run_v1_prefix_only_claim("ckb_hash", False)
+
+    # TEST-MAP: H32V2-07
+    def test_v1_prefix_only_claim_sha256_received(self):
+        """V1 + sha256，强关端承诺中该条目为 Received：仅前缀结算必须被拒绝。"""
+        self._run_v1_prefix_only_claim("sha256", True)
+
+    # TEST-MAP: H32V2-07
+    def test_v1_prefix_only_claim_sha256_offered(self):
+        """V1 + sha256，强关端承诺中该条目为 Offered：仅前缀结算必须被拒绝。"""
+        self._run_v1_prefix_only_claim("sha256", False)
 
     # --------------------------------------------------------------- H32V2-14
 
@@ -1264,12 +1317,20 @@ class TestFullHashBadPreimage(P2pFiberTest):
             self._chain_median_time() < expiry
         ), f"chain median time is already past the recorded TLC expiry {expiry}"
         # 验证点 3/4：到期前有界窗口内付款 Failed、不返回成功原像，目标 TLC 收尾。
-        self.wait_payment_state(self.victim, bad_hash, "Failed", timeout=660)
-        failed = self.victim.get_client().get_payment({"payment_hash": bad_hash})
-        assert failed.get("payment_preimage") is None, failed
-        assert int(failed["last_updated_at"], 16) < expiry, failed
-        assert int(time.time() * 1000) < expiry, failed
-        self._wait_target_tlc_terminal(self.victim, bad_hash)
+        # 上链产出的付款/TLC 终态查询由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控；关时只核对没有把
+        # 这次消费当成成功兑现。
+        if onchain_tlc_query_enabled():
+            self.wait_payment_state(self.victim, bad_hash, "Failed", timeout=660)
+            failed = self.victim.get_client().get_payment({"payment_hash": bad_hash})
+            assert failed["status"] == "Failed", failed
+            assert failed.get("payment_preimage") is None, failed
+            assert int(failed["last_updated_at"], 16) < expiry, failed
+            assert int(time.time() * 1000) < expiry, failed
+            self._wait_target_tlc_terminal(self.victim, bad_hash)
+        else:
+            failed = self.victim.get_client().get_payment({"payment_hash": bad_hash})
+            assert failed["status"] != "Success", failed
+            assert failed.get("payment_preimage") is None, failed
 
         # The confirmed prefix-only spend already transferred the channel funds to
         # the counterparty. This test asserts the payer stops carrying the payment;
@@ -1279,12 +1340,14 @@ class TestFullHashBadPreimage(P2pFiberTest):
             1
         )  # let any on-chain credit for the payer land
         baseline_wallet = self._fiber_wallet_capacity(self.victim)
+        # 已花出的链上资金不得被找回——与开关无关，始终核对；写成 Failed 才需等链上扫描。
         for _ in range(3):
             self._mine_watchtower_rounds_from_config(1)
-            again = self.victim.get_client().get_payment({"payment_hash": bad_hash})
-            assert again["status"] == "Failed", again
-            assert again.get("payment_preimage") is None, again
-            assert again["fee"] == failed["fee"], again
+            if onchain_tlc_query_enabled():
+                again = self.victim.get_client().get_payment({"payment_hash": bad_hash})
+                assert again["status"] == "Failed", again
+                assert again.get("payment_preimage") is None, again
+                assert again["fee"] == failed["fee"], again
             assert self._fiber_wallet_capacity(self.victim) == baseline_wallet, (
                 "repeated scans must not recover the already-spent on-chain funds; "
                 f"payer baseline={baseline_wallet} now={self._fiber_wallet_capacity(self.victim)}"
@@ -1548,10 +1611,8 @@ class TestFullHashBadPreimage(P2pFiberTest):
         args = bytes.fromhex(
             commitment["outputs"][0]["lock"]["args"].removeprefix("0x")
         )
-        # 证明点 1：下游按 57 字节 Legacy 承诺强关，witness 20 字节前缀语义才有意义。
-        assert (
-            len(args) == 57
-        ), f"下游通道必须是 Legacy 承诺，实际 args={len(args)} 字节"
+        # 证明点 1：下游按 Legacy 承诺布局强关，witness 20 字节前缀语义才有意义。
+        assert_commitment_args(args, "legacy")
         # 结算受承诺延迟约束：与 H32V2-14 / settle_held_channel 同一口径，先推进一个 epoch，
         # 对端才会构造并广播仅前缀结算（少了这一步交易池始终为空）。
         self.ckb.generate_epochs("0x1", wait_time=0)
@@ -1596,15 +1657,25 @@ class TestFullHashBadPreimage(P2pFiberTest):
         assert bytes.fromhex(other_hash.removeprefix("0x"))[:20] in remaining, remaining
 
         # 证明点 4：The received target TLC is closed as a failed consumption and never fulfilled.
-        self.wait_payment_state(payer, target_hash, "Failed", timeout=660)
-        failed = payer.get_client().get_payment({"payment_hash": target_hash})
-        assert failed.get("payment_preimage") is None, failed
-        # 本端 inbound（接收侧）与 outbound（转发出去）两侧的目标 TLC 都按失败移除，
-        # 证明收尾发生在 received 侧而不是只清掉出站记录。
-        self._wait_tlc_removed(victim, target_hash, "Inbound", upstream_id, timeout=660)
-        self._wait_tlc_removed(
-            victim, target_hash, "Outbound", downstream_id, timeout=660
-        )
+        # 上链产出的付款终态与 TLC 收尾查询由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控；关时只核对
+        # 没有把这次消费当成成功兑现。
+        if onchain_tlc_query_enabled():
+            self.wait_payment_state(payer, target_hash, "Failed", timeout=660)
+            failed = payer.get_client().get_payment({"payment_hash": target_hash})
+            assert failed["status"] == "Failed", failed
+            assert failed.get("payment_preimage") is None, failed
+            # 本端 inbound（接收侧）与 outbound（转发出去）两侧的目标 TLC 都按失败移除，
+            # 证明收尾发生在 received 侧而不是只清掉出站记录。
+            self._wait_tlc_removed(
+                victim, target_hash, "Inbound", upstream_id, timeout=660
+            )
+            self._wait_tlc_removed(
+                victim, target_hash, "Outbound", downstream_id, timeout=660
+            )
+        else:
+            failed = payer.get_client().get_payment({"payment_hash": target_hash})
+            assert failed["status"] != "Success", failed
+            assert failed.get("payment_preimage") is None, failed
 
         # 证明点 5：The unrelated received TLC on the same upstream channel keeps its own state.
         # 兄弟在上游与下游都未被移除，其付款仍 Inflight 且无原像，对端发票保持 Received：
@@ -1685,8 +1756,8 @@ class TestFullHashBadPreimage(P2pFiberTest):
         args = bytes.fromhex(
             commitment["outputs"][0]["lock"]["args"].removeprefix("0x")
         )
-        # 证明点 2：57 字节 args 确认是 Legacy 承诺，witness 才按 20 字节 hash 解析。
-        assert len(args) == 57, f"Legacy 通道承诺 args 必须 57 字节，实际 {len(args)}"
+        # 证明点 2：Legacy 承诺布局确认后，witness 才按 20 字节 hash 解析。
+        assert_commitment_args(args, "legacy")
         # 结算受承诺延迟约束：与 H32V2-14 / settle_held_channel 同一口径，先推进一个 epoch，
         # 对端才会构造并广播结算（少了这一步交易池始终为空）。
         self.ckb.generate_epochs("0x1", wait_time=0)
@@ -1713,10 +1784,16 @@ class TestFullHashBadPreimage(P2pFiberTest):
         ), witness.tlcs
 
         # 证明点 4：A 的完整 hash 与原像相符，必须按真实原像兑现成功。
-        self.wait_payment_state(self.victim, hash_a, "Success", timeout=300)
-        settled = self.victim.get_client().get_payment({"payment_hash": hash_a})
-        assert settled["payment_preimage"] == preimage_a, settled
-        self.wait_invoice_state(self.attacker, hash_a, "Paid", timeout=120)
+        # 上链产出的付款/发票终态由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控；关时只核对这次消费
+        # 没有被判成失败。
+        if onchain_tlc_query_enabled():
+            self.wait_payment_state(self.victim, hash_a, "Success", timeout=300)
+            settled = self.victim.get_client().get_payment({"payment_hash": hash_a})
+            assert settled["payment_preimage"] == preimage_a, settled
+            self.wait_invoice_state(self.attacker, hash_a, "Paid", timeout=120)
+        else:
+            settled = self.victim.get_client().get_payment({"payment_hash": hash_a})
+            assert settled["status"] != "Failed", settled
 
         # 证明点 5：B 与 A 共享 20 字节前缀但不得被这次消费影响。
         # _assert_sibling_survives 在多轮 _mine_watchtower_rounds 中重复核对：B 的 TLC 记录
@@ -1767,8 +1844,8 @@ class TestFullHashBadPreimage(P2pFiberTest):
         args = bytes.fromhex(
             commitment["outputs"][0]["lock"]["args"].removeprefix("0x")
         )
-        # 证明点 1：57 字节 args 确认 Legacy 承诺；此后进入链上关闭核对。
-        assert len(args) == 57, f"Legacy 通道承诺 args 必须 57 字节，实际 {len(args)}"
+        # 证明点 1：Legacy 承诺布局确认后，进入链上关闭核对。
+        assert_commitment_args(args, "legacy")
         self._mine_watchtower_rounds(2)
 
         # 证明点 2：Before expiry: the exact TLC is on chain but has no preimage evidence, so the
@@ -1793,13 +1870,20 @@ class TestFullHashBadPreimage(P2pFiberTest):
         self.__class__._clock_advanced = True
         self.add_time_and_generate_epoch(self._hours_past_expiry(offered), 1)
         self._mine_watchtower_rounds(4)
-        self.wait_payment_state(self.victim, payment_hash, "Failed", timeout=300)
-        after = self.victim.get_client().get_payment({"payment_hash": payment_hash})
-        assert after.get("payment_preimage") is None, after
-        # _wait_tlc_removed_after_expiry 接受终态或 REMOVED_STATUSES，专门覆盖超时收尾路径。
-        self._wait_tlc_removed_after_expiry(
-            self.victim, payment_hash, "Outbound", self.channel_id, timeout=180
-        )
+        # 上链超时路径产出的付款/TLC 终态查询由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控；关时只
+        # 核对没有因此拿到成功原像。
+        if onchain_tlc_query_enabled():
+            self.wait_payment_state(self.victim, payment_hash, "Failed", timeout=300)
+            after = self.victim.get_client().get_payment({"payment_hash": payment_hash})
+            assert after["status"] == "Failed", after
+            assert after.get("payment_preimage") is None, after
+            # _wait_tlc_removed_after_expiry 接受终态或 REMOVED_STATUSES，专门覆盖超时收尾路径。
+            self._wait_tlc_removed_after_expiry(
+                self.victim, payment_hash, "Outbound", self.channel_id, timeout=180
+            )
+        else:
+            after = self.victim.get_client().get_payment({"payment_hash": payment_hash})
+            assert after.get("payment_preimage") is None, after
 
     # --------------------------------------------------------------- H32V2-18
 

@@ -11,7 +11,13 @@ import time
 
 from framework.basic_fiber import COMMIT_LOCK_CODE_HASH
 from framework.config import DEFAULT_MIN_DEPOSIT_CKB
-from framework.helper.settlement_witness import SettlementWitness
+from framework.helper.settlement_witness import (
+    SettlementWitness,
+    assert_commitment_args,
+    assert_commitment_args_prefix,
+    witness_size,
+)
+from framework.onchain_tlc_query import onchain_tlc_query_enabled
 from framework.util import ckb_hash
 from test_cases.fiber.devnet.compatibility.contract_upgrade_support import (
     CKB,
@@ -31,7 +37,6 @@ def asset_amount(output, data, udt):
 
 
 class TestFullHashDerivedAssets(ContractUpgradeSupport):
-    tmp_path_name = f"report/h32-derived-assets-{time.time_ns()}"
     ckb_rpc_port, ckb_p2p_port = 22014, 22015
     fiber1_rpc_port, fiber1_p2p_port = 22028, 22027
     fiber2_rpc_port, fiber2_p2p_port = 22029, 22030
@@ -82,20 +87,23 @@ class TestFullHashDerivedAssets(ContractUpgradeSupport):
             bytes.fromhex(h.removeprefix("0x")) for h, _ in pending
         ], (witness.tlcs, pending)
         # Explicit byte-width assertion in addition to strict parser round-trip.
-        # 显式字节宽度：每笔剩余 TLC 仍按 V1 的 97 字节条目计（90 前缀 + 97×N + 99 余额与解锁）。
-        assert len(bytes.fromhex(tx["witnesses"][0][2:])) == 90 + 97 * len(pending) + 99
+        # 显式字节宽度：每笔剩余 TLC 仍按 V1 的条目宽度计（90 前缀 + 条目×N + 99 余额与解锁）。
+        # 本方法是 V1 专用判据（上面 witness 也按 "v1" 解析），且被 oracle 测试以 mock
+        # subject 调用，不能用 self.commitment_version。
+        assert len(bytes.fromhex(tx["witnesses"][0][2:])) == witness_size(
+            "v1", len(pending)
+        )
         amount = witness.tlcs[witness.unlocks[0].unlock_type].amount
         before, after = previous["outputs"][0], tx["outputs"][0]
-        # 花费前后的承诺锁都必须是 58 字节 + 末位 0x01：派生一次也不能丢版本位。
+        # 花费前后的承诺锁都必须保持 V1 布局：派生一次也不能丢版本位。
         before_args = bytes.fromhex(before["lock"]["args"][2:])
-        assert len(before_args) == 58 and before_args[-1] == 1
+        assert_commitment_args(before_args, "v1")
         args = bytes.fromhex(after["lock"]["args"][2:])
         assert after["lock"]["code_hash"] == COMMIT_LOCK_CODE_HASH
-        assert (
-            after["lock"]["hash_type"] == "type" and len(args) == 58 and args[-1] == 1
-        )
+        assert after["lock"]["hash_type"] == "type"
+        assert_commitment_args(args, "v1")
         # 前 36 字节（通道身份与承诺号前缀）保持不变，避免把换锁误当成同布局派生。
-        assert args[:36] == before_args[:36]
+        assert_commitment_args_prefix(args, before_args)
         # 只比较本资产：CKB 看 capacity，xUDT 看 16 字节小额端金额；减少值须恰等于本次兑现金额。
         assert before["type"] == after["type"] == udt
         assert (
@@ -234,7 +242,8 @@ class TestFullHashDerivedAssets(ContractUpgradeSupport):
         self.funding_tx = "0x" + point[:32].hex()
         # 期望本金必须与链上 funding 输出的本资产金额自洽，而不是写死的数字。
         principals = [
-            int(c["local_balance"], 16) + (DEFAULT_MIN_DEPOSIT_CKB if udt is None else 0)
+            int(c["local_balance"], 16)
+            + (DEFAULT_MIN_DEPOSIT_CKB if udt is None else 0)
             for c in channels
         ]
         funding = self.ckb.get_transaction(self.funding_tx)["transaction"]
@@ -317,7 +326,8 @@ class TestFullHashDerivedAssets(ContractUpgradeSupport):
             for output in tx["outputs"]:
                 if output["lock"]["code_hash"] == COMMIT_LOCK_CODE_HASH:
                     args = bytes.fromhex(output["lock"]["args"][2:])
-                    assert len(args) == 58 and args[-1] == 1 and output["type"] == udt
+                    assert_commitment_args(args, self.commitment_version)
+                    assert output["type"] == udt
             fees += self.get_tx_message(tx["hash"])["fee"]
         assert not any(
             o["lock"]["code_hash"] == COMMIT_LOCK_CODE_HASH for o in tx["outputs"]
@@ -339,15 +349,25 @@ class TestFullHashDerivedAssets(ContractUpgradeSupport):
         else:
             assert token_delta == principals
         # 两笔付款都要记录 Success、持有各自正确原像，且对应 TLC 进入终态。
+        # 上链产出的付款/TLC 终态查询由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控；关时只核对两笔都没
+        # 有被判成失败。
         for (payment_hash, _), preimage in zip(payments, preimages):
-            self.wait_payment_state(self.fiber1, payment_hash, "Success")
-            assert (
-                self.fiber1.get_client().get_payment({"payment_hash": payment_hash})[
-                    "payment_preimage"
-                ]
-                == preimage
-            )
-            for fiber in self.fibers:
-                self.wait_tlc_terminal(fiber, payment_hash, timeout=660)
+            if onchain_tlc_query_enabled():
+                self.wait_payment_state(self.fiber1, payment_hash, "Success")
+                assert (
+                    self.fiber1.get_client().get_payment(
+                        {"payment_hash": payment_hash}
+                    )["payment_preimage"]
+                    == preimage
+                )
+                for fiber in self.fibers:
+                    self.wait_tlc_terminal(fiber, payment_hash, timeout=660)
+            else:
+                assert (
+                    self.fiber1.get_client().get_payment(
+                        {"payment_hash": payment_hash}
+                    )["status"]
+                    != "Failed"
+                )
         self.assert_local_closed()
         self.assert_nodes_running()

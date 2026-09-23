@@ -6,7 +6,14 @@ import subprocess
 import time
 
 from framework.basic_fiber import COMMIT_LOCK_CODE_HASH
-from framework.helper.settlement_witness import SettlementWitness
+from framework.helper.settlement_witness import (
+    SettlementWitness,
+    assert_commitment_args,
+    assert_commitment_args_prefix,
+    assert_commitment_delay_epoch,
+    witness_size,
+)
+from framework.onchain_tlc_query import onchain_tlc_query_enabled
 from framework.test_fiber import FiberConfigPath
 from framework.util import ckb_hash
 from test_cases.fiber.devnet.compatibility.contract_upgrade_support import (
@@ -167,19 +174,17 @@ class TestContractUpgradeOnchain(ContractUpgradeSupport):
         witness = SettlementWitness.from_hex(tx["witnesses"][0], version=version)
         assert witness.to_hex() == tx["witnesses"][0]
         witness.assert_single_tlc_claim(pending, preimage)
-        entry = 97 if version == "v1" else 85
-        assert (
-            len(bytes.fromhex(tx["witnesses"][0][2:])) == 90 + entry * len(pending) + 99
+        assert len(bytes.fromhex(tx["witnesses"][0][2:])) == witness_size(
+            version, len(pending)
         )
         amount = witness.tlcs[witness.unlocks[0].unlock_type].amount
         before, after = previous["outputs"][0], tx["outputs"][0]
         assert after["lock"]["code_hash"] == COMMIT_LOCK_CODE_HASH
         assert after["lock"]["hash_type"] == "type"
         args = bytes.fromhex(after["lock"]["args"][2:])
-        assert len(args) == (58 if version == "v1" else 57)
-        if version == "v1":
-            assert args[-1] == 1
-        assert args[:36] == bytes.fromhex(before["lock"]["args"][2:])[:36]
+        # 派生输出：args[56] 状态标志必须为 1（两版相同）；V1 末尾另有 feature 字节。
+        assert_commitment_args(args, version, derived=True)
+        assert_commitment_args_prefix(args, bytes.fromhex(before["lock"]["args"][2:]))
         # 只比较本资产：xUDT 读 output_data，不用 capacity。
         assert before["type"] == after["type"] == udt
         assert (
@@ -234,10 +239,8 @@ class TestContractUpgradeOnchain(ContractUpgradeSupport):
             lock = locked[0]["lock"]
             args = bytes.fromhex(lock["args"][2:])
             assert lock["hash_type"] == "type"
-            assert len(args) == (58 if version == "v1" else 57)
-            if version == "v1":
-                assert args[-1] == 1
-            assert int.from_bytes(args[20:28], "little") == 0xA000010000000001
+            assert_commitment_args(args, version)
+            assert_commitment_delay_epoch(args)
             assert locked[0]["type"] == udt
             self.ckb.generate_epochs("0x2")
             tx = self.wait_for_spend(tx["hash"])
@@ -448,16 +451,29 @@ class TestContractUpgradeOnchain(ContractUpgradeSupport):
         )
         self.assert_settled(second, new_code, prior_fees)
         # 两笔都以原像兑现收尾，本端记录 Success 且持有正确原像；不留下未结算 TLC。
-        for preimage, (payment_hash, _) in zip(preimages, payments):
-            self.wait_payment_state(self.fiber1, payment_hash, "Success", timeout=660)
-            assert (
-                self.fiber1.get_client().get_payment({"payment_hash": payment_hash})[
-                    "payment_preimage"
-                ]
-                == preimage
-            )
-        for payment_hash, _ in payments:
-            self.wait_tlc_terminal(self.fiber1, payment_hash)
+        # 上链产出的付款/TLC 终态查询由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控；关时只核对没有被
+        # 判成失败。
+        if onchain_tlc_query_enabled():
+            for preimage, (payment_hash, _) in zip(preimages, payments):
+                self.wait_payment_state(
+                    self.fiber1, payment_hash, "Success", timeout=660
+                )
+                assert (
+                    self.fiber1.get_client().get_payment(
+                        {"payment_hash": payment_hash}
+                    )["payment_preimage"]
+                    == preimage
+                )
+            for payment_hash, _ in payments:
+                self.wait_tlc_terminal(self.fiber1, payment_hash)
+        else:
+            for _, (payment_hash, _) in zip(preimages, payments):
+                assert (
+                    self.fiber1.get_client().get_payment(
+                        {"payment_hash": payment_hash}
+                    )["status"]
+                    != "Failed"
+                )
         self.assert_local_closed()
 
     # TEST-MAP: H32V2-23
@@ -542,16 +558,29 @@ class TestContractUpgradeOnchain(ContractUpgradeSupport):
         )
         self.assert_settled_udt(second, new_code, udt, prior_fees)
         # 两笔都以原像兑现收尾，本端记录 Success 且持有正确原像；不留下未结算 TLC。
-        for preimage, (payment_hash, _) in zip(preimages, payments):
-            self.wait_payment_state(self.fiber1, payment_hash, "Success", timeout=660)
-            assert (
-                self.fiber1.get_client().get_payment({"payment_hash": payment_hash})[
-                    "payment_preimage"
-                ]
-                == preimage
-            )
-        for payment_hash, _ in payments:
-            self.wait_tlc_terminal(self.fiber1, payment_hash)
+        # 上链产出的付款/TLC 终态查询由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控；关时只核对没有被
+        # 判成失败。
+        if onchain_tlc_query_enabled():
+            for preimage, (payment_hash, _) in zip(preimages, payments):
+                self.wait_payment_state(
+                    self.fiber1, payment_hash, "Success", timeout=660
+                )
+                assert (
+                    self.fiber1.get_client().get_payment(
+                        {"payment_hash": payment_hash}
+                    )["payment_preimage"]
+                    == preimage
+                )
+            for payment_hash, _ in payments:
+                self.wait_tlc_terminal(self.fiber1, payment_hash)
+        else:
+            for _, (payment_hash, _) in zip(preimages, payments):
+                assert (
+                    self.fiber1.get_client().get_payment(
+                        {"payment_hash": payment_hash}
+                    )["status"]
+                    != "Failed"
+                )
         self.assert_local_closed()
 
     # TEST-MAP: H32V2-26

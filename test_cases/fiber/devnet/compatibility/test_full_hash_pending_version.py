@@ -30,6 +30,7 @@ import subprocess
 import time
 
 from framework.config import DEFAULT_MIN_LEDGER_DEPOSIT_CKB
+from framework.helper.settlement_witness import assert_commitment_args
 from framework.test_fiber import FiberConfigPath
 from test_cases.fiber.devnet.compatibility.contract_upgrade_support import (
     CKB,
@@ -53,7 +54,6 @@ FULL_HASH_FEATURE = "ONCHAIN_FULL_PAYMENT_HASH"
 class TestFullHashPendingVersion(ContractUpgradeSupport):
     """对端断连后，原待接受请求必须失效；重连后的请求是全新请求。"""
 
-    tmp_path_name = f"report/h32v2-pending-version-{time.time_ns()}"
     ckb_rpc_port, ckb_p2p_port = 25414, 25415
     fiber1_rpc_port, fiber1_p2p_port = 25428, 25427
     fiber2_rpc_port, fiber2_p2p_port = 25429, 25430
@@ -206,9 +206,7 @@ class TestFullHashPendingVersion(ContractUpgradeSupport):
         return sender.get_client().open_channel(
             {
                 "pubkey": receiver.get_pubkey(),
-                "funding_amount": hex(
-                    1000 * CKB + DEFAULT_MIN_LEDGER_DEPOSIT_CKB
-                ),
+                "funding_amount": hex(1000 * CKB + DEFAULT_MIN_LEDGER_DEPOSIT_CKB),
                 "public": True,
             }
         )
@@ -338,14 +336,11 @@ class TestFullHashPendingVersion(ContractUpgradeSupport):
         )
         self.wait_both_ready(victim, peer)
 
-        # 新请求按对端当前（Legacy-only）宣告重新协商：强关承诺锁必须是 57 字节。
+        # 新请求按对端当前（Legacy-only）宣告重新协商：强关承诺锁必须保持 Legacy 布局。
         self.record_ready_channel(victim, peer)
         commitment = self.force_close(victim)
         args = bytes.fromhex(commitment["outputs"][0]["lock"]["args"][2:])
-        assert len(args) == 57, (
-            f"对端只宣告 Legacy 时新通道的承诺锁应为 57 字节，实测 {len(args)}: "
-            f"args={commitment['outputs'][0]['lock']['args']}"
-        )
+        assert_commitment_args(args, "legacy")
         print(
             "H32V2-03:",
             {
