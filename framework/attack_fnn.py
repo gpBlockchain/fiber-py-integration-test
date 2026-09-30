@@ -18,9 +18,14 @@ ATTACK_FULL_HASH_FNN = os.path.join(
 # Counterparty switches read by that build at start / settlement time.
 DISABLE_FULL_HASH_FEATURE_ENV = "FIBER_TEST_DISABLE_FULL_HASH_FEATURE"
 ALLOW_FULL_HASH_MISMATCH_ENV = "FIBER_TEST_ALLOW_FULL_HASH_MISMATCH"
+# FBR-2026-0060: when set (e.g. "sha256"), the node writes this algorithm into
+# the inner trampoline hop payload while the outer payment session keeps its
+# own, letting a malicious sender desynchronize the two TLC hash algorithms.
+TRAMPOLINE_INNER_HASH_ALGORITHM_ENV = "FIBER_TEST_TRAMPOLINE_INNER_HASH_ALGORITHM"
 
 LEGACY_COUNTERPARTY_ENV = {DISABLE_FULL_HASH_FEATURE_ENV: "1"}
 V1_PREFIX_CLAIM_ENV = {ALLOW_FULL_HASH_MISMATCH_ENV: "1"}
+TRAMPOLINE_INNER_SHA256_ENV = {TRAMPOLINE_INNER_HASH_ALGORITHM_ENV: "sha256"}
 
 
 def requires_attack_fnn(test_item):
