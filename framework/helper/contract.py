@@ -124,7 +124,9 @@ def upgrade_ckb_type_contract(
         "hash_type": "type",
         "args": account["lock_arg"],
     }:
-        raise ValueError("contract lock must be the private key's standard sighash lock")
+        raise ValueError(
+            "contract lock must be the private key's standard sighash lock"
+        )
 
     # Capacity occupies 8 bytes; each script occupies 32 + 1 + len(args).
     occupied = 8 + len(data) + 66
@@ -134,7 +136,9 @@ def upgrade_ckb_type_contract(
     capacity = int(output["capacity"], 16)
     inputs = [(contract_out_point_tx_hash, index)]
     if capacity < required_capacity:
-        live_cells = wallet_get_live_cells(account["address"]["testnet"], api_url=api_url)
+        live_cells = wallet_get_live_cells(
+            account["address"]["testnet"], api_url=api_url
+        )
         for candidate in live_cells["live_cells"]:
             candidate_index = candidate["output_index"]
             if isinstance(candidate_index, str):
@@ -146,7 +150,9 @@ def upgrade_ckb_type_contract(
             out_point = (candidate["tx_hash"], candidate_index)
             if out_point in inputs or not candidate.get("mature", True):
                 continue
-            funding = client.get_live_cell(hex(candidate_index), candidate["tx_hash"], True)
+            funding = client.get_live_cell(
+                hex(candidate_index), candidate["tx_hash"], True
+            )
             if funding["status"] != "live":
                 continue
             funding_output = funding["cell"]["output"]

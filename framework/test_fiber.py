@@ -62,6 +62,13 @@ class FiberConfigPath(Enum):
         "download/fiber/attack/fnn",
     )
 
+    # p2p-tap debug RPCs adapted onto the full-payment-hash branch (8b95af3);
+    # it can act as a Legacy or V1 counterparty, see framework/attack_fnn.py.
+    ATTACK_FULL_HASH_DEV = (
+        "/source/fiber/dev_config_3.yml.j2",
+        "download/fiber/attack-full-payment-hash/fnn",
+    )
+
     CURRENT_MAINNET = (
         "/source/template/fiber/mainnet_config_3.yml.j2",
         "download/fiber/0.9.0/fnn",
@@ -75,6 +82,11 @@ class FiberConfigPath(Enum):
     V070_DEV = (
         "/source/fiber/dev_config_3.yml.j2",
         "download/fiber/0.7.0/fnn",
+    )
+
+    V091_DEV = (
+        "/source/fiber/dev_config_3.yml.j2",
+        "download/fiber/0.9.1/fnn",
     )
 
     V081_DEV = (
@@ -130,6 +142,9 @@ class Fiber:
             "rpc_listening_addr": config["rpc_listening_addr"],
         }
         self.account_private = account_private
+        # Extra environment variables for this node only (e.g. test-only
+        # counterparty switches); applied by start().
+        self.extra_env = {}
         self.tmp_path = f"{get_tmp_path()}/{tmp_path}"
         self.fiber_config_path = f"{self.tmp_path}/config.yml"
         self.client = FiberRPCClient(f"http://{config['rpc_listening_addr']}")
@@ -228,8 +243,11 @@ class Fiber:
             rpc_biscuit_public_key_option = (
                 f" --rpc-biscuit-public-key {rpc_biscuit_public_key}"
             )
+        extra_env = "".join(
+            f"{key}='{value}' " for key, value in getattr(self, "extra_env", {}).items()
+        )
         run_command(
-            f" FIBER_SECRET_KEY_PASSWORD='{password}' RUST_LOG=info,fnn={fnn_log_level} {get_project_root()}/{self.fiber_config_enum.fiber_bin_path} -c {self.tmp_path}/config.yml -d {self.tmp_path} {rpc_biscuit_public_key_option}  >> {self.tmp_path}/node.log 2>&1 &"
+            f" {extra_env}FIBER_SECRET_KEY_PASSWORD='{password}' RUST_LOG=info,fnn={fnn_log_level} {get_project_root()}/{self.fiber_config_enum.fiber_bin_path} -c {self.tmp_path}/config.yml -d {self.tmp_path} {rpc_biscuit_public_key_option}  >> {self.tmp_path}/node.log 2>&1 &"
             # env=env_map,
         )
         # wait rpc port open

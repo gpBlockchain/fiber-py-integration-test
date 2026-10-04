@@ -18,7 +18,7 @@ on:
         default: 'https://github.com/nervosnetwork/fiber.git'
       GitBranch:
         description: 'fiber -git branch'
-        default: 'v0.9.1'
+        default: 'fix/commitment-lock-full-payment-hash'
   schedule:
     - cron: '0 0 */7 * *'
 
@@ -45,7 +45,7 @@ jobs:
         run: make prepare
         env:
           GitUrl: '${{ github.event.inputs.GitUrl }}'
-          GitBranch: ${{ github.event.inputs.GitBranch || 'v0.9.1' }}
+          GitBranch: ${{ github.event.inputs.GitBranch || 'fix/commitment-lock-full-payment-hash' }}
 
 
       - name: Tar backup

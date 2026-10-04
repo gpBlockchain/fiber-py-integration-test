@@ -1,6 +1,8 @@
 set -ex
 
-DEFAULT_FIBER_BRANCH="v0.9.1"
+# Compatibility/full-payment-hash CI must build this fiber head, not the v0.9.1
+# tag: download/fiber/current/fnn is the binary every fiber.yml job runs.
+DEFAULT_FIBER_BRANCH="fix/commitment-lock-full-payment-hash"
 DEFAULT_FIBER_URL="https://github.com/nervosnetwork/fiber.git"
 
 GitFIBERBranch="${GitBranch:-$DEFAULT_FIBER_BRANCH}"
