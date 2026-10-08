@@ -94,7 +94,7 @@ class FiberTest(CkbTest):
 
         cls.node.prepare()
         tar_file(
-            f"{get_project_root()}/source/fiber/data.2026.0914.tar.gz", cls.node.ckb_dir
+            f"{get_project_root()}/source/fiber/data.2026.0929.tar.gz", cls.node.ckb_dir
         )
         cls.node.start()
         cls.node.getClient().get_consensus()

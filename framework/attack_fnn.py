@@ -6,11 +6,9 @@ import pytest
 
 from framework.util import get_project_root
 
-ATTACK_FNN = os.path.join(get_project_root(), "download/fiber/attack/fnn")
-
 # p2p-tap debug RPCs adapted onto fix/commitment-lock-full-payment-hash
-# (8b95af3). Unlike the legacy attacker this build understands the V1
-# commitment layout and its watchtower can emit a prefix-only preimage claim.
+# (8b95af3). This is the single instrumented FNN used by attack regressions: it
+# understands the V1 commitment layout and can emulate a Legacy counterparty.
 ATTACK_FULL_HASH_FNN = os.path.join(
     get_project_root(), "download/fiber/attack-full-payment-hash/fnn"
 )
@@ -29,16 +27,7 @@ TRAMPOLINE_INNER_SHA256_ENV = {TRAMPOLINE_INNER_HASH_ALGORITHM_ENV: "sha256"}
 
 
 def requires_attack_fnn(test_item):
-    """Select the test for attack-FNN CI and skip when its binary is absent."""
-    test_item = pytest.mark.requires_attack_fnn(test_item)
-    return pytest.mark.skipif(
-        not (os.path.isfile(ATTACK_FNN) and os.access(ATTACK_FNN, os.X_OK)),
-        reason=f"executable attack fnn not found at {ATTACK_FNN}",
-    )(test_item)
-
-
-def requires_full_hash_attack_fnn(test_item):
-    """Select full-payment-hash counterparty tests; skip when the build is absent."""
+    """Select attack-FNN CI tests and skip when the full-hash build is absent."""
     test_item = pytest.mark.requires_attack_fnn(test_item)
     return pytest.mark.skipif(
         not (

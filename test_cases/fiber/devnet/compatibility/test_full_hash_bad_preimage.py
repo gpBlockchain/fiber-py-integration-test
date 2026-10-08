@@ -6,11 +6,15 @@ Merged from ``test_full_hash_invalid_preimage.py``,
 
 Topology
 --------
-Honest victim (``CURRENT_DEV``) -- counterparty (``ATTACK_FULL_HASH_DEV``). When
-the method selects ``LEGACY_COUNTERPARTY_ENV`` the counterparty does not
-advertise the full-hash feature, so the channel negotiates the Legacy commitment
-layout (57-byte args / 85-byte TLC entries) even though the honest node supports
-the feature. The counterparty creates a hold invoice whose 32-byte payment hash
+For ordinary Legacy cases, two official v0.9.1 nodes open a channel; the victim
+then restarts as ``CURRENT_DEV`` on the same store. Prefix-only claim cases need
+``ATTACK_FULL_HASH_DEV`` to bypass the normal preimage check: the v0.9.1 victim
+opens to this feature-disabled test counterparty before upgrading. Both paths
+check the original channel ID, outpoint, balances, commitment hash and ready
+state; neither asks a current node to open a fresh Legacy channel. The attack
+path does not prove a stock old-old counterparty can later make a bad claim.
+For V1, ``CURRENT_DEV`` opens directly to the feature-capable counterparty.
+The counterparty creates a hold invoice whose 32-byte payment hash
 shares only its 20-byte prefix with ``sha256(preimage)``, force-closes, stores
 that preimage under that hash (``create_preimage force=true``) and its
 watchtower broadcasts the prefix-only settlement.
@@ -56,8 +60,10 @@ Counterparty wiring
 before the test body runs, so the per-method environment is selected in
 ``setup_method`` from the running method name:
 
-* Legacy methods disable the full-hash feature -> the channel negotiates Legacy;
-* the V1 method additionally lets the counterparty build a V1 settlement whose
+* H32V2-17 uses two stock v0.9.1 nodes. Prefix-only claim methods disable the
+  attack node's full-hash feature while the victim is still v0.9.1. Both restore
+  the same channel under the new victim binary;
+* V1 methods additionally let the counterparty build a V1 settlement whose
   preimage does not match the full 32-byte hash (``V1_PREFIX_CLAIM_ENV``), which
   is the only way the contract's rejection can actually be exercised.
 
@@ -95,7 +101,7 @@ import pytest
 from framework.attack_fnn import (
     LEGACY_COUNTERPARTY_ENV,
     V1_PREFIX_CLAIM_ENV,
-    requires_full_hash_attack_fnn,
+    requires_attack_fnn,
 )
 from framework.basic_p2p import P2pFiberTest
 from framework.helper.settlement_witness import (
@@ -106,6 +112,7 @@ from framework.helper.settlement_witness import (
 from framework.onchain_tlc_query import onchain_tlc_query_enabled
 from framework.test_fiber import FiberConfigPath
 from framework.util import ckb_hash
+from test_cases.fiber.devnet.migration._helpers import start_with_confirm
 from test_cases.fiber.devnet.compatibility.contract_upgrade_support import (
     CKB,
     commitment_hash_without_deps,
@@ -162,7 +169,7 @@ def same_twenty_byte_prefix_hash(payment_hash):
     return "0x" + changed.hex()
 
 
-@requires_full_hash_attack_fnn
+@requires_attack_fnn
 class TestFullHashBadPreimage(P2pFiberTest):
     """Prefix-only preimage claims: Legacy vs V1, relay, restart and expiry."""
 
@@ -210,6 +217,10 @@ class TestFullHashBadPreimage(P2pFiberTest):
         ),
         "test_repeated_scan_while_alive_keeps_unrelated_tlc": (LEGACY_COUNTERPARTY_ENV),
     }
+    _OLD_OLD_LEGACY_METHODS = {
+        "test_same_prefix_sibling_survives_confirmed_claim",
+        "test_exact_no_preimage_offered_tlc_waits_for_expiry",
+    }
 
     @classmethod
     def setup_class(cls):
@@ -226,8 +237,9 @@ class TestFullHashBadPreimage(P2pFiberTest):
             cls.extra_fiber_p2p_port + 1,
         ):
             with socket.socket() as sock:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 sock.bind(("127.0.0.1", port))
-        # 本类只用 head 基线的对抗对端，不依赖 V091 二进制。
+        # Legacy 分支先由 v0.9.1 建通道，再让新节点读取同一份原库。
         super().setup_class()
         cls.ckb = cls.node.getClient()
 
@@ -247,11 +259,41 @@ class TestFullHashBadPreimage(P2pFiberTest):
             self.__class__._clock_advanced = False
 
     def setup_method(self, method):
-        self.attacker_env = self._COUNTERPARTY_ENV.get(method.__name__)
+        old_old = method.__name__ in self._OLD_OLD_LEGACY_METHODS
+        configured_env = self._COUNTERPARTY_ENV.get(method.__name__)
+        legacy = configured_env == LEGACY_COUNTERPARTY_ENV
+        self.attacker_env = None if old_old else configured_env
+        self.attacker_fiber_version = (
+            FiberConfigPath.V091_DEV if old_old else FiberConfigPath.ATTACK_FULL_HASH_DEV
+        )
+        self.fiber_version = (
+            FiberConfigPath.V091_DEV if legacy else FiberConfigPath.CURRENT_DEV
+        )
         super().setup_method(method)
         # P2pFiberTest retires the spare stock node; alias the live counterparty
         # so the two-node helpers keep pointing at a running node.
         self.fiber2 = self.attacker
+        if legacy and not self.debug:
+            before = self._channel(self.victim).copy()
+            assert self._channel(self.attacker)["channel_outpoint"] == before[
+                "channel_outpoint"
+            ]
+            self.victim.stop()
+            self.victim.fiber_config_enum = FiberConfigPath.CURRENT_DEV
+            start_with_confirm(self.victim, confirm="y", timeout=60)
+            self.victim.connect_peer(self.attacker)
+            self._channel_ready(self.channel_id)
+            after = self._channel(self.victim)
+            for field in (
+                "channel_id",
+                "channel_outpoint",
+                "local_balance",
+                "remote_balance",
+                "latest_commitment_transaction_hash",
+            ):
+                assert after[field] == before[field], (
+                    f"Legacy 通道恢复后 {field} 改变: {before[field]} -> {after[field]}"
+                )
 
     # ------------------------------------------------------------------ chain
 
@@ -986,7 +1028,8 @@ class TestFullHashBadPreimage(P2pFiberTest):
 
         证明点对应（被 H32V2-18 两个方法共用）：
         - 目标按失败收尾：Failed、无成功原像、失败时刻早于记录的 TLC 到期、目标 TLC 终态。
-        - 重复扫描幂等：剩余扫描中状态、fee、本端钱包容量都不再变化（不重复计账、不追回）。
+        - 重复扫描：目标付款状态与 fee 不回退，无关 TLC 不受影响；不把聚合钱包
+          容量当作该 TLC 的独立计账证据。
         - 无关 TLC 不受影响：记录仍在、非终态，其付款仍 Inflight。
         """
         # 上链触发的查询终态由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控；关时只核对目标付款没有
@@ -1014,15 +1057,9 @@ class TestFullHashBadPreimage(P2pFiberTest):
         )
         assert unrelated_payment["status"] == "Inflight", unrelated_payment
 
-        # The already-spent on-chain funds belong to the counterparty now. The
-        # honest node must stop carrying the target payment; it must not credit or
-        # recover those funds on any later scan of the same confirmed claim.
-        self._mine_watchtower_rounds_from_config(
-            1
-        )  # let any on-chain credit for this node land
-        baseline_wallet = self._fiber_wallet_capacity(self.victim)
-        # 基线采样后连续三轮扫描：任何一次“重新挂起/重复计账”都会改变这些值。
-        # 已花出的链上资金不得被找回——这条资金安全不变量与开关无关，始终核对。
+        # Other legitimate chain outputs may reach the wallet during these rounds,
+        # so aggregate wallet capacity is not an oracle for reclaiming this TLC.
+        # Keep the target payment and unrelated TLC identities stable instead.
         for _ in range(3):
             self._mine_watchtower_rounds_from_config(1)
             if onchain_tlc_query_enabled():
@@ -1030,11 +1067,6 @@ class TestFullHashBadPreimage(P2pFiberTest):
                 assert again["status"] == "Failed", again
                 assert again.get("payment_preimage") is None, again
                 assert again["fee"] == failed["fee"], again
-            assert self._fiber_wallet_capacity(self.victim) == baseline_wallet, (
-                "repeated scans of the same confirmed prefix-only claim must not "
-                "re-count or recover the already-spent on-chain funds: "
-                f"baseline={baseline_wallet} now={self._fiber_wallet_capacity(self.victim)}"
-            )
             # 无关 TLC 必须逐项保持不变：记录仍在、状态与基线完全相同、非终态、付款仍 Inflight。
             unrelated_again = self._tlc_in(self.victim, self.channel_id, unrelated_hash)
             assert (
@@ -1156,9 +1188,8 @@ class TestFullHashBadPreimage(P2pFiberTest):
         )
         self._assert_no_success_record(bad_hash)
 
-    # TEST-MAP: H32V2-07
     # TEST-EVIDENCE-BEGIN: H32V2-07
-    # Evidence | covered | Legacy channel (57-byte commitment args); algorithms {ckb_hash, sha256}
+    # Evidence | partial | Existing v0.9.1/attack Legacy channel is restored under CURRENT_DEV;
     # x entry directions {received = the closing side's commitment holds a Received entry,
     # offered = the closing side holds an Offered entry}; the on-chain prefix-only claim is
     # accepted end to end: strict 85-byte/20-byte Legacy witness,
@@ -1170,6 +1201,7 @@ class TestFullHashBadPreimage(P2pFiberTest):
     # settlement; the four methods together still cover algorithms {ckb_hash, sha256} x
     # directions {received, offered}.
     # TEST-EVIDENCE-END: H32V2-07
+    # TEST-MAP: H32V2-07
     def test_legacy_prefix_only_claim_ckb_hash_received(self):
         """Legacy + ckb_hash，强关端承诺中该条目为 Received。"""
         self._run_legacy_prefix_only_claim("ckb_hash", True)
@@ -1244,9 +1276,8 @@ class TestFullHashBadPreimage(P2pFiberTest):
 
     # --------------------------------------------------------------- H32V2-14
 
-    # TEST-MAP: H32V2-14
     # TEST-EVIDENCE-BEGIN: H32V2-14
-    # Evidence | mapped (static reading of this method; no devnet execution recorded) | Single-hop
+    # Evidence | mapped | Existing Legacy channel restored under CURRENT_DEV. Single-hop
     # explicit route to a Legacy counterparty (LEGACY_COUNTERPARTY_ENV -> 57-byte commitment args)
     # whose hold invoice hash shares only the 20-byte prefix with sha256(preimage); the explicit route
     # disables retries. The counterparty force-closes, and after create_preimage(force=true) its own
@@ -1261,15 +1292,16 @@ class TestFullHashBadPreimage(P2pFiberTest):
     # 3. The payer's payment reaches Failed inside the bounded 660 s window with payment_preimage
     #    null and last_updated_at < expiry: no successful preimage is returned.
     # 4. The target TLC on the payer's channel becomes terminal, so it is not left Inflight forever.
-    # 5. Three further watchtower scans keep the payment Failed, the fee unchanged and the payer
-    #    wallet capacity flat: the already-spent on-chain funds are neither recounted nor recovered.
+    # 5. Three further watchtower scans keep the payment Failed and its fee unchanged;
+    #    unrelated wallet outputs are not used as an oracle for recovery of this TLC.
     # Partial: "other on-chain items settle and the channel winds down" is not asserted - this
-    #   channel carries a single claimed TLC and the method stops at the terminal TLC plus a flat
-    #   wallet, not at a locally Closed channel.
+    #   channel carries a single claimed TLC and the method stops at the terminal TLC,
+    #   not at a locally Closed channel.
     # Not covered: V1 commitment layout; counter-hash algorithms other than sha256; xUDT; MPP; a
     #   second concurrent TLC, restart and repeated-scan idempotence (H32V2-18); the relay path
     #   (H32V2-15); received-side finalization (H32V2-16).
     # TEST-EVIDENCE-END: H32V2-14
+    # TEST-MAP: H32V2-14
     def test_direct_payer_fails_confirmed_prefix_only_claim(self):
         # 前提：对手端不宣告 full hash，通道按 Legacy 布局协商；hold invoice 的 32 字节 hash 只与
         # sha256(preimage) 共享 20 字节前缀；付款走显式单跳路由，不提供重试机会。
@@ -1332,15 +1364,9 @@ class TestFullHashBadPreimage(P2pFiberTest):
             assert failed["status"] != "Success", failed
             assert failed.get("payment_preimage") is None, failed
 
-        # The confirmed prefix-only spend already transferred the channel funds to
-        # the counterparty. This test asserts the payer stops carrying the payment;
-        # it does NOT and must not show the already-spent on-chain funds recovered.
-        # 验证点 5：重复扫描不得重复计账或追回已付链上资金。
-        self._mine_watchtower_rounds_from_config(
-            1
-        )  # let any on-chain credit for the payer land
-        baseline_wallet = self._fiber_wallet_capacity(self.victim)
-        # 已花出的链上资金不得被找回——与开关无关，始终核对；写成 Failed 才需等链上扫描。
+        # The spend is already confirmed. Wallet capacity can still grow when
+        # unrelated outputs mature, so repeated scans check payment state/fee,
+        # not aggregate wallet capacity.
         for _ in range(3):
             self._mine_watchtower_rounds_from_config(1)
             if onchain_tlc_query_enabled():
@@ -1348,10 +1374,6 @@ class TestFullHashBadPreimage(P2pFiberTest):
                 assert again["status"] == "Failed", again
                 assert again.get("payment_preimage") is None, again
                 assert again["fee"] == failed["fee"], again
-            assert self._fiber_wallet_capacity(self.victim) == baseline_wallet, (
-                "repeated scans must not recover the already-spent on-chain funds; "
-                f"payer baseline={baseline_wallet} now={self._fiber_wallet_capacity(self.victim)}"
-            )
 
     # --------------------------------------------------------------- H32V2-15
 
@@ -1514,9 +1536,8 @@ class TestFullHashBadPreimage(P2pFiberTest):
 
     # --------------------------------------------------------------- H32V2-16
 
-    # TEST-MAP: H32V2-16
     # TEST-EVIDENCE-BEGIN: H32V2-16
-    # Evidence | covered | Relay payer -> victim -> counterparty over one Legacy channel; the
+    # Evidence | mapped | Relay payer -> victim -> counterparty uses a restored Legacy downstream channel; the
     # victim force-closes its outgoing channel with one prefix-only target TLC and one unrelated
     # received/forwarded TLC, then the counterparty's confirmed prefix-only claim is parsed as a
     # Legacy witness that lists both TLCs and unlocks exactly the target entry. The victim's
@@ -1529,11 +1550,11 @@ class TestFullHashBadPreimage(P2pFiberTest):
     #         监控持有该 TLC 身份准确、已确认的仅前缀匹配而完整 hash 错误原像消费证据。
     #   预期：received TLC 按失败消费收尾且不 fulfill；其他 received TLC 不受影响。
     #   防止：接收侧被遗漏或错误公开原像。
-    # 拓扑：payer --(上游 Legacy 57/85)--> victim(本端，中继) --(下游 Legacy 57/85)--> 对端。
-    #   两条通道都由对手端不宣告 full hash 协商成 Legacy。本端先强关自己的下游承诺，
+    # 拓扑：payer --(上游 V1)--> victim(本端，中继) --(存量 Legacy 57/85)--> 对端。
+    #   下游由旧版 victim 预建后恢复；上游由两个新节点新建。本端先强关下游承诺，
     #   再由对端内置 watchtower 广播“仅前缀原像消费”，本端据此收尾中继的 received TLC。
     # 证明点与断言的对应关系：
-    #   证明点 1（场景成立）：上游与下游都是 Legacy，且两条通道各有一笔已承诺未完成 TLC。
+    #   证明点 1（场景成立）：下游是 Legacy，且两条通道各有一笔已承诺未完成 TLC。
     #   证明点 2（进入核对且尚未收尾）：强关承诺已确认后，两笔 received TLC 都还没被处理，
     #     付款仍 Inflight，保证后面的 Failed 只能来自消费证据而不是超时或提前收尾。
     #   证明点 3（证据身份准确）：链上消费的 witness 按 Legacy 解析，条目集合恰为目标加无关
@@ -1544,6 +1565,7 @@ class TestFullHashBadPreimage(P2pFiberTest):
     #     移除，其付款仍 Inflight、发票仍 Received。
     # 未覆盖：V1 承诺布局、xUDT 资产、MPP 分片、多跳（>2 跳）、到期路径；本方法也不校验
     # 已花链上资金的追回（对端已实际取得该资金）。
+    # TEST-MAP: H32V2-16
     def test_relay_received_tlc_fails_after_confirmed_prefix_claim(self):
         victim = self.victim
         counterparty = self.attacker
@@ -1692,9 +1714,9 @@ class TestFullHashBadPreimage(P2pFiberTest):
 
     # --------------------------------------------------------------- H32V2-17
 
-    # TEST-MAP: H32V2-17
     # TEST-EVIDENCE-BEGIN: H32V2-17
-    # Evidence | covered | Legacy channel, one same-20-byte-prefix pair (A has the real
+    # Evidence | mapped | Two stock v0.9.1 peers prebuild one restored Legacy channel;
+    # one same-20-byte-prefix pair (A has the real
     # full-hash-correct preimage, B has none, distinct TLC ids). A is settled on chain through the
     # receiver's watchtower: the strict 85-byte/20-byte Legacy witness lists both TLCs and unlocks
     # only A's entry. Covered outcomes: A's payment becomes Success with the correct preimage
@@ -1722,6 +1744,7 @@ class TestFullHashBadPreimage(P2pFiberTest):
     # 未覆盖：模块 docstring 已说明——只有空前缀记录／坏原像／仅本地已知原像、身份或算法不符
     # 等分支需要读取 watchtower 持久化的原像库，当前 RPC 没有该观测点；Exact 无原像的到期
     # 对照见下一个方法（test_exact_no_preimage_offered_tlc_waits_for_expiry）。
+    # TEST-MAP: H32V2-17
     def test_same_prefix_sibling_survives_confirmed_claim(self):
         self._wait_channel_ready(self.victim, self.channel_id)
         self._wait_channel_ready(self.attacker, self.channel_id)
@@ -1801,9 +1824,9 @@ class TestFullHashBadPreimage(P2pFiberTest):
         # Received —— 即没有被错误 fulfill，也没有被错误 fail。
         self._assert_sibling_survives(hash_b)
 
-    # TEST-MAP: H32V2-17
     # TEST-EVIDENCE-BEGIN: H32V2-17
-    # Evidence | covered | Legacy channel, one exact offered TLC whose full 32-byte hash is known
+    # Evidence | mapped | Two stock v0.9.1 peers prebuild one restored Legacy channel;
+    # one exact offered TLC whose full 32-byte hash is known
     # but for which no preimage exists. The victim force-closes its own commitment (on-chain close
     # reconciliation). Before the expiry: chain median time is still below the TLC expiry, the
     # payment stays Inflight and the TLC stays present through bounded watchtower rounds (no
@@ -1824,6 +1847,7 @@ class TestFullHashBadPreimage(P2pFiberTest):
     #     offered TLC 才被移除；说明收尾由到期条件而非原像库状态驱动。
     # 未覆盖：同上前一个方法——空前缀记录／坏原像／仅本地已知原像、身份或算法不符等分支缺少
     # watchtower 原像库的 RPC 观测点，见模块 docstring。
+    # TEST-MAP: H32V2-17
     def test_exact_no_preimage_offered_tlc_waits_for_expiry(self):
         self._wait_channel_ready(self.victim, self.channel_id)
         self._wait_channel_ready(self.attacker, self.channel_id)
@@ -1887,7 +1911,6 @@ class TestFullHashBadPreimage(P2pFiberTest):
 
     # --------------------------------------------------------------- H32V2-18
 
-    # TEST-MAP: H32V2-18
     # H32V2-18 评审行（reviews/full-payment-hash-settlement-v2.md，SPEC-12）：
     #   场景：Legacy 异常原像花费已确认且付款无重试机会，在失败通知完成前重启本端；
     #         保留无关未结算 TLC。
@@ -1908,10 +1931,12 @@ class TestFullHashBadPreimage(P2pFiberTest):
     #     不可达，排除“其实已经通知完再重启”的替代解释。
     #   证明点 5（恢复后按失败收尾）：重启后付款 Failed、无原像、在记录到期前，目标 TLC 终态。
     #   证明点 6（不重复计账、不重新挂起）：_assert_failed_without_recovery 在多轮有界扫描后
-    #     复核 Failed、无原像、fee 不变、本端钱包容量不变；无关 TLC 仍在、非终态、付款仍
-    #     Inflight —— 已处理目标不重复计账，无关 TLC 未被误结算。
+    #     复核 Failed、无原像、fee 不变；无关 TLC 仍在、非终态、付款仍
+    #     Inflight —— 证明查询状态幂等及无关 TLC 未被误结算；不单凭聚合钱包余额
+    #     断言目标资金没有重复计账。
     # 未覆盖：模块末条 TEST-EVIDENCE 所述——“通知完成后才重启”的第二个重启点未单独执行；
     #   崩溃是停矿后的干净 stop，不是撕裂写；多笔无关 TLC、V1 布局、xUDT、完全 Closed 后重启。
+    # TEST-MAP: H32V2-18
     def test_restart_before_failure_notification_rescans_confirmed_claim(self):
         bad_hash, preimage, unrelated_hash, expiry = (
             self._open_target_and_unrelated_tlcs()
@@ -1963,10 +1988,9 @@ class TestFullHashBadPreimage(P2pFiberTest):
         # 证明点 5/6：重启后恢复处理该已确认花费，且不重复计账、不重新挂起无关 TLC。
         self._assert_failed_without_recovery(bad_hash, unrelated_hash, expiry)
 
-    # TEST-MAP: H32V2-18
     # H32V2-18 的“处理完成后重启”分支：本变体让本端全程在线，用反复扫描同一已确认花费近似
     # “失败通知完成后重启再重复扫描”，重点证明幂等：
-    #   预期：已处理目标不重复计账或重新挂起，付款终态及余额稳定，无关 TLC 不受影响。
+    #   预期：已处理目标不重新挂起，付款终态及 fee 稳定，无关 TLC 不受影响。
     # 证明点与断言的对应关系：
     #   证明点 1（场景成立）：同 _open_target_and_unrelated_tlcs，两笔 TLC 已 Committed、
     #     发票 Received、付款 Inflight。
@@ -1975,9 +1999,10 @@ class TestFullHashBadPreimage(P2pFiberTest):
     #     不等、仅 20 字节前缀相同，且条目集合恰为目标加无关两笔。
     #   证明点 4（不是超时路径）：消费确认时刻早于记录的 TLC 到期，失败只能来自消费证据。
     #   证明点 5（反复扫描幂等）：_assert_failed_without_recovery 在多轮扫描后复核 Failed、
-    #     无原像、fee 与钱包容量不变、目标 TLC 终态，同时无关 TLC 仍在且付款仍 Inflight。
+    #     无原像、fee 不变、目标 TLC 终态，同时无关 TLC 仍在且付款仍 Inflight。
     # 未覆盖：与上一个方法相同——本变体不做重启，因此不能替代“通知完成后重启”的独立执行；
     #   多笔无关 TLC、V1 布局、xUDT 亦未覆盖（见模块末条 TEST-EVIDENCE 的 partial/not covered）。
+    # TEST-MAP: H32V2-18
     def test_repeated_scan_while_alive_keeps_unrelated_tlc(self):
         bad_hash, preimage, unrelated_hash, expiry = (
             self._open_target_and_unrelated_tlcs()
@@ -2015,13 +2040,14 @@ class TestFullHashBadPreimage(P2pFiberTest):
     #   replayed. (b) alive variant: the victim stays up through confirmation and
     #   repeated watchtower scans. In both: target payment Failed with
     #   payment_preimage null before the recorded expiry, target TLC terminal, fee
-    #   and wallet capacity flat across three further scans, and the unrelated
+    #   unchanged across three further scans, and the unrelated
     #   TLC present, non-terminal, status unchanged, with its payment still
     #   Inflight.
     # partial: the row's "restart after the failure notification completed" is
     #   only approximated by the alive variant's repeated scans, which never
-    #   restart; a second restart point is not exercised. The crash is a clean
-    #   stop before mining, not a torn store write.
+    #   restart; a second restart point is not exercised. Stable fee and payment
+    #   status do not independently prove no repeated fund accounting. The crash
+    #   is a clean stop before mining, not a torn store write.
     # not covered: multiple unrelated TLCs; V1 commitment layout; UDT (xUDT); restart
     #   after the channel has already reached fully Closed.
     # TEST-EVIDENCE-END H32V2-18

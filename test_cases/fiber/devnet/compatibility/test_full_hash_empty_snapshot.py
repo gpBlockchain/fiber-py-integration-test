@@ -33,7 +33,7 @@ import hashlib
 import socket
 import time
 
-from framework.attack_fnn import LEGACY_COUNTERPARTY_ENV, requires_full_hash_attack_fnn
+from framework.attack_fnn import LEGACY_COUNTERPARTY_ENV, requires_attack_fnn
 from framework.basic_fiber import COMMIT_LOCK_CODE_HASH
 from framework.basic_p2p import P2pFiberTest
 from framework.helper.settlement_witness import (
@@ -59,7 +59,7 @@ def cn(value):
     return int(value, 16) if isinstance(value, str) else int(value)
 
 
-@requires_full_hash_attack_fnn
+@requires_attack_fnn
 class TestFullHashEmptySnapshot(P2pFiberTest):
     """H32V2-24: empty S0 before the first RAA is withdrawn, not treated as missing."""
 

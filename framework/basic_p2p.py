@@ -3,7 +3,7 @@
 Each test method gets:
 
 - ``self.victim``: stock ``download/fiber/current/fnn`` (no Dev intercept)
-- ``self.attacker``: debug ``download/fiber/attack/fnn``
+- ``self.attacker``: debug ``download/fiber/attack-full-payment-hash/fnn``
 - ``self.peer``: ``P2pPeer`` bound to the attacker
 - ``self.channel_id``: a ChannelReady channel (unless ``auto_open_channel``
   is set to False)
@@ -59,9 +59,9 @@ class P2pFiberTest(FiberTest):
     extra_mock_fiber_p2p_port = 18402
     fnn_log_level = "debug"
     attacker_auto_accept = True
-    # Counterparty build and its per-node environment. Suites that need the
-    # full-payment-hash counterparty override both.
-    attacker_fiber_version = FiberConfigPath.ATTACK_DEV
+    # The single attack build supports both V1 and Legacy behavior; suites can
+    # select counterparty behavior with per-node environment switches.
+    attacker_fiber_version = FiberConfigPath.ATTACK_FULL_HASH_DEV
     attacker_env: dict | None = None
     channel_local_balance = 200 * 100000000
     channel_remote_balance = 0
@@ -272,7 +272,8 @@ class P2pFiberTest(FiberTest):
 class P2pRouterTest(P2pFiberTest):
     """Two stock nodes plus a debug router in the middle.
 
-    Alice (current/fnn) -- Router (attack/fnn) -- Bob (current/fnn)
+    Alice (current/fnn) -- Router (attack-full-payment-hash/fnn)
+                        -- Bob (current/fnn)
 
     The router sees Alice's P2P messages as inbound on ``ch_alice`` and
     Bob's as inbound on ``ch_bob``. Intercept either leg independently.

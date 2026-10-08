@@ -38,7 +38,6 @@ def udt_amount(output, data, udt):
 
 class TestContractUpgradeOnchain(ContractUpgradeSupport):
     fiber_version = FiberConfigPath.V091_DEV
-    tmp_path_name = f"report/h32-simple-{time.time_ns()}"
     ckb_rpc_port, ckb_p2p_port = 19814, 19815
     fiber1_rpc_port, fiber1_p2p_port = 19828, 19827
     fiber2_rpc_port, fiber2_p2p_port = 19829, 19830

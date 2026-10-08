@@ -38,7 +38,7 @@ observed per-channel state.
 Two classes share this file: the same-hash MPP cases H32V2-28/29 need only head +
 ``V091_DEV`` nodes, while H32V2-30/31 need the instrumented full-payment-hash
 counterparty and are therefore isolated in a second class carrying
-``@requires_full_hash_attack_fnn`` and its own ports. A single class cannot mix
+``@requires_attack_fnn`` and its own ports. A single class cannot mix
 those markers without starting the adversary for the plain methods too.
 """
 
@@ -49,7 +49,7 @@ import time
 
 import pytest
 
-from framework.attack_fnn import LEGACY_COUNTERPARTY_ENV, requires_full_hash_attack_fnn
+from framework.attack_fnn import LEGACY_COUNTERPARTY_ENV, requires_attack_fnn
 from framework.helper.settlement_witness import (
     SettlementWitness,
     assert_commitment_args,
@@ -801,7 +801,7 @@ class TestMixedVersionMpp(_MixedVersionMppSupport):
     # TEST-EVIDENCE-END H32V2-29
 
 
-@requires_full_hash_attack_fnn
+@requires_attack_fnn
 class TestMixedVersionMppAdversarial(_MixedVersionMppSupport):
     """H32V2-30/31: long mixed-version paths and per-part version reconciliation.
 

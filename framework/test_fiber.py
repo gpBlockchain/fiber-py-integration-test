@@ -57,13 +57,9 @@ class FiberConfigPath(Enum):
         "download/fiber/current/fnn.debug",
     )
 
-    ATTACK_DEV = (
-        "/source/fiber/dev_config_3.yml.j2",
-        "download/fiber/attack/fnn",
-    )
-
     # p2p-tap debug RPCs adapted onto the full-payment-hash branch (8b95af3);
-    # it can act as a Legacy or V1 counterparty, see framework/attack_fnn.py.
+    # this is the single attack build and can act as a Legacy or V1
+    # counterparty, see framework/attack_fnn.py.
     ATTACK_FULL_HASH_DEV = (
         "/source/fiber/dev_config_3.yml.j2",
         "download/fiber/attack-full-payment-hash/fnn",

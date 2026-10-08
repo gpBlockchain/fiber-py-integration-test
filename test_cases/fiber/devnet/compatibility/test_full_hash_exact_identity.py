@@ -48,6 +48,7 @@ import time
 from pathlib import Path
 
 from framework.config import ALWAYS_SUCCESS_CONTRACT_PATH
+from framework.helper.settlement_witness import SettlementWitness
 from framework.onchain_tlc_query import onchain_tlc_query_enabled
 from framework.test_fiber import FiberConfigPath
 from framework.util import ckb_hash
