@@ -8,40 +8,30 @@ from framework.test_fiber import FiberConfigPath
 
 
 class TestP2p(FiberTest):
-
-    @pytest.mark.skip("todo")
+    # debug = True
+    # @pytest.mark.skip("todo")
     def test_old_fiber(self):
         """
         Returns:
         """
         old_fiber = self.start_new_fiber(
-            self.generate_account(10000), fiber_version=FiberConfigPath.V061_DEV
+            self.generate_account(10000), fiber_version=FiberConfigPath.V091_DEV
         )
-        old_fiber.connect_peer(self.fiber1)
-        time.sleep(1)
-        with pytest.raises(Exception) as exc_info:
-            self.fiber1.get_client().open_channel(
-                {
-                    "pubkey": old_fiber.get_pubkey(),
-                    "funding_amount": hex(1000 + DEFAULT_MIN_DEPOSIT_CKB),
-                    "tlc_fee_proportional_millionths": hex(1000),
-                    "public": True,
-                }
-            )
-        expected_error_message = "feature not found"
-        assert expected_error_message in exc_info.value.args[0], (
-            f"Expected substring '{expected_error_message}' "
-            f"not found in actual string '{exc_info.value.args[0]}'"
-        )
+        self.open_channel(self.fiber1, old_fiber, 1000 * 100000000, 1000 * 100000000)
+        self.open_channel(old_fiber, self.fiber2, 1000 * 100000000, 1000 * 100000000)
+        self.open_channel(self.fiber2, self.fiber1, 1000 * 100000000, 1000 * 100000000)
+        for fiber in self.fibers:
+            for fiber2 in self.fibers:
+                self.send_payment(fiber, fiber2, 1)
 
-        old_fiber.get_client().open_channel(
-            {
-                "pubkey": self.fiber1.get_pubkey(),
-                "funding_amount": hex(2000 * 100000000),
-                "tlc_fee_proportional_millionths": hex(1000),
-                "public": True,
-            }
+        channel_id = self.fiber1.get_client().list_channels(
+            {"pubkey": old_fiber.get_pubkey()}
+        )["channels"][0]["channel_id"]
+        self.fiber1.get_client().shutdown_channel({"channel_id": channel_id})
+        self.wait_for_channel_state(
+            self.fiber1.get_client(),
+            old_fiber.get_pubkey(),
+            "Closed",
+            include_closed=True,
+            channel_id=channel_id,
         )
-        time.sleep(1)
-        channel = old_fiber.get_client().list_channels({})
-        assert len(channel["channels"]) == 0

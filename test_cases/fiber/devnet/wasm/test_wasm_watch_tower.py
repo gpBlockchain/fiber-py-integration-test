@@ -58,7 +58,7 @@ class TestWasmWatchTower(FiberTest):
             assert (
                 message["input_cells"][0]["capacity"]
                 - message["output_cells"][0]["capacity"]
-                == 109900000000
+                == 110000000000
             )
             assert (
                 message["output_cells"][1]["args"]

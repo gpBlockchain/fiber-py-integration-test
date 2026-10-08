@@ -4,7 +4,8 @@ Wraps the debug Dev RPCs so tests can drop, capture, delay, and inject
 Fiber channel messages without touching the honest victim.
 
 Prefer ``P2pFiberTest`` in ``framework.basic_p2p`` when writing a new
-scenario: it already starts ``current/fnn`` as victim and ``attack/fnn``
+scenario: it already starts ``current/fnn`` as victim and
+``attack-full-payment-hash/fnn``
 as this peer, then opens a ready channel.
 
 Typical use:

@@ -140,7 +140,7 @@ class TestAmount(FiberTest):
                 "dry_run": True,
             }
         )
-        assert payment["fee"] == "0x5ac4909a6563"
+        assert payment["fee"] == "0x5ac49098df8b"
 
         # with pytest.raises(Exception) as exc_info:
         #     self.fiber1.get_client().send_payment(

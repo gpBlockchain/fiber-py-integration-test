@@ -41,15 +41,15 @@ class SharedFiberTest(FiberTest):
             self.fiber_version,
             self.account1_private_key,
             "fiber/node1",
-            "8228",
-            "8227",
+            str(self.fiber1_rpc_port),
+            str(self.fiber1_p2p_port),
         )
         self.fiber2 = Fiber.init_by_port(
             self.fiber_version,
             self.account2_private_key,
             "fiber/node2",
-            "8229",
-            "8230",
+            str(self.fiber2_rpc_port),
+            str(self.fiber2_p2p_port),
         )
         self.fibers.append(self.fiber1)
         self.fibers.append(self.fiber2)
@@ -143,5 +143,4 @@ class SharedFiberTest(FiberTest):
             fiber.stop()
             fiber.clean()
         # 清理 ckb 节点
-        self.node.stop()
-        self.node.clean()
+        super(SharedFiberTest, self).teardown_class()
