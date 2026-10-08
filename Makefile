@@ -68,7 +68,7 @@ fiber_test_cases := \
 	test_cases/fiber/devnet/list_channels \
 	test_cases/fiber/devnet/new_invoice \
 	test_cases/fiber/devnet/send_payment \
-	test_cases/fiber/devnet/send_payment_with_router/test_router_custom_records.py \
+	test_cases/fiber/devnet/send_payment_with_router \
 	test_cases/fiber/devnet/shutdown_channel \
 	test_cases/fiber/devnet/update_channel \
 	test_cases/fiber/devnet/issue \
