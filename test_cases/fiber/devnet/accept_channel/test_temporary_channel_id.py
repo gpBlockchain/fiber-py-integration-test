@@ -7,6 +7,9 @@ from framework.basic_fiber import FiberTest
 
 class TestTemporaryChannelId(FiberTest):
     # FiberTest.debug = True
+    start_fiber_config = {
+        "fiber_open_channel_auto_accept_min_ckb_funding_amount": 10100000000
+    }
 
     def test_temporary_channel_id_not_exist(self):
         """
@@ -66,7 +69,7 @@ class TestTemporaryChannelId(FiberTest):
         accept_channel = self.fiber2.get_client().accept_channel(
             {
                 "temporary_channel_id": temporary_channel["temporary_channel_id"],
-                "funding_amount": hex(99 * 100000000),
+                "funding_amount": hex(100 * 100000000),
             }
         )
         time.sleep(1)

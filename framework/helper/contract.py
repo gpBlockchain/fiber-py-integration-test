@@ -1,5 +1,6 @@
 import hashlib
 import time
+from tempfile import TemporaryDirectory
 
 from abc import ABC, abstractmethod
 
@@ -70,6 +71,121 @@ def deploy_ckb_contract(
         f" && rm /tmp/tmp.data"
     )
     return run_command(cmd).replace("\n", "")
+
+
+def upgrade_ckb_type_contract(
+    private_key,
+    contract_path,
+    contract_out_point_tx_hash,
+    contract_out_point_tx_index=0,
+    fee=1000,
+    api_url="http://127.0.0.1:8114",
+):
+    """Replace a live Type ID code cell and return the submitted transaction hash.
+
+    The upgraded cell is output 0, with the original lock and type scripts.
+    ``fee`` is an absolute fee in Shannon, not a fee rate. Extra capacity is
+    selected from the owner's empty, untyped cells only when necessary; any
+    surplus stays in the upgraded cell. The caller must wait for confirmation
+    and use the returned hash/index 0 for subsequent upgrades and cell deps.
+    Supports the standard secp256k1 sighash lock used by deploy_ckb_contract.
+    """
+    if not isinstance(fee, int) or isinstance(fee, bool) or fee < 0:
+        raise ValueError("fee must be a non-negative integer in Shannon")
+    index = contract_out_point_tx_index
+    if isinstance(index, str):
+        index = int(index, 16) if index.startswith("0x") else int(index)
+    if (
+        not isinstance(index, int)
+        or isinstance(index, bool)
+        or not 0 <= index <= 0xFFFFFFFF
+    ):
+        raise ValueError("contract output index must be a uint32")
+    with open(contract_path, "rb") as contract_file:
+        data = contract_file.read()
+
+    client = RPCClient(api_url)
+    cell = client.get_live_cell(hex(index), contract_out_point_tx_hash, True)
+    if cell["status"] != "live":
+        raise ValueError("contract cell is not live")
+    output = cell["cell"]["output"]
+    type_script = output.get("type")
+    if (
+        not type_script
+        or type_script["code_hash"] != "0x" + "00" * 25 + "545950455f4944"
+        or type_script["hash_type"] != "type"
+        or len(bytes.fromhex(type_script["args"][2:])) != 32
+    ):
+        raise ValueError("contract cell must have a built-in Type ID script")
+    account = util_key_info_by_private_key(private_key)
+    lock = output["lock"]
+    if lock != {
+        "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+        "hash_type": "type",
+        "args": account["lock_arg"],
+    }:
+        raise ValueError(
+            "contract lock must be the private key's standard sighash lock"
+        )
+
+    # Capacity occupies 8 bytes; each script occupies 32 + 1 + len(args).
+    occupied = 8 + len(data) + 66
+    occupied += len(bytes.fromhex(lock["args"][2:]))
+    occupied += len(bytes.fromhex(type_script["args"][2:]))
+    required_capacity = occupied * 100000000 + fee
+    capacity = int(output["capacity"], 16)
+    inputs = [(contract_out_point_tx_hash, index)]
+    if capacity < required_capacity:
+        live_cells = wallet_get_live_cells(
+            account["address"]["testnet"], api_url=api_url
+        )
+        for candidate in live_cells["live_cells"]:
+            candidate_index = candidate["output_index"]
+            if isinstance(candidate_index, str):
+                candidate_index = (
+                    int(candidate_index, 16)
+                    if candidate_index.startswith("0x")
+                    else int(candidate_index)
+                )
+            out_point = (candidate["tx_hash"], candidate_index)
+            if out_point in inputs or not candidate.get("mature", True):
+                continue
+            funding = client.get_live_cell(
+                hex(candidate_index), candidate["tx_hash"], True
+            )
+            if funding["status"] != "live":
+                continue
+            funding_output = funding["cell"]["output"]
+            if (
+                funding_output.get("type") is not None
+                or funding_output["lock"] != lock
+                or funding["cell"]["data"]["content"] != "0x"
+            ):
+                continue
+            inputs.append(out_point)
+            capacity += int(funding_output["capacity"], 16)
+            if capacity >= required_capacity:
+                break
+    if capacity < required_capacity:
+        raise ValueError("insufficient capacity for upgraded contract and fee")
+
+    with TemporaryDirectory(prefix="ckb-upgrade-") as directory:
+        tx_file = f"{directory}/tx.json"
+        tx_init(tx_file, api_url)
+        for tx_hash, input_index in inputs:
+            # The CLI adds the standard lock dependency with the input.
+            tx_add_input(tx_hash, input_index, tx_file, api_url)
+        tx_add_output(
+            {**output, "capacity": hex(capacity - fee)}, "0x" + data.hex(), tx_file
+        )
+        signatures = tx_sign_inputs(private_key, tx_file, api_url)
+        if not signatures:
+            raise ValueError("no signature produced for upgrade transaction")
+        for signature in signatures:
+            tx_add_signature(
+                signature["lock-arg"], signature["signature"], tx_file, api_url
+            )
+        return tx_send(tx_file, api_url).strip()
 
 
 def get_ckb_contract_codehash(
