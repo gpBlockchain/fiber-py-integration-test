@@ -231,7 +231,7 @@ jobs:
           tar -xzf prepare-backup.tar.gz
 
       - name: Run fiber_test_demo
-        run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/send_payment/params test_cases/fiber/devnet/send_payment/path"
+        run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/send_payment/params test_cases/fiber/devnet/send_payment/path test_cases/fiber/devnet/send_payment_with_router/test_router_custom_records.py"
 
       - name: Publish reports
         if: failure()
