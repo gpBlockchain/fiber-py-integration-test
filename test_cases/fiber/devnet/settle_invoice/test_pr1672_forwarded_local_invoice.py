@@ -5,7 +5,6 @@ import time
 from framework.basic_share_fiber import SharedFiberTest
 from framework.util import ckb_hash
 
-
 CKB = 100000000
 AMOUNT = CKB
 
@@ -36,7 +35,9 @@ class TestForwardedLocalInvoice(SharedFiberTest):
         self.__class__._channels_ready = True
 
     def _channel(self, fiber, channel_id):
-        channels = fiber.get_client().list_channels({"include_closed": True})["channels"]
+        channels = fiber.get_client().list_channels({"include_closed": True})[
+            "channels"
+        ]
         for channel in channels:
             if channel["channel_id"] == channel_id:
                 return channel
@@ -118,13 +119,20 @@ class TestForwardedLocalInvoice(SharedFiberTest):
 
         # 在发送前采样余额；后续只核对本次付款带来的增减，不依赖前一用例的余额。
         before = {
-            "b_up": int(self._channel(self.fiber2, self.channel_ab)["local_balance"], 16),
-            "b_down": int(self._channel(self.fiber2, self.channel_bc)["local_balance"], 16),
+            "b_up": int(
+                self._channel(self.fiber2, self.channel_ab)["local_balance"], 16
+            ),
+            "b_down": int(
+                self._channel(self.fiber2, self.channel_bc)["local_balance"], 16
+            ),
             "c": int(self._channel(self.fiber3, self.channel_bc)["local_balance"], 16),
         }
         # 固定走 A→B→C；已核对实现会抑制显式路由付款失败后的自动重试。
         payment = self.fiber1.get_client().send_payment_with_router(
-            {"router": self._forward_route(), "invoice": hold_invoice["invoice_address"]}
+            {
+                "router": self._forward_route(),
+                "invoice": hold_invoice["invoice_address"],
+            }
         )
         assert payment["payment_hash"] == payment_hash
         # 先确认 C 持单、B 两侧 TLC 都已承诺；返回的 TLC 包含后续追踪所需的 ID 和金额。
@@ -148,7 +156,9 @@ class TestForwardedLocalInvoice(SharedFiberTest):
     def test_forwarded_fulfill_leaves_router_invoice_open(self):
         # TEST-MAP: PR1672-02
         # 场景：C 兑现持单后，付款成功，但中间节点 B 的同哈希发票不应被标为 Paid。
-        preimage, payment_hash, incoming, outgoing, before = self._start_forwarded_hold()
+        preimage, payment_hash, incoming, outgoing, before = (
+            self._start_forwarded_hold()
+        )
 
         # 只有最终收款方 C 提交正确原像，才触发本次转发的成功回传。
         self.fiber3.get_client().settle_invoice(
@@ -261,13 +271,21 @@ class TestForwardedLocalInvoice(SharedFiberTest):
         payment_hash = invoice["invoice"]["data"]["payment_hash"]
 
         # A 按 B 的发票直接付款，转发隔离守卫不应拦截真正的本地收款。
-        payment = self.fiber1.get_client().send_payment({"invoice": invoice["invoice_address"]})
+        payment = self.fiber1.get_client().send_payment(
+            {"invoice": invoice["invoice_address"]}
+        )
         # 核对同一笔付款成功、B 发票 Paid，且付款方拿到正确原像。
         assert payment["payment_hash"] == payment_hash
         self.wait_payment_state(self.fiber1, payment_hash, "Success", timeout=120)
         self.wait_invoice_state(self.fiber2, payment_hash, "Paid", timeout=120)
-        assert self.fiber1.get_client().get_payment(
-            {"payment_hash": payment_hash}
-        )["payment_preimage"] == preimage
+        assert (
+            self.fiber1.get_client().get_payment({"payment_hash": payment_hash})[
+                "payment_preimage"
+            ]
+            == preimage
+        )
         # 收款后 A-B 通道仍可用；本例不证明本地收款与同哈希转发并发时的隔离。
-        assert self._channel(self.fiber2, self.channel_ab)["state"]["state_name"] == "ChannelReady"
+        assert (
+            self._channel(self.fiber2, self.channel_ab)["state"]["state_name"]
+            == "ChannelReady"
+        )

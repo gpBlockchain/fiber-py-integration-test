@@ -4,7 +4,6 @@ import pytest
 
 from framework.basic_share_fiber import SharedFiberTest
 
-
 CKB = 100000000
 AMOUNT = CKB
 _OMITTED = object()
@@ -41,9 +40,9 @@ class TestRouterCustomRecords(SharedFiberTest):
         self.__class__._channels_ready = True
 
     def _channel(self, source, target):
-        channels = source.get_client().list_channels(
-            {"pubkey": target.get_pubkey()}
-        )["channels"]
+        channels = source.get_client().list_channels({"pubkey": target.get_pubkey()})[
+            "channels"
+        ]
         assert len(channels) == 1
         return channels[0]
 
@@ -52,8 +51,14 @@ class TestRouterCustomRecords(SharedFiberTest):
             {
                 "amount": hex(AMOUNT),
                 "hops_info": [
-                    {"pubkey": self.fiber2.get_pubkey(), "channel_outpoint": self.outpoint_ab},
-                    {"pubkey": self.fiber3.get_pubkey(), "channel_outpoint": self.outpoint_bc},
+                    {
+                        "pubkey": self.fiber2.get_pubkey(),
+                        "channel_outpoint": self.outpoint_ab,
+                    },
+                    {
+                        "pubkey": self.fiber3.get_pubkey(),
+                        "channel_outpoint": self.outpoint_bc,
+                    },
                 ],
             }
         )["router_hops"]
@@ -99,7 +104,9 @@ class TestRouterCustomRecords(SharedFiberTest):
         payment = self._keysend(records)
         assert payment["custom_records"] == records
 
-        self.wait_payment_state(self.fiber1, payment["payment_hash"], "Success", timeout=120)
+        self.wait_payment_state(
+            self.fiber1, payment["payment_hash"], "Success", timeout=120
+        )
         stored = self.fiber1.get_client().get_payment(
             {"payment_hash": payment["payment_hash"]}
         )
@@ -111,7 +118,9 @@ class TestRouterCustomRecords(SharedFiberTest):
         records = {"0x12": "0x" + "ab" * 2012}
         assert len(bytes.fromhex(records["0x12"][2:])) + 36 == 2048
         payment = self._keysend(records)
-        self.wait_payment_state(self.fiber1, payment["payment_hash"], "Success", timeout=120)
+        self.wait_payment_state(
+            self.fiber1, payment["payment_hash"], "Success", timeout=120
+        )
         stored = self.fiber1.get_client().get_payment(
             {"payment_hash": payment["payment_hash"]}
         )
@@ -130,7 +139,9 @@ class TestRouterCustomRecords(SharedFiberTest):
                 self._keysend(records, dry_run=dry_run, route=route)
             assert "InvalidParameter" in str(error.value)
             assert "custom_records" in str(error.value)
-            print(f"encoded-size rejection with dry_run={dry_run}: {str(error.value)[:180]}")
+            print(
+                f"encoded-size rejection with dry_run={dry_run}: {str(error.value)[:180]}"
+            )
             assert self._snapshot() == before
 
     # TEST-MAP: PR1675-05
@@ -150,7 +161,9 @@ class TestRouterCustomRecords(SharedFiberTest):
         payment = self._keysend()
         assert payment["custom_records"] is None
 
-        self.wait_payment_state(self.fiber1, payment["payment_hash"], "Success", timeout=120)
+        self.wait_payment_state(
+            self.fiber1, payment["payment_hash"], "Success", timeout=120
+        )
         stored = self.fiber1.get_client().get_payment(
             {"payment_hash": payment["payment_hash"]}
         )
@@ -159,7 +172,9 @@ class TestRouterCustomRecords(SharedFiberTest):
     # TEST-MAP: PR1675-07
     def test_empty_custom_records_remain_empty(self):
         payment = self._keysend({})
-        self.wait_payment_state(self.fiber1, payment["payment_hash"], "Success", timeout=120)
+        self.wait_payment_state(
+            self.fiber1, payment["payment_hash"], "Success", timeout=120
+        )
         stored = self.fiber1.get_client().get_payment(
             {"payment_hash": payment["payment_hash"]}
         )
