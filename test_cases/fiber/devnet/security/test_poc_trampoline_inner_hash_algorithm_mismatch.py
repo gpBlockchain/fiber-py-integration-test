@@ -191,9 +191,7 @@ class TestPocTrampolineInnerHashAlgorithmMismatch(P2pFiberTest):
         last = None
         while time.time() < deadline:
             try:
-                session = fiber.get_client().get_payment(
-                    {"payment_hash": payment_hash}
-                )
+                session = fiber.get_client().get_payment({"payment_hash": payment_hash})
             except Exception as exc:
                 last = str(exc)
             else:

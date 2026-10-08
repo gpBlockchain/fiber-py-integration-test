@@ -264,7 +264,9 @@ class TestFullHashBadPreimage(P2pFiberTest):
         legacy = configured_env == LEGACY_COUNTERPARTY_ENV
         self.attacker_env = None if old_old else configured_env
         self.attacker_fiber_version = (
-            FiberConfigPath.V091_DEV if old_old else FiberConfigPath.ATTACK_FULL_HASH_DEV
+            FiberConfigPath.V091_DEV
+            if old_old
+            else FiberConfigPath.ATTACK_FULL_HASH_DEV
         )
         self.fiber_version = (
             FiberConfigPath.V091_DEV if legacy else FiberConfigPath.CURRENT_DEV
@@ -275,9 +277,10 @@ class TestFullHashBadPreimage(P2pFiberTest):
         self.fiber2 = self.attacker
         if legacy and not self.debug:
             before = self._channel(self.victim).copy()
-            assert self._channel(self.attacker)["channel_outpoint"] == before[
-                "channel_outpoint"
-            ]
+            assert (
+                self._channel(self.attacker)["channel_outpoint"]
+                == before["channel_outpoint"]
+            )
             self.victim.stop()
             self.victim.fiber_config_enum = FiberConfigPath.CURRENT_DEV
             start_with_confirm(self.victim, confirm="y", timeout=60)
@@ -291,9 +294,9 @@ class TestFullHashBadPreimage(P2pFiberTest):
                 "remote_balance",
                 "latest_commitment_transaction_hash",
             ):
-                assert after[field] == before[field], (
-                    f"Legacy 通道恢复后 {field} 改变: {before[field]} -> {after[field]}"
-                )
+                assert (
+                    after[field] == before[field]
+                ), f"Legacy 通道恢复后 {field} 改变: {before[field]} -> {after[field]}"
 
     # ------------------------------------------------------------------ chain
 

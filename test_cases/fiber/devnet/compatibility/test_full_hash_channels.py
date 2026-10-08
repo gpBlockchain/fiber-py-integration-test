@@ -569,8 +569,14 @@ class TestFullHashChannels(ContractUpgradeSupport):
     def _channel_snapshot(self, fiber):
         client = fiber.get_client()
         return {
-            "all": {c["channel_id"] for c in client.list_channels({"include_closed": True})["channels"]},
-            "pending": {c["channel_id"] for c in client.list_channels({"only_pending": True})["channels"]},
+            "all": {
+                c["channel_id"]
+                for c in client.list_channels({"include_closed": True})["channels"]
+            },
+            "pending": {
+                c["channel_id"]
+                for c in client.list_channels({"only_pending": True})["channels"]
+            },
         }
 
     # TEST-MAP: H32V2-02
@@ -631,7 +637,9 @@ class TestFullHashChannels(ContractUpgradeSupport):
                 [
                     {
                         "pubkey": self.fiber2.get_pubkey(),
-                        "funding_amount": hex(1000 * CKB + DEFAULT_MIN_LEDGER_DEPOSIT_CKB),
+                        "funding_amount": hex(
+                            1000 * CKB + DEFAULT_MIN_LEDGER_DEPOSIT_CKB
+                        ),
                         "public": True,
                         "shutdown_script": funding_lock,
                         "funding_lock_script": funding_lock,
@@ -660,11 +668,15 @@ class TestFullHashChannels(ContractUpgradeSupport):
             "ONCHAIN_FULL_PAYMENT_HASH" in name
             for name in self.fiber2.get_client().node_info()["features"]
         )
-        assert int(
-            self.fiber2.get_client().node_info()[
-                "auto_accept_channel_ckb_funding_amount"
-            ], 16
-        ) > 0
+        assert (
+            int(
+                self.fiber2.get_client().node_info()[
+                    "auto_accept_channel_ckb_funding_amount"
+                ],
+                16,
+            )
+            > 0
+        )
         before = self._channel_snapshot(self.fiber2)
         wallet_before = self.wallet_balances()
         request = self.fiber1.get_client().open_channel(
@@ -687,7 +699,10 @@ class TestFullHashChannels(ContractUpgradeSupport):
             sender_record = next(
                 (c for c in records if c["channel_id"] == temporary_id), None
             )
-            if sender_record is not None and sender_record["state"]["state_name"] == "Closed":
+            if (
+                sender_record is not None
+                and sender_record["state"]["state_name"] == "Closed"
+            ):
                 break
             # The old sender can remove a rejected record before the first poll.
             # Require a short stable interval rather than accepting the first empty read.
@@ -708,11 +723,15 @@ class TestFullHashChannels(ContractUpgradeSupport):
     def test_new_node_manual_accept_v1_and_settle_tlc(self):
         self.select_peers(self.new1, self.manual, "v1")
         self.fiber1.connect_peer(self.fiber2)
-        assert int(
-            self.fiber2.get_client().node_info()[
-                "auto_accept_channel_ckb_funding_amount"
-            ], 16
-        ) == 0
+        assert (
+            int(
+                self.fiber2.get_client().node_info()[
+                    "auto_accept_channel_ckb_funding_amount"
+                ],
+                16,
+            )
+            == 0
+        )
         existing = self._channel_snapshot(self.fiber1)["all"]
         request = self.fiber1.get_client().open_channel(
             {
@@ -745,7 +764,9 @@ class TestFullHashChannels(ContractUpgradeSupport):
                 break
             time.sleep(1)
         else:
-            self.fail("Manual-accepted V1 channel did not reach ChannelReady on receiver")
+            self.fail(
+                "Manual-accepted V1 channel did not reach ChannelReady on receiver"
+            )
         self.record_channel()
         payment_hash, preimage = self.hold_one_payment()
         self.settle_held_channel(

@@ -79,6 +79,7 @@ jobs:
       - name: Build stock and full-payment-hash attack FNN binaries
         env:
           FIBER_BUILD_DIR: ${{ runner.temp }}/fiber-attack-build
+          ATTACK_DESTINATION: ${{ github.workspace }}/download/fiber/attack-full-payment-hash/fnn
         run: ./scripts/build_attack_fnn.sh
 
       - name: Verify binary roles and provenance

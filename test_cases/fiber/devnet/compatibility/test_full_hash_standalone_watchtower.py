@@ -245,11 +245,16 @@ class TestFullHashStandaloneWatchtower(ContractUpgradeSupport):
                 assert recorded["_suppressed"] is True
                 explicit = copy.deepcopy(params)
                 explicit["commitment_contract_features"] = "0x0"
-                created = self._post_recorded_rpc(recorded, "create_watch_channel", explicit)
+                created = self._post_recorded_rpc(
+                    recorded, "create_watch_channel", explicit
+                )
                 assert "error" not in created, created
-                assert self.channel_calls("create_watch_channel")[-1][0]["params"][0][
-                    "commitment_contract_features"
-                ] == "0x0"
+                assert (
+                    self.channel_calls("create_watch_channel")[-1][0]["params"][0][
+                        "commitment_contract_features"
+                    ]
+                    == "0x0"
+                )
             else:
                 assert recorded["_suppressed"] is False
 
@@ -259,7 +264,9 @@ class TestFullHashStandaloneWatchtower(ContractUpgradeSupport):
             # proves the original V1 registration is still usable.
             invalid = copy.deepcopy(params)
             invalid["commitment_contract_features"] = "0x2"
-            rejected = self._post_recorded_rpc(recorded, "create_watch_channel", invalid)
+            rejected = self._post_recorded_rpc(
+                recorded, "create_watch_channel", invalid
+            )
             assert "error" in rejected, rejected
 
         # Freeze the create-call count before snapshot updates. Otherwise an
@@ -287,13 +294,16 @@ class TestFullHashStandaloneWatchtower(ContractUpgradeSupport):
         expected_hashes = {payment_hash for payment_hash, _ in payments}
         for _ in range(90):
             channels = [self.channel(fiber) for fiber in self.fibers]
-            updates = self.channel_calls("update_pending_remote_settlement") + self.channel_calls(
-                "update_revocation"
-            )
+            updates = self.channel_calls(
+                "update_pending_remote_settlement"
+            ) + self.channel_calls("update_revocation")
             delivered = any(
                 "error" not in result
                 and expected_hashes.issubset(
-                    {tlc["payment_hash"] for tlc in request["params"][0]["settlement_data"]["tlcs"]}
+                    {
+                        tlc["payment_hash"]
+                        for tlc in request["params"][0]["settlement_data"]["tlcs"]
+                    }
                 )
                 for request, result in updates
             )
@@ -314,9 +324,9 @@ class TestFullHashStandaloneWatchtower(ContractUpgradeSupport):
             channel["latest_commitment_transaction_hash"] for channel in channels
         ]
 
-        assert len(self.channel_calls("create_watch_channel")) == registration_count, (
-            "registration changed between validation and tower restart"
-        )
+        assert (
+            len(self.channel_calls("create_watch_channel")) == registration_count
+        ), "registration changed between validation and tower restart"
         before = self.processes
         self.tower.stop()
         self.tower.start(fnn_log_level=self.fnn_log_level)
@@ -345,9 +355,9 @@ class TestFullHashStandaloneWatchtower(ContractUpgradeSupport):
             pending = [item for item in pending if item[0] != payment_hash]
             previous = spent
         self.assert_settled(previous, code_tx, prior_fees)
-        assert len(self.channel_calls("create_watch_channel")) == registration_count, (
-            "tower restart must reload registration rather than request it again"
-        )
+        assert (
+            len(self.channel_calls("create_watch_channel")) == registration_count
+        ), "tower restart must reload registration rather than request it again"
 
         # The chain and balances are always checked. Query finality is opt-in
         # because node on-chain scans can take several minutes in CI.
@@ -355,9 +365,12 @@ class TestFullHashStandaloneWatchtower(ContractUpgradeSupport):
             payment = sender.get_client().get_payment({"payment_hash": payment_hash})
             if onchain_tlc_query_enabled():
                 self.wait_payment_state(sender, payment_hash, "Success", timeout=660)
-                assert sender.get_client().get_payment({"payment_hash": payment_hash})[
-                    "payment_preimage"
-                ] == preimage
+                assert (
+                    sender.get_client().get_payment({"payment_hash": payment_hash})[
+                        "payment_preimage"
+                    ]
+                    == preimage
+                )
             else:
                 assert payment["status"] != "Failed", payment
 
