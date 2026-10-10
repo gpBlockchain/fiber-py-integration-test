@@ -20,7 +20,10 @@ class TestTlcWithClusterClock(BasicClockFiber):
         # 用例随后以真实时间的有界轮询观察链和 FNN 状态。
 ```
 
-运行前设置 `FIBER_TEST_FAKETIME_LIB=/绝对路径/libfaketime.1.dylib`
+本地先安装 `libfaketime`：macOS 使用 `brew install libfaketime`，
+Ubuntu 使用 `sudo apt-get install libfaketime`。标准安装路径会自动发现，
+PyCharm 无需额外设置环境变量。自定义安装路径可设置
+`FIBER_TEST_FAKETIME_LIB=/绝对路径/libfaketime.1.dylib`
 （Linux 使用 `.so.1`）。`BasicClockFiber` 继承 `SharedFiberTest`，提供
 `advance_time_by(seconds=14400, mine_epochs=1)`、
 `advance_time_to(unix_time_ms, mine_epochs=1)` 和

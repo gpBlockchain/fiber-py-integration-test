@@ -8,14 +8,15 @@ import sys
 import pytest
 
 from framework.basic_clock_fiber import BasicClockFiber
-from framework.cluster_clock import ClusterClock
+from framework.cluster_clock import ClusterClock, resolve_faketime_library
 
 
 def test_real_library_advances_live_process():
     """CI smoke: an already-running child sees the same four-hour jump."""
-    library = os.environ.get("FIBER_TEST_FAKETIME_LIB")
-    if not library:
-        pytest.skip("libfaketime path is set by the dedicated clock CI job")
+    try:
+        library = resolve_faketime_library()
+    except FileNotFoundError as exc:
+        pytest.skip(str(exc))
 
     clock = ClusterClock(library)
     program = (

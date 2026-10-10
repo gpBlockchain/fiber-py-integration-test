@@ -5,13 +5,36 @@ from unittest.mock import Mock, patch
 import pytest
 
 from framework.basic_clock_fiber import BasicClockFiber
-from framework.cluster_clock import ClusterClock
+from framework.cluster_clock import ClusterClock, resolve_faketime_library
 from framework.helper.miner import (
     block_template_transfer_to_submit_block,
     get_hex_timestamp,
 )
 from framework.test_fiber import Fiber, FiberConfigPath
 from framework.test_node import CkbNode
+
+
+def test_resolve_faketime_library_from_explicit_path(tmp_path, monkeypatch):
+    library = tmp_path / "libfaketime.1.dylib"
+    library.touch()
+    monkeypatch.setenv("FIBER_TEST_FAKETIME_LIB", str(library))
+
+    assert resolve_faketime_library() == str(library)
+
+    monkeypatch.setenv("FIBER_TEST_FAKETIME_LIB", str(tmp_path / "missing.dylib"))
+    with pytest.raises(FileNotFoundError, match="FIBER_TEST_FAKETIME_LIB"):
+        resolve_faketime_library()
+
+
+def test_resolve_faketime_library_from_homebrew_prefix(tmp_path, monkeypatch):
+    library = tmp_path / "opt/libfaketime/lib/libfaketime.1.dylib"
+    library.parent.mkdir(parents=True)
+    library.touch()
+    monkeypatch.delenv("FIBER_TEST_FAKETIME_LIB", raising=False)
+    monkeypatch.setenv("HOMEBREW_PREFIX", str(tmp_path))
+
+    with patch("framework.cluster_clock.platform.system", return_value="Darwin"):
+        assert resolve_faketime_library() == str(library)
 
 
 @pytest.mark.parametrize(
@@ -32,6 +55,7 @@ def test_cluster_clock_env_and_forward_advance(
         env = clock.process_env()
         assert env[injection_key] == str(library_path)
         assert env["FAKETIME_TIMESTAMP_FILE"] == str(clock.timestamp_file)
+        assert env["FAKETIME_DISABLE_SHM"] == "1"
         assert env["FAKETIME_DONT_FAKE_MONOTONIC"] == "1"
         assert clock.timestamp_file.read_text() == "+0\n"
 

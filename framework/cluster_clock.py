@@ -8,8 +8,52 @@ import math
 import os
 from pathlib import Path
 import platform
+import shutil
+import sysconfig
 import tempfile
 import time
+
+
+def resolve_faketime_library():
+    """Find the installed library, unless an explicit path was supplied."""
+    explicit = os.environ.get("FIBER_TEST_FAKETIME_LIB")
+    if explicit:
+        library = Path(explicit).expanduser()
+        if not library.is_file():
+            raise FileNotFoundError(f"FIBER_TEST_FAKETIME_LIB does not exist: {library}")
+        return str(library.resolve())
+
+    system = platform.system()
+    if system == "Darwin":
+        prefixes = [os.environ.get("HOMEBREW_PREFIX")]
+        brew = shutil.which("brew")
+        if brew:
+            prefixes.append(str(Path(brew).parent.parent))
+        prefixes.extend(("/opt/homebrew", "/usr/local"))
+        for prefix in dict.fromkeys(filter(None, prefixes)):
+            install_dir = Path(prefix) / "opt" / "libfaketime"
+            if install_dir.is_dir():
+                for library in install_dir.rglob("libfaketime.1.dylib"):
+                    if library.is_file():
+                        return str(library.resolve())
+        install_hint = "brew install libfaketime"
+    elif system == "Linux":
+        multiarch = sysconfig.get_config_var("MULTIARCH")
+        directories = [Path("/usr/lib/faketime"), Path("/usr/local/lib/faketime")]
+        if multiarch:
+            directories.insert(0, Path("/usr/lib") / multiarch / "faketime")
+        for directory in directories:
+            library = directory / "libfaketime.so.1"
+            if library.is_file():
+                return str(library.resolve())
+        install_hint = "sudo apt-get install libfaketime"
+    else:
+        raise RuntimeError(f"Unsupported libfaketime platform: {system}")
+
+    raise FileNotFoundError(
+        f"libfaketime was not found on {system}. Install it with "
+        f"`{install_hint}` or set FIBER_TEST_FAKETIME_LIB to its library path."
+    )
 
 
 class ClusterClock:
@@ -34,6 +78,9 @@ class ClusterClock:
         env = {
             "FAKETIME_TIMESTAMP_FILE": str(self.timestamp_file),
             "FAKETIME_NO_CACHE": "1",
+            # macOS sandboxed runners may reject shm_open; the timestamp file
+            # remains the shared source of truth for already-running nodes.
+            "FAKETIME_DISABLE_SHM": "1",
             # Keep Tokio/CKB scheduling on real monotonic time. This clock
             # advances wall time; it does not accelerate existing timers.
             "FAKETIME_DONT_FAKE_MONOTONIC": "1",

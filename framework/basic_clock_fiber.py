@@ -1,15 +1,15 @@
 """Reusable shared Fiber/devnet base for tests that advance cluster wall time."""
 
-import os
 import time
 
 from framework.basic_share_fiber import SharedFiberTest
+from framework.cluster_clock import resolve_faketime_library
 
 
 class BasicClockFiber(SharedFiberTest):
     """Run FNN and CKB with one process-scoped virtual wall clock.
 
-    Set FIBER_TEST_FAKETIME_LIB to a platform-matching libfaketime library.
+    Install libfaketime or set FIBER_TEST_FAKETIME_LIB to its library path.
     Each test should derive its target time from the state it creates; time only
     moves forward and the class shares its chain/FNN state across test methods.
     """
@@ -18,12 +18,7 @@ class BasicClockFiber(SharedFiberTest):
 
     @classmethod
     def setup_class(cls):
-        library = os.environ.get("FIBER_TEST_FAKETIME_LIB")
-        if not library:
-            raise RuntimeError(
-                "Set FIBER_TEST_FAKETIME_LIB to the libfaketime library path"
-            )
-        cls.virtual_clock_library = library
+        cls.virtual_clock_library = resolve_faketime_library()
         super().setup_class()
 
     def advance_time_by(self, seconds=EPOCH_SECONDS, *, mine_epochs=1):
