@@ -1,0 +1,45 @@
+name: Cluster clock framework
+
+"on":
+  pull_request:
+    branches: [main, v0.10.0]
+    paths:
+      - ".github/workflows/cluster-clock.yml"
+      - "framework/**"
+      - "test_cases/framework/test_cluster_clock.py"
+      - "requirements.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  clock:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Install and locate libfaketime
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            sudo apt-get update
+            sudo apt-get install -y libfaketime
+            library=$(dpkg -L libfaketime | grep '/libfaketime.so.1$' | head -n 1)
+          else
+            brew install libfaketime
+            library=$(find "$(brew --prefix libfaketime)" -name libfaketime.1.dylib -print -quit)
+          fi
+          test -f "$library"
+          echo "FIBER_TEST_FAKETIME_LIB=$library" >> "$GITHUB_ENV"
+      - name: Test clock wiring and live process jump
+        run: python -m pytest test_cases/framework/test_cluster_clock.py -q

@@ -4,6 +4,7 @@ import socket
 from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 from framework.helper.udt_contract import UdtContract, issue_udt_tx
 from framework.test_fiber import Fiber, FiberConfigPath
+from framework.cluster_clock import ClusterClock
 from framework.util import generate_account_privakey, get_project_root
 from framework.util import run_command
 import time
@@ -53,6 +54,9 @@ class FiberTest(CkbTest):
     extra_mock_fiber_p2p_port = 8302
     extra_fiber_rpc_port = 8251
     extra_fiber_p2p_port = 8402
+    # Set this to an absolute libfaketime path in a dedicated time-sensitive
+    # suite. Ordinary FiberTest suites keep their existing real-time behavior.
+    virtual_clock_library = None
 
     @classmethod
     def setup_class(cls):
@@ -63,6 +67,11 @@ class FiberTest(CkbTest):
         Returns:
 
         """
+        cls.cluster_clock = (
+            ClusterClock(cls.virtual_clock_library)
+            if cls.virtual_clock_library is not None
+            else None
+        )
         cls._original_tmp_path_name = framework_config.TMP_PATH
         if cls.tmp_path_name is not None:
             framework_config.TMP_PATH = cls.tmp_path_name
@@ -83,6 +92,7 @@ class FiberTest(CkbTest):
             cls.ckb_rpc_port,
             cls.ckb_p2p_port,
         )
+        cls.node.virtual_clock = cls.cluster_clock
 
         if cls.debug:
             if check_port(cls.ckb_rpc_port):
@@ -129,6 +139,10 @@ class FiberTest(CkbTest):
             str(self.fiber2_rpc_port),
             str(self.fiber2_p2p_port),
         )
+        if self.cluster_clock is not None:
+            clock_env = self.cluster_clock.process_env()
+            self.fiber1.extra_env.update(clock_env)
+            self.fiber2.extra_env.update(clock_env)
         self.fibers.append(self.fiber1)
         self.fibers.append(self.fiber2)
         #
@@ -197,6 +211,8 @@ class FiberTest(CkbTest):
         finally:
             if cls.tmp_path_name is not None:
                 framework_config.TMP_PATH = cls._original_tmp_path_name
+            if cls.cluster_clock is not None:
+                cls.cluster_clock.close()
 
     def faucet(
         self,
@@ -293,7 +309,10 @@ class FiberTest(CkbTest):
         )
         self.fibers.append(fiber)
         self.new_fibers.append(fiber)
-        fiber.extra_env = dict(env or {})
+        fiber.extra_env = {
+            **(self.cluster_clock.process_env() if self.cluster_clock else {}),
+            **(env or {}),
+        }
         fiber.prepare(update_config=update_config)
         fiber.start(fnn_log_level=self.fnn_log_level)
         return fiber

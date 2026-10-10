@@ -1,6 +1,7 @@
 import fcntl
 import shutil
 import socket
+import subprocess
 from enum import Enum
 import time
 import framework.helper.ckb_cli
@@ -239,13 +240,37 @@ class Fiber:
             rpc_biscuit_public_key_option = (
                 f" --rpc-biscuit-public-key {rpc_biscuit_public_key}"
             )
-        extra_env = "".join(
-            f"{key}='{value}' " for key, value in getattr(self, "extra_env", {}).items()
-        )
-        run_command(
-            f" {extra_env}FIBER_SECRET_KEY_PASSWORD='{password}' RUST_LOG=info,fnn={fnn_log_level} {get_project_root()}/{self.fiber_config_enum.fiber_bin_path} -c {self.tmp_path}/config.yml -d {self.tmp_path} {rpc_biscuit_public_key_option}  >> {self.tmp_path}/node.log 2>&1 &"
-            # env=env_map,
-        )
+        if "FAKETIME_TIMESTAMP_FILE" in self.extra_env:
+            # A direct exec preserves DYLD_* on macOS. /bin/sh is SIP-protected
+            # and may discard those variables before launching FNN.
+            env = {
+                **os.environ,
+                **self.extra_env,
+                "FIBER_SECRET_KEY_PASSWORD": password,
+                "RUST_LOG": f"info,fnn={fnn_log_level}",
+            }
+            command = [
+                f"{get_project_root()}/{self.fiber_config_enum.fiber_bin_path}",
+                "-c",
+                f"{self.tmp_path}/config.yml",
+                "-d",
+                self.tmp_path,
+            ]
+            if rpc_biscuit_public_key is not None:
+                command.extend(["--rpc-biscuit-public-key", rpc_biscuit_public_key])
+            with open(f"{self.tmp_path}/node.log", "a") as log:
+                process = subprocess.Popen(
+                    command, env=env, stdout=log, stderr=subprocess.STDOUT
+                )
+            self.pid = process.pid
+        else:
+            extra_env = "".join(
+                f"{key}='{value}' "
+                for key, value in getattr(self, "extra_env", {}).items()
+            )
+            run_command(
+                f" {extra_env}FIBER_SECRET_KEY_PASSWORD='{password}' RUST_LOG=info,fnn={fnn_log_level} {get_project_root()}/{self.fiber_config_enum.fiber_bin_path} -c {self.tmp_path}/config.yml -d {self.tmp_path} {rpc_biscuit_public_key_option}  >> {self.tmp_path}/node.log 2>&1 &"
+            )
         # wait rpc port open
         wait_for_port(self.rpc_port, timeout=300, open=True)
         print("start fiber client ")

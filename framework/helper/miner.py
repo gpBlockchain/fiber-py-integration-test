@@ -60,7 +60,9 @@ def miner_with_version(node, version):
             block = node.getClient().get_block_template()
             node.getClient().submit_block(
                 block["work_id"],
-                block_template_transfer_to_submit_block(block, version),
+                block_template_transfer_to_submit_block(
+                    block, version, getattr(node, "virtual_clock", None)
+                ),
             )
             break
         except Exception as e:
@@ -102,7 +104,7 @@ def miner_with_version(node, version):
     )
 
 
-def block_template_transfer_to_submit_block(block, version="0x0"):
+def block_template_transfer_to_submit_block(block, version="0x0", clock=None):
     block["transactions"].insert(0, block["cellbase"])
     block["transactions"] = [x["data"] for x in block["transactions"]]
     ret = {
@@ -115,7 +117,7 @@ def block_template_transfer_to_submit_block(block, version="0x0"):
             "number": block["number"],
             "parent_hash": block["parent_hash"],
             "proposals_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
-            "timestamp": get_hex_timestamp(),
+            "timestamp": get_hex_timestamp(clock),
             "transactions_root": "0x0000000000000000000000000000000000000000000000000000000000000000",
             "version": version,
         },
@@ -127,8 +129,8 @@ def block_template_transfer_to_submit_block(block, version="0x0"):
     return ret
 
 
-def get_hex_timestamp():
-    timestamp = int(time.time() * 1000)
+def get_hex_timestamp(clock=None):
+    timestamp = clock.now_ms() if clock is not None else int(time.time() * 1000)
     hex_timestamp = hex(timestamp)
     return hex_timestamp
 

@@ -1,5 +1,6 @@
 import time
 import subprocess
+import os
 from enum import Enum
 from framework.util import (
     create_config_file,
@@ -79,6 +80,7 @@ class CkbNode:
         self.ckb_specs_config_path = f"{self.ckb_dir}/dev.toml"
         self.ckb_pid = -1
         self.ckb_miner_pid = -1
+        self.virtual_clock = None
         self.rpcUrl = "http://{url}".format(
             url=self.ckb_config.get("ckb_rpc_listen_address", "127.0.0.1:8114")
         )
@@ -138,11 +140,14 @@ class CkbNode:
         self.start()
 
     def start(self):
-        self.ckb_pid = run_command(
-            "cd {ckb_dir} && ./ckb run --indexer  --skip-spec-check > node.log 2>&1 &".format(
-                ckb_dir=self.ckb_dir
+        if self.virtual_clock is not None:
+            self._start_with_clock("--indexer")
+        else:
+            self.ckb_pid = run_command(
+                "cd {ckb_dir} && ./ckb run --indexer  --skip-spec-check > node.log 2>&1 &".format(
+                    ckb_dir=self.ckb_dir
+                )
             )
-        )
         # //todo replace by rpc
         time.sleep(3)
 
@@ -152,12 +157,28 @@ class CkbNode:
         Returns:
 
         """
-        self.ckb_pid = run_command(
-            "cd {ckb_dir} && ./ckb run --rich-indexer  --skip-spec-check > node.log 2>&1 &".format(
-                ckb_dir=self.ckb_dir
+        if self.virtual_clock is not None:
+            self._start_with_clock("--rich-indexer")
+        else:
+            self.ckb_pid = run_command(
+                "cd {ckb_dir} && ./ckb run --rich-indexer  --skip-spec-check > node.log 2>&1 &".format(
+                    ckb_dir=self.ckb_dir
+                )
             )
-        )
         time.sleep(3)
+
+    def _start_with_clock(self, indexer_option):
+        # A direct exec preserves DYLD_* on macOS; routing through /bin/sh may
+        # strip it under SIP before the CKB process starts.
+        with open(f"{self.ckb_dir}/node.log", "a") as log:
+            process = subprocess.Popen(
+                ["./ckb", "run", indexer_option, "--skip-spec-check"],
+                cwd=self.ckb_dir,
+                env=self._process_env(),
+                stdout=log,
+                stderr=subprocess.STDOUT,
+            )
+        self.ckb_pid = process.pid
 
     def stop(self):
         self.stop_miner()
@@ -240,12 +261,18 @@ class CkbNode:
             miner = subprocess.Popen(
                 ["./ckb", "miner"],
                 cwd=self.ckb_dir,
+                env=self._process_env(),
                 stdout=log,
                 stderr=subprocess.STDOUT,
             )
         self.ckb_miner_pid = miner.pid
         # replace check height upper
         time.sleep(3)
+
+    def _process_env(self):
+        if self.virtual_clock is None:
+            return None
+        return {**os.environ, **self.virtual_clock.process_env()}
 
     def stop_miner(self):
         if self.ckb_miner_pid == -1:
