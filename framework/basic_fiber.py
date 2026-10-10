@@ -57,6 +57,8 @@ class FiberTest(CkbTest):
     # Set this to an absolute libfaketime path in a dedicated time-sensitive
     # suite. Ordinary FiberTest suites keep their existing real-time behavior.
     virtual_clock_library = None
+    virtual_clock_timestamp_file = None
+    virtual_clock_reuse = False
 
     @classmethod
     def setup_class(cls):
@@ -68,7 +70,11 @@ class FiberTest(CkbTest):
 
         """
         cls.cluster_clock = (
-            ClusterClock(cls.virtual_clock_library)
+            ClusterClock(
+                cls.virtual_clock_library,
+                timestamp_file=cls.virtual_clock_timestamp_file,
+                reuse=cls.virtual_clock_reuse,
+            )
             if cls.virtual_clock_library is not None
             else None
         )

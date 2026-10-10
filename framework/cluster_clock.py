@@ -57,17 +57,31 @@ def resolve_faketime_library():
 
 
 class ClusterClock:
-    def __init__(self, library_path):
+    def __init__(self, library_path, *, timestamp_file=None, reuse=False):
         self.library_path = Path(library_path).expanduser().resolve(strict=True)
         self.system = platform.system()
         suffix = {"Darwin": ".dylib", "Linux": ".so.1"}.get(self.system)
         if suffix is None or not str(self.library_path).endswith(suffix):
             raise ValueError(f"Unsupported libfaketime library for {self.system}")
 
-        self._directory = tempfile.TemporaryDirectory(prefix="fiber-cluster-clock-")
-        self.timestamp_file = Path(self._directory.name) / "faketime.rc"
-        self._offset_seconds = 0
-        self._write_offset()
+        if reuse and timestamp_file is None:
+            raise ValueError("Reusing a clock requires a persistent timestamp file")
+        self._directory = None
+        if timestamp_file is None:
+            self._directory = tempfile.TemporaryDirectory(prefix="fiber-cluster-clock-")
+            self.timestamp_file = Path(self._directory.name) / "faketime.rc"
+        else:
+            self.timestamp_file = Path(timestamp_file).expanduser().resolve()
+            self.timestamp_file.parent.mkdir(parents=True, exist_ok=True)
+
+        if reuse:
+            value = self.timestamp_file.read_text(encoding="ascii").strip()
+            if not value.startswith("+") or not value[1:].isdigit():
+                raise ValueError(f"Invalid cluster clock offset: {value!r}")
+            self._offset_seconds = int(value[1:])
+        else:
+            self._offset_seconds = 0
+            self._write_offset()
 
     def _write_offset(self):
         temporary = self.timestamp_file.with_suffix(".new")
@@ -113,4 +127,5 @@ class ClusterClock:
         return self.advance_seconds(math.ceil(remaining_ms / 1000))
 
     def close(self):
-        self._directory.cleanup()
+        if self._directory is not None:
+            self._directory.cleanup()

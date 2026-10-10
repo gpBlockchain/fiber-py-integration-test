@@ -31,6 +31,13 @@ PyCharm 无需额外设置环境变量。自定义安装路径可设置
 直接调用 `self.advance_time_by()` 会同时推进 4 小时和 CKB 1 个 epoch；
 跨越更多 epoch 时显式传入相应的 `mine_epochs`。
 
+调试时可在子类中设置 `debug = True`。首次运行会保留 CKB/FNN 进程和
+`tmp/clock-fiber/cluster-clock/` 中的时钟文件；再次运行连接原进程并读取上次的时间偏移，
+不会从零开始。若调试进程已退出但链数据仍在，重启也会延续该偏移。
+若端口上已有旧版调试进程却没有对应的持久时钟记录，
+先停止这组旧进程，再运行一次以建立记录；新集群使用独立的
+`tmp/clock-fiber/` 数据目录，框架不会把新时钟误接到旧进程。
+
 `FiberTest`、`SharedFiberTest` 自动把同一时间文件交给前两个 FNN、CKB node、
 CKB miner 和 `start_new_fiber()` 创建的 FNN。自行创建的其他进程需在启动前
 设置 `cluster_clock.process_env()`。Python 手动产块的区块头时间戳也取自同一

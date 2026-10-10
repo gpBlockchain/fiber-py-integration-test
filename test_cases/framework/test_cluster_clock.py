@@ -1,10 +1,12 @@
 """Framework-only checks for the opt-in shared FNN/CKB wall clock."""
 
+import json
 from unittest.mock import Mock, patch
 
 import pytest
 
 from framework.basic_clock_fiber import BasicClockFiber
+from framework.basic_share_fiber import SharedFiberTest
 from framework.cluster_clock import ClusterClock, resolve_faketime_library
 from framework.helper.miner import (
     block_template_transfer_to_submit_block,
@@ -69,6 +71,102 @@ def test_cluster_clock_env_and_forward_advance(
     finally:
         clock.close()
     assert not clock.timestamp_file.exists()
+
+
+def test_cluster_clock_persistent_file_resumes_offset(tmp_path):
+    library = tmp_path / "libfaketime.1.dylib"
+    library.touch()
+    clock_file = tmp_path / "state" / "clock.rc"
+    with patch("framework.cluster_clock.platform.system", return_value="Darwin"):
+        first = ClusterClock(library, timestamp_file=clock_file)
+        first.advance_seconds(14_400)
+        first.close()
+        assert clock_file.read_text() == "+14400\n"
+
+        resumed = ClusterClock(library, timestamp_file=clock_file, reuse=True)
+        assert resumed._offset_seconds == 14_400
+        resumed.advance_seconds(60)
+        resumed.close()
+        assert clock_file.read_text() == "+14460\n"
+
+        reset = ClusterClock(library, timestamp_file=clock_file)
+        assert reset._offset_seconds == 0
+        reset.close()
+        assert clock_file.read_text() == "+0\n"
+
+
+def test_basic_clock_fiber_debug_reuses_matching_processes(tmp_path):
+    class DebugClock(BasicClockFiber):
+        debug = True
+
+    clock_file = tmp_path / "clock.rc"
+    clock_file.write_text("+14400\n")
+    state = {
+        "library": str(tmp_path / "libfaketime.1.dylib"),
+        "ckb_rpc_port": DebugClock.ckb_rpc_port,
+        "fiber1_rpc_port": DebugClock.fiber1_rpc_port,
+        "fiber2_rpc_port": DebugClock.fiber2_rpc_port,
+        "ckb_pid": 101,
+        "ckb_miner_pid": 104,
+        "fiber1_pid": 102,
+        "fiber2_pid": 103,
+    }
+    clock_file.with_suffix(".json").write_text(json.dumps(state))
+    with (
+        patch.object(DebugClock, "_debug_clock_path", return_value=clock_file),
+        patch("framework.basic_clock_fiber.resolve_faketime_library", return_value=state["library"]),
+        patch("framework.basic_clock_fiber.check_port", return_value=True),
+        patch("framework.basic_clock_fiber.os.kill") as kill,
+        patch.object(SharedFiberTest, "setup_class") as parent_setup,
+    ):
+        DebugClock.setup_class()
+
+    assert DebugClock.virtual_clock_reuse is True
+    assert DebugClock.virtual_clock_timestamp_file == clock_file
+    parent_setup.assert_called_once_with()
+    assert kill.call_count == 4
+
+
+def test_basic_clock_fiber_debug_restarts_with_saved_offset(tmp_path):
+    class DebugClock(BasicClockFiber):
+        debug = True
+
+    clock_file = tmp_path / "clock.rc"
+    clock_file.write_text("+14400\n")
+    state = {
+        "library": str(tmp_path / "libfaketime.1.dylib"),
+        "ckb_rpc_port": DebugClock.ckb_rpc_port,
+        "fiber1_rpc_port": DebugClock.fiber1_rpc_port,
+        "fiber2_rpc_port": DebugClock.fiber2_rpc_port,
+    }
+    clock_file.with_suffix(".json").write_text(json.dumps(state))
+    with (
+        patch.object(DebugClock, "_debug_clock_path", return_value=clock_file),
+        patch("framework.basic_clock_fiber.resolve_faketime_library", return_value=state["library"]),
+        patch("framework.basic_clock_fiber.check_port", return_value=False),
+        patch.object(DebugClock, "_record_debug_cluster") as record,
+        patch.object(SharedFiberTest, "setup_class") as parent_setup,
+    ):
+        DebugClock.setup_class()
+
+    assert DebugClock.virtual_clock_reuse is True
+    parent_setup.assert_called_once_with()
+    record.assert_called_once_with()
+
+
+def test_basic_clock_fiber_debug_rejects_old_processes_without_clock(tmp_path):
+    class DebugClock(BasicClockFiber):
+        debug = True
+
+    with (
+        patch.object(DebugClock, "_debug_clock_path", return_value=tmp_path / "missing.rc"),
+        patch("framework.basic_clock_fiber.resolve_faketime_library", return_value="library"),
+        patch("framework.basic_clock_fiber.check_port", return_value=True),
+        patch.object(SharedFiberTest, "setup_class") as parent_setup,
+    ):
+        with pytest.raises(RuntimeError, match="no persistent cluster clock state"):
+            DebugClock.setup_class()
+    parent_setup.assert_not_called()
 
 
 def test_ckb_node_and_miner_receive_same_clock_env(tmp_path):
