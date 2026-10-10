@@ -48,8 +48,10 @@ CKB miner 和 `start_new_fiber()` 创建的 FNN。自行创建的其他进程需
 
 ## CI
 
-独立的 `cluster-clock.yml` 在 `main` 和 `v0.10.0` 的相关 PR 上运行：
-Linux/macOS 安装 `libfaketime`，执行框架接线测试，并检查一个已启动的
-子进程是否立即看到 4 小时时间跳跃。该轻量检查不启动 CKB/FNN；将来新增
-使用 `BasicClockFiber` 的行为用例后，再把相应的 CKB/FNN 冒烟测试加入 CI。
-现有 `fiber.yml` 只监听 `main`，因此 `v0.10.0` PR 不会自动运行完整 devnet 套件。
+`.github/workflows/fiber.yml` 的 `fiber_test_fake_time` job 使用 Linux/macOS
+矩阵安装 `libfaketime` 并运行框架测试及实时进程的 4 小时时间跳跃冒烟。
+Linux runner 复用 `prepare` 产出的 CKB/FNN 二进制，执行
+`test_cases/fiber/devnet/fake_time/` 全目录；后续使用 `BasicClockFiber` 的
+devnet 时间用例直接放在这里，就会由该 job 执行。macOS runner 只执行
+动态库冒烟，当前不会运行需要 CKB/FNN 二进制的 devnet 用例。
+工作流监听 `main` 和 `v0.10.0` 的 PR。
