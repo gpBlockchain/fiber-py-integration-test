@@ -29,7 +29,7 @@ class TestMusig2NonceReuse(FiberTest):
         victim = self.fiber1
         attacker = self.start_new_fiber(
             self.generate_account(10000),
-            fiber_version=FiberConfigPath.ATTACK_DEV,
+            fiber_version=FiberConfigPath.ATTACK_FULL_HASH_DEV,
         )
         # Skip the helper's rebalance payment so the channel stays TLC-empty.
         channel_id = self.open_channel(victim, attacker, 200 * 100000000, 0)

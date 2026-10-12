@@ -72,6 +72,7 @@ jobs:
           ./venv/bin/python -m pip install --upgrade pip
           ./venv/bin/python -m pip install -r requirements.txt
           ./venv/bin/python -m download
+          ./venv/bin/python -m download_fiber
           ./venv/bin/python -m download_btc
           ./venv/bin/python -m download_lnd
           install -m 0755 download/0.202.0/ckb-cli source/ckb-cli
@@ -87,6 +88,7 @@ jobs:
           set -euo pipefail
           test -x download/fiber/current/fnn
           test -x download/fiber/attack-full-payment-hash/fnn
+          test -x download/fiber/0.9.1/fnn
           test -s download/fiber/provenance.env
 
           if grep -aFq set_fiber_message_intercept download/fiber/current/fnn; then

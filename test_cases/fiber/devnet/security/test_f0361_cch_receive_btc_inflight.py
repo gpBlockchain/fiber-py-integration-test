@@ -165,7 +165,7 @@ class TestF0361CchReceiveBtcInflight(FiberCchTest):
                 self.fiber1.account_private,
                 UDT_FAUCET,
             ),
-            fiber_version=FiberConfigPath.ATTACK_DEV,
+            fiber_version=FiberConfigPath.ATTACK_FULL_HASH_DEV,
         )
         self.peer = P2pPeer(self.attacker)
         self.fiber1.connect_peer(self.attacker)
