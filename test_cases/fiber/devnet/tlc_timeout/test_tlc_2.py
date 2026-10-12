@@ -13,6 +13,7 @@ import math
 import time
 
 from framework.basic_fiber import COMMIT_LOCK_CODE_HASH, FiberTest
+from framework.helper.settlement_witness import SettlementWitness
 from framework.util import change_time
 
 CKB = 100000000
@@ -20,10 +21,6 @@ CHANNEL_BALANCE = 1000 * CKB
 PAYMENT_AMOUNT = 1 * CKB
 COMMITMENT_DELAY_SECONDS = 4 * 60 * 60
 XUDT_COMPATIBLE_WITNESS = bytes([16, 0, 0, 0] * 4)
-# Channels opened by current nodes use the V1 commitment lock: each pending
-# TLC entry in the settlement witness is 97 bytes (Legacy 85 + 12 extra bytes
-# for the full 32-byte payment hash instead of the 20-byte prefix).
-V1_SETTLEMENT_TLC_ENTRY_LEN = 97
 
 
 class TestPR1618OnchainTlcReconcile(FiberTest):
@@ -118,32 +115,15 @@ class TestPR1618OnchainTlcReconcile(FiberTest):
 
     @staticmethod
     def _decode_settlement_unlock_types(witness_hex, tx_hash="fixture"):
-        witness = bytes.fromhex(witness_hex.removeprefix("0x"))
-        assert witness.startswith(XUDT_COMPATIBLE_WITNESS), (
+        # Channels opened by current nodes use the V1 commitment lock.
+        # SettlementWitness.from_hex consumes the 16-byte prefix itself and
+        # rejects truncated or trailing bytes.
+        witness = SettlementWitness.from_hex(witness_hex, version="v1")
+        assert witness.prefix == XUDT_COMPATIBLE_WITNESS, (
             f"settlement witness in {tx_hash} is missing the 16-byte "
             "xUDT-compatible prefix"
         )
-        settlement = witness[len(XUDT_COMPATIBLE_WITNESS) :]
-        assert settlement and settlement[0] == 1, (
-            f"unexpected settlement witness type in {tx_hash}: "
-            f"{settlement[0] if settlement else None}"
-        )
-
-        pending_tlc_count = settlement[1]
-        cursor = 74 + V1_SETTLEMENT_TLC_ENTRY_LEN * pending_tlc_count
-        unlock_types = []
-        while cursor < len(settlement):
-            assert cursor + 67 <= len(
-                settlement
-            ), f"truncated settlement unlock in {tx_hash} at byte {cursor}"
-            unlock_types.append(settlement[cursor])
-            with_preimage = settlement[cursor + 1] == 1
-            cursor += 99 if with_preimage else 67
-
-        assert cursor == len(
-            settlement
-        ), f"invalid settlement witness length in {tx_hash}"
-        return unlock_types
+        return [unlock.unlock_type for unlock in witness.unlocks]
 
     def _setup_held_payment(self):
         fiber3 = self.start_new_fiber(self.generate_account(10000))
