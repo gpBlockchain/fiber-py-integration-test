@@ -20,7 +20,9 @@ def resolve_faketime_library():
     if explicit:
         library = Path(explicit).expanduser()
         if not library.is_file():
-            raise FileNotFoundError(f"FIBER_TEST_FAKETIME_LIB does not exist: {library}")
+            raise FileNotFoundError(
+                f"FIBER_TEST_FAKETIME_LIB does not exist: {library}"
+            )
         return str(library.resolve())
 
     system = platform.system()

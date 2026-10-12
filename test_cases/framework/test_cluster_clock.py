@@ -114,7 +114,10 @@ def test_basic_clock_fiber_debug_reuses_matching_processes(tmp_path):
     clock_file.with_suffix(".json").write_text(json.dumps(state))
     with (
         patch.object(DebugClock, "_debug_clock_path", return_value=clock_file),
-        patch("framework.basic_clock_fiber.resolve_faketime_library", return_value=state["library"]),
+        patch(
+            "framework.basic_clock_fiber.resolve_faketime_library",
+            return_value=state["library"],
+        ),
         patch("framework.basic_clock_fiber.check_port", return_value=True),
         patch("framework.basic_clock_fiber.os.kill") as kill,
         patch.object(SharedFiberTest, "setup_class") as parent_setup,
@@ -142,7 +145,10 @@ def test_basic_clock_fiber_debug_restarts_with_saved_offset(tmp_path):
     clock_file.with_suffix(".json").write_text(json.dumps(state))
     with (
         patch.object(DebugClock, "_debug_clock_path", return_value=clock_file),
-        patch("framework.basic_clock_fiber.resolve_faketime_library", return_value=state["library"]),
+        patch(
+            "framework.basic_clock_fiber.resolve_faketime_library",
+            return_value=state["library"],
+        ),
         patch("framework.basic_clock_fiber.check_port", return_value=False),
         patch.object(DebugClock, "_record_debug_cluster") as record,
         patch.object(SharedFiberTest, "setup_class") as parent_setup,
@@ -159,8 +165,13 @@ def test_basic_clock_fiber_debug_rejects_old_processes_without_clock(tmp_path):
         debug = True
 
     with (
-        patch.object(DebugClock, "_debug_clock_path", return_value=tmp_path / "missing.rc"),
-        patch("framework.basic_clock_fiber.resolve_faketime_library", return_value="library"),
+        patch.object(
+            DebugClock, "_debug_clock_path", return_value=tmp_path / "missing.rc"
+        ),
+        patch(
+            "framework.basic_clock_fiber.resolve_faketime_library",
+            return_value="library",
+        ),
         patch("framework.basic_clock_fiber.check_port", return_value=True),
         patch.object(SharedFiberTest, "setup_class") as parent_setup,
     ):
