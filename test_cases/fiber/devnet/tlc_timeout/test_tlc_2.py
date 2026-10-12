@@ -20,6 +20,10 @@ CHANNEL_BALANCE = 1000 * CKB
 PAYMENT_AMOUNT = 1 * CKB
 COMMITMENT_DELAY_SECONDS = 4 * 60 * 60
 XUDT_COMPATIBLE_WITNESS = bytes([16, 0, 0, 0] * 4)
+# Channels opened by current nodes use the V1 commitment lock: each pending
+# TLC entry in the settlement witness is 97 bytes (Legacy 85 + 12 extra bytes
+# for the full 32-byte payment hash instead of the 20-byte prefix).
+V1_SETTLEMENT_TLC_ENTRY_LEN = 97
 
 
 class TestPR1618OnchainTlcReconcile(FiberTest):
@@ -126,7 +130,7 @@ class TestPR1618OnchainTlcReconcile(FiberTest):
         )
 
         pending_tlc_count = settlement[1]
-        cursor = 74 + 85 * pending_tlc_count
+        cursor = 74 + V1_SETTLEMENT_TLC_ENTRY_LEN * pending_tlc_count
         unlock_types = []
         while cursor < len(settlement):
             assert cursor + 67 <= len(
