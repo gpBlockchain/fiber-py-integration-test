@@ -839,8 +839,14 @@ jobs:
             library=$(dpkg -L libfaketime | grep '/libfaketime.so.1$' | head -n 1)
           else
             brew install libfaketime
-            library=$(find "$(brew --prefix libfaketime)" -name libfaketime.1.dylib -print -quit)
+            prefix="$(brew --prefix libfaketime)"
+            # Homebrew's opt path is a symlink; macOS find -P does not descend into it.
+            library="$prefix/lib/faketime/libfaketime.1.dylib"
+            if [[ ! -f "$library" ]]; then
+              library=$(find -H "$prefix" -name 'libfaketime.1.dylib' -print -quit)
+            fi
           fi
+          test -n "${library:-}"
           test -f "$library"
           echo "FIBER_TEST_FAKETIME_LIB=$library" >> "$GITHUB_ENV"
 
