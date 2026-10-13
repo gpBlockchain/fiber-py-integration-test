@@ -834,9 +834,19 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$RUNNER_OS" == "Linux" ]]; then
-            sudo apt-get update
-            sudo apt-get install -y libfaketime
-            library=$(dpkg -L libfaketime | grep '/libfaketime.so.1$' | head -n 1)
+            # CKB and fnn link jemalloc as the global malloc. Stock libfaketime
+            # deadlocks (0.9.12) or aborts on recursion (Ubuntu's 0.9.10) because
+            # its lazy init calls dlsym for symbols glibc does not export
+            # (__ftime, clock_gettime64, timer_settime@GLIBC_2.2); each failed
+            # dlsym mallocs, re-entering jemalloc init -> clock_gettime -> init.
+            # Build a pinned libfaketime without those lookups.
+            src=/tmp/libfaketime
+            git clone --quiet https://github.com/wolfcw/libfaketime.git "$src"
+            git -C "$src" checkout --quiet e8d8c8531d824722f23e4e4d6ba6bd85c023f8d5
+            sed -i 's/ -DFAKE_INTERNAL_CALLS//; s/ -DFAKE_TIMERS//' "$src/src/Makefile"
+            sed -i -E 's/dlsym\(RTLD_NEXT, "(__clock_gettime64|clock_gettime64)"\)/NULL/' "$src/src/libfaketime.c"
+            make -C "$src/src" libfaketime.so.1
+            library="$src/src/libfaketime.so.1"
           else
             brew install libfaketime
             prefix="$(brew --prefix libfaketime)"
