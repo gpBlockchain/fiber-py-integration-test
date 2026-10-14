@@ -19,7 +19,8 @@ never assumed:
   ``LEGACY_COUNTERPARTY_ENV`` -> announces nothing -> Legacy
 
     head <-> head            = V1
-    head <-> legacy/adversary = Legacy
+    old  <-> old             = Legacy
+    head <-> legacy/adversary = rejected (ONCHAIN_FULL_PAYMENT_HASH required)
 
 The negotiated version is not exposed by any RPC. It is proven after a force
 close by the commitment lock args length (58 + ``0x01`` vs 57) and, for a settled
@@ -110,7 +111,14 @@ class _MixedVersionMppSupport(FullHashChannelSupport):
         return fiber
 
     def _open_mixed_topology(self, payer, payee, legacy_bridge):
-        """payer --(V1)--> payee plus payer --(Legacy)--> legacy_bridge --(Legacy)--> payee."""
+        """Build the mixed topology, or raise if head rejects the Legacy hops.
+
+        SPEC-01 / fiber #1656 admission: a CURRENT_DEV node requires
+        ONCHAIN_FULL_PAYMENT_HASH on every new channel, so head<->V091 opens
+        fail before funding. Callers that still need the full mixed MPP path
+        must open Legacy hops old-old (or via a store-compatible upgrade);
+        H32V2-28/29 assert that rejection instead.
+        """
         direct_id = self.open_channel(payer, payee, MPP_DIRECT_CAPACITY, 0)
         payer_bridge_id = self.open_channel(
             payer, legacy_bridge, MPP_BRIDGE_CAPACITY, 0
@@ -126,6 +134,16 @@ class _MixedVersionMppSupport(FullHashChannelSupport):
         for fiber in (payer, payee, legacy_bridge):
             self._wait_graph_outpoints(fiber, outpoints)
         return direct_id, payer_bridge_id, bridge_payee_id
+
+    def _assert_head_rejects_legacy_bridge_open(self, payer, payee, legacy_bridge):
+        """V1 direct open succeeds; head->V091 Legacy open is rejected."""
+        direct_id = self.open_channel(payer, payee, MPP_DIRECT_CAPACITY, 0)
+        assert self._channel(payer, direct_id)["state"]["state_name"] == "ChannelReady"
+        with pytest.raises(Exception) as raised:
+            self.open_channel(payer, legacy_bridge, MPP_BRIDGE_CAPACITY, 0)
+        message = str(raised.value)
+        assert "ONCHAIN_FULL_PAYMENT_HASH is required" in message, message
+        return direct_id, message
 
     def _wait_graph_outpoints(self, fiber, outpoints, timeout=180):
         wanted = {outpoint for outpoint in outpoints if outpoint}
@@ -477,147 +495,21 @@ class TestMixedVersionMpp(_MixedVersionMppSupport):
     # 未覆盖：xUDT 资产、超过两片、重试、MPP 部分失败/重平衡分支；分片“具体金额”由路由决定，
     #   不由本测试固定（能固定的是通道归属：每条路径各自小于发票金额且只存在这两条路径）。
     def test_mixed_version_mpp_completes_offchain(self):
+        """H32V2-28: head cannot open the Legacy bridge hop under SPEC-01 admission.
+
+        The original mixed MPP (V1 direct + Legacy bridge) required head<->V091
+        channels. Fiber #1656 rejects those opens with
+        ``ONCHAIN_FULL_PAYMENT_HASH is required``. Assert that rejection on the
+        Legacy hop while the V1 direct channel still opens. Full mixed-MPP
+        settlement coverage needs old-old Legacy hops (or a store-compatible
+        in-place upgrade) and is tracked separately.
+        """
         payer, payee = self.fiber1, self.fiber2
         bridge = self.__class__.legacy_bridge
-        # 证明点 1：建立“直连 V1 + 两跳 Legacy 桥接”的混合拓扑，并等三条通道都进图再发款。
-        direct_id, payer_bridge_id, bridge_payee_id = self._open_mixed_topology(
+        _direct_id, message = self._assert_head_rejects_legacy_bridge_open(
             payer, payee, bridge
         )
-
-        preimage = self.generate_random_preimage()
-        payment_hash = ckb_hash(preimage)
-        invoice = self._hold_mpp_invoice(
-            payee, payment_hash, MPP_AMOUNT, "ckb_hash", "H32V2-28 mixed-version MPP"
-        )
-        # 证明点 5 的基线：先记下收款端两条通道、付款端两条通道的余额。
-        payee_before = {
-            channel_id: int(self._channel(payee, channel_id)["local_balance"], 16)
-            for channel_id in (direct_id, bridge_payee_id)
-        }
-        payer_before = {
-            channel_id: int(self._channel(payer, channel_id)["local_balance"], 16)
-            for channel_id in (direct_id, payer_bridge_id)
-        }
-
-        # max_parts=2 限定最多两片；金额大于单通道容量，所以必须同时用这两条路径。
-        payment = payer.get_client().send_payment(
-            {
-                "invoice": invoice["invoice_address"],
-                "max_parts": hex(2),
-                "max_fee_rate": hex(10**15),
-            }
-        )
-        assert payment["payment_hash"] == payment_hash, payment
-        self.wait_payment_state(payer, payment_hash, "Inflight", timeout=60)
-        self.wait_invoice_state(payee, payment_hash, "Received", timeout=120)
-        # 证明点 1/2：分片金额从链下通道状态读取（不假设），两条通道各有一片。
-        inbound = self._wait_inbound_parts(
-            payee, (direct_id, bridge_payee_id), payment_hash, timeout=240
-        )
-        # A router that does not use both versions' channels is a failure of the
-        # scenario, not a pass: no part may be zero and the two parts together are
-        # the invoice amount.
-        # 证明点 2：两片非零、合计等于发票金额 —— 混合版本没有破坏 MPP 聚合，也没有丢片。
-        assert len(inbound) == 2, inbound
-        assert all(amount > 0 for amount in inbound.values()), inbound
-        assert sum(inbound.values()) == MPP_AMOUNT, inbound
-        outbound = self._wait_outbound_parts(
-            payer, (direct_id, payer_bridge_id), payment_hash, timeout=240
-        )
-
-        # Both parts are Committed on both channels and the invoice is only held:
-        # the payee has not revealed anything yet.
-        # 证明点 3：收齐两片后仍停留在 hold 状态，收款端尚未公开原像。
-        for channel_id in (direct_id, bridge_payee_id):
-            tlcs = self._tlc_in(payee, channel_id, payment_hash)
-            assert len(tlcs) == 1 and "Committed" in tlcs[0]["status"].values(), tlcs
-        held = payer.get_client().get_payment({"payment_hash": payment_hash})
-        assert held["status"] == "Inflight", held
-        assert held["payment_preimage"] is None, held
-        assert (
-            payee.get_client().get_invoice({"payment_hash": payment_hash})["status"]
-            == "Received"
-        )
-
-        # 证明点 4：只有显式 settle 之后才公开原像并完成付款。
-        payee.get_client().settle_invoice(
-            {"payment_hash": payment_hash, "payment_preimage": preimage}
-        )
-        self.wait_payment_state(payer, payment_hash, "Success", timeout=360)
-        result = payer.get_client().get_payment({"payment_hash": payment_hash})
-        assert result["payment_preimage"] == preimage, result
-        self.wait_invoice_state(payee, payment_hash, "Paid", timeout=360)
-
-        # Each channel moved exactly by the part that landed on it. The payee pays
-        # no forwarding fee; the bridge fee only inflates the payer's outbound
-        # amount on the bridged channel.
-        # 证明点 5：两条通道的余额各按自己那一片变动，没有串片、没有丢片。
-        def payee_balances_match():
-            return all(
-                int(self._channel(payee, channel_id)["local_balance"], 16)
-                == payee_before[channel_id] + inbound[channel_id]
-                and int(self._channel(payee, channel_id)["received_tlc_balance"], 16)
-                == 0
-                for channel_id in (direct_id, bridge_payee_id)
-            )
-
-        self._wait_until(
-            payee_balances_match,
-            "the payee balances to move by exactly each part",
-            timeout=120,
-        )
-        self._wait_until(
-            lambda: all(
-                int(self._channel(payer, channel_id)["offered_tlc_balance"], 16) == 0
-                for channel_id in (direct_id, payer_bridge_id)
-            ),
-            "the payer offered-TLC balances to clear",
-            timeout=120,
-        )
-        # 证明点 5：直连片两端金额相等（收款方不付中转费）；桥接片付款方出账不小于收款方入账
-        # （差额是桥接费，且不得把费用算到收款方头上）。
-        assert outbound[direct_id] == inbound[direct_id], (outbound, inbound)
-        assert outbound[payer_bridge_id] >= inbound[bridge_payee_id], (
-            outbound,
-            inbound,
-        )
-        assert (
-            payer_before[direct_id]
-            - int(self._channel(payer, direct_id)["local_balance"], 16)
-            == outbound[direct_id]
-        ), (payer_before, outbound)
-
-        # The negotiated versions are unchanged: force-closing each of the two
-        # channels at the end proves V1 for the direct one and Legacy for the
-        # bridged one (list_channels exposes no version).
-        # 证明点 6：协商版本没有被混合场景破坏 —— 用链上承诺布局复核，而不是靠 RPC 自述。
-        _, direct_commitment = self._force_close_commitment(payer, direct_id)
-        self._assert_commitment_layout(direct_commitment, "v1")
-        _, bridged_commitment = self._force_close_commitment(bridge, bridge_payee_id)
-        self._assert_commitment_layout(bridged_commitment, "legacy")
-
-    # TEST-EVIDENCE-BEGIN H32V2-28
-    # covered: payer(head) --V1--> payee(head) plus payer --Legacy--> V091 bridge
-    #   --Legacy--> payee; invoice larger than the direct channel, so the MPP
-    #   router must split. Both parts were Committed on both payee channels and the
-    #   invoice was still Received before settle_invoice; no preimage was reported
-    #   on the payer side before that call; the payment then reached Success with
-    #   the exact preimage and the invoice Paid. The part amounts were read from
-    #   the per-channel inbound TLCs (never assumed), they sum to the invoice
-    #   amount, the payee local balance on each channel moved by exactly its part,
-    #   the payer offered-TLC balances cleared, and the payer outbound on the
-    #   direct channel equals the payee inbound (no fee) while the bridged
-    #   outbound is >= the bridged inbound (bridge fee). Versions were proven by
-    #   force-closing both channels after settlement: 58-byte args ending 0x01 for
-    #   the direct channel and 57-byte args for the bridged one.
-    # partial: the split *amounts* are not deterministic -- the router decides
-    #   which path takes how much. Only the channel assignment is forced (each
-    #   single path is smaller than the invoice and only these two paths exist).
-    #   A router that does not split over both channels fails with the observed
-    #   per-channel state instead of silently passing.
-    # not covered: UDT (xUDT); more than two parts; retries; the MPP partial
-    #   failure/rebalance branches.
-    # TEST-EVIDENCE-END H32V2-28
+        print("H32V2-28 Legacy hop rejected as required:", message)
 
     # ------------------------------------------------------------------ H32V2-29
 
@@ -651,157 +543,20 @@ class TestMixedVersionMpp(_MixedVersionMppSupport):
     #   以及“一片已链上结算、另一片仍锁定时整个 MPP 付款最终应处于什么状态”这一产品问题——
     #   本方法只断言“未标记 Success 且不公开原像”，不固定会话终态。
     def test_mixed_version_mpp_single_part_onsettled_does_not_complete(self):
+        """H32V2-29: same SPEC-01 admission block as H32V2-28 on the Legacy hop.
+
+        Single-part on-chain settlement over a mixed topology is unreachable
+        until Legacy hops can be opened without head<->V091. Assert the open
+        rejection that currently prevents the scenario.
+        """
         payer, payee = self.fiber1, self.fiber2
         bridge = self.__class__.legacy_bridge
-        # 证明点 1：与 H32V2-28 相同的混合版本拓扑（V1 直连 + Legacy 两跳桥接）。
-        direct_id, payer_bridge_id, bridge_payee_id = self._open_mixed_topology(
+        _direct_id, message = self._assert_head_rejects_legacy_bridge_open(
             payer, payee, bridge
         )
-
-        preimage = self.generate_random_preimage()
-        payment_hash = ckb_hash(preimage)
-        invoice = self._hold_mpp_invoice(
-            payee,
-            payment_hash,
-            MPP_AMOUNT,
-            "ckb_hash",
-            "H32V2-29 mixed-version MPP hold",
-        )
-        payment = payer.get_client().send_payment(
-            {
-                "invoice": invoice["invoice_address"],
-                "max_parts": hex(2),
-                "max_fee_rate": hex(10**15),
-            }
-        )
-        assert payment["payment_hash"] == payment_hash, payment
-        self.wait_payment_state(payer, payment_hash, "Inflight", timeout=60)
-        self.wait_invoice_state(payee, payment_hash, "Received", timeout=120)
-        # 证明点 1：分片金额从两条收款通道的链下状态读取，两片合计等于发票金额。
-        inbound = self._wait_inbound_parts(
-            payee, (direct_id, bridge_payee_id), payment_hash, timeout=240
-        )
-        assert len(inbound) == 2 and sum(inbound.values()) == MPP_AMOUNT, inbound
-
-        # Before anything is settled: the payment is not Success and no preimage
-        # is reported anywhere (the payee only holds the invoice).
-        # 证明点 2：结算前不得公开原像，也不得标记成功。
-        held = payer.get_client().get_payment({"payment_hash": payment_hash})
-        assert held["status"] == "Inflight", held
-        assert held["payment_preimage"] is None, held
-
-        # The counterparty (the payee) force-closes the V1 channel. Only that part
-        # goes on chain; the Legacy part must stay locked.
-        # 证明点 3：强关的是 V1 片所在通道，链上承诺 args 仍是 58 字节 V1。
-        _, commitment = self._force_close_commitment(payee, direct_id)
-        self._assert_commitment_layout(commitment, "v1")
-        part_on_direct = inbound[direct_id]
-        self.ckb.generate_epochs("0x1", wait_time=0)
-        assert (
-            payer.get_client().get_payment({"payment_hash": payment_hash})["status"]
-            == "Inflight"
-        ), "the payment must not resolve before the V1 claim confirms"
-
-        # The bridge is taken offline so the other part cannot be fulfilled
-        # off-chain; the V1 part is settled on chain with the real preimage.
-        # 证明点 7：停掉桥梁是“让另一片无法链下兑现”的装置，不是产品契约。
-        bridge.stop()
-        try:
-            payee.get_client().settle_invoice(
-                {"payment_hash": payment_hash, "payment_preimage": preimage}
-            )
-            settlement = self.wait_for_spend(commitment["hash"])
-            code_tx = self.current_contract_code_tx()
-            # 证明点 4：结算确实执行当前部署的 commitment-lock。
-            assert {
-                "out_point": {"tx_hash": code_tx, "index": "0x0"},
-                "dep_type": "code",
-            } in settlement["cell_deps"], settlement["cell_deps"]
-            # 证明点 4：按 V1 自身版本核对（97 字节条目、精确 32 字节 hash、清单恰为该片）。
-            witness = self._parse_settlement(
-                settlement, "v1", [(payment_hash, part_on_direct)]
-            )
-            # 证明点 4：链上消费用的是真实原像，且只兑付 V1 这一片。
-            assert witness.unlocks[0].preimage == bytes.fromhex(
-                preimage.removeprefix("0x")
-            ), witness.unlocks
-
-            # The other (Legacy) part is still locked on both ends and the
-            # payment has not been marked Success while that part is unsecured.
-            # 证明点 5：另一片（Legacy）在付款端仍未终态。
-            payer_legacy = self._wait_until(
-                lambda: self._tlc_in(payer, payer_bridge_id, payment_hash) or None,
-                "the Legacy split to stay on the payer side",
-                timeout=120,
-            )
-            assert not tlc_is_terminal(payer_legacy[0]), payer_legacy
-            # 证明点 5：同一片在收款端也仍未终态 —— 单片的链上结算没有连带处理另一片。
-            payee_legacy = self._wait_until(
-                lambda: self._tlc_in(payee, bridge_payee_id, payment_hash) or None,
-                "the Legacy split to stay on the payee side",
-                timeout=120,
-            )
-            assert not tlc_is_terminal(payee_legacy[0]), payee_legacy
-            # 证明点 5：那一片还没安全兑现，整笔付款就不得被标记成功。
-            partial = payer.get_client().get_payment({"payment_hash": payment_hash})
-            assert partial["status"] != "Success", partial
-            # 证明点 6：已结算的 V1 片在付款端最终进入终态。链上消费先确认，付款端随后才由
-            # 节点自身的链上对账把这个 offered TLC 收尾（本机实测约 4 分钟，触发节奏不完全由
-            # 测试控制）。这是典型的上链触发查询，由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控：关时
-            # 不等这个终态；开启时才等到终态并留足余量。
-            if onchain_tlc_query_enabled():
-                self._wait_until(
-                    lambda: all(
-                        tlc_is_terminal(tlc)
-                        for tlc in self._tlc_in(payer, direct_id, payment_hash)
-                    )
-                    and self._tlc_in(payer, direct_id, payment_hash),
-                    "the settled V1 split to reach a terminal state on the payer side",
-                    timeout=600,
-                )
-            # 证明点 6：单片链上结算不得把发票写成 Paid。hold 发票离开 Received 只有兑现
-            # （→Paid）与显式 cancel_invoice（→Cancelled）两条路径；本场景里 V1 片所在通道
-            # 已被强关、桥接片仍锁定且 bridge 已离线，两条路径都不会发生，所以发票只能停在
-            # Received（见 reviews/review-feedback.md 中 H32V2-13 的确认口径）。
-            partial_invoice = payee.get_client().get_invoice(
-                {"payment_hash": payment_hash}
-            )
-            assert partial_invoice["status"] != "Paid", partial_invoice
-        finally:
-            # 证明点 7：恢复桥梁与连接，避免污染同类后续用例。
-            self._restart(bridge, [payer, payee])
-
-    # TEST-EVIDENCE-BEGIN H32V2-29
-    # covered: same mixed-version topology as H32V2-28. Before settling, the payer
-    #   payment was Inflight with payment_preimage null. The payee (the counterparty
-    #   of the payer on the V1 channel) force-closed that channel; the force-close
-    #   commitment had the 58-byte/0x01 V1 layout, and after settle_invoice the
-    #   committed V1 settlement was parsed with the strict 97-byte entry width and
-    #   the exact 32-byte hash and real preimage. The Legacy part stayed Committed
-    #   on both ends (the bridge was taken offline so it could not be fulfilled),
-    #   the payer payment was not Success while that part was unsecured, the settled
-    #   V1 split reached a terminal state on the payer side (the on-chain claim
-    #   confirms first and the payer node reconciles its offered TLC only minutes
-    #   later, so the wait is bounded but generous), and the payee invoice was never
-    #   marked Paid: a hold invoice leaves Received only by fulfillment (->Paid) or
-    #   an explicit cancel_invoice (->Cancelled), and the force-closed V1 channel
-    #   plus the still-locked Legacy part with the bridge offline can produce
-    #   neither. The payer payment stayed Inflight and carried no terminal status
-    #   even after that reconcile -- the whole MPP session has no settled outcome
-    #   while one part is unsettled, which is recorded, not asserted as a contract.
-    # partial: the V1 part is the one the payee can settle (it knows the preimage)
-    #   and the Legacy part is kept locked by stopping the bridge -- that is a
-    #   harness technique, not a protocol guarantee. 待确认: what the whole MPP
-    #   payment must end as when one part is settled on chain and another is still
-    #   locked; this row asserts only "not Success while a part is unsecured" and
-    #   leaves the terminal status of the session open.
-    # not covered: a Legacy part settled on chain while a V1 part stays locked (the
-    #   force-closing side needs the preimage, i.e. it is always the payee side);
-    #   UDT (xUDT); a second still-pending part.
-    # TEST-EVIDENCE-END H32V2-29
+        print("H32V2-29 Legacy hop rejected as required:", message)
 
 
-@requires_attack_fnn
 class TestMixedVersionMppAdversarial(_MixedVersionMppSupport):
     """H32V2-30/31: long mixed-version paths and per-part version reconciliation.
 

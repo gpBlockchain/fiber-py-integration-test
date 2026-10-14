@@ -5,7 +5,7 @@ The two on-chain layouts under test differ in what actually identifies a TLC:
 - V1 (`CURRENT_DEV` peers, 58-byte commitment lock arg ending in `0x01`): each
   97-byte witness TLC entry commits the **full 32-byte** payment hash, so the
   two hashes are distinguishable by the on-chain evidence itself.
-- Legacy (`FiberConfigPath.V091_DEV` peer, 57-byte commitment lock arg): each
+- Legacy (old-old `FiberConfigPath.V091_DEV` peers, 57-byte commitment lock arg): each
   85-byte witness TLC entry only commits the **20-byte prefix**, so the pair is
   indistinguishable by hash and identity can only be read off the unlock index
   plus the survival of the sibling.
@@ -109,6 +109,8 @@ class TestFullHashExactIdentity(FullHashChannelSupport):
             cls.fiber2_p2p_port,
             cls.extra_fiber_rpc_port,
             cls.extra_fiber_p2p_port,
+            cls.extra_fiber_rpc_port + 1,
+            cls.extra_fiber_p2p_port + 1,
         ):
             with socket.socket() as sock:
                 sock.bind(("127.0.0.1", port))
@@ -121,11 +123,16 @@ class TestFullHashExactIdentity(FullHashChannelSupport):
 
     def setUp(self):
         cls = self.__class__
-        if not hasattr(cls, "legacy_peer"):
-            # generate_account 是实例方法，旧对端在 setUp 里惰性启动一次。
-            cls.legacy_peer = self.start_new_fiber(
+        if not getattr(cls, "_legacy_peers_ready", False):
+            # SPEC-01: new nodes reject Legacy opens. Legacy identity coverage uses
+            # an old-old V091 pair (same pattern as test_full_hash_channels).
+            cls.old1 = self.start_new_fiber(
                 self.generate_account(5000), fiber_version=FiberConfigPath.V091_DEV
             )
+            cls.old2 = self.start_new_fiber(
+                self.generate_account(5000), fiber_version=FiberConfigPath.V091_DEV
+            )
+            cls._legacy_peers_ready = True
 
     # ---------------------------------------------------------------- helpers
 
@@ -392,7 +399,7 @@ class TestFullHashExactIdentity(FullHashChannelSupport):
     def exact_identity_case(self, version):
         """Force close, settle A with the real preimage, then guard B's lifecycle."""
         sender, receiver = (
-            (self.new1, self.new2) if version == "v1" else (self.new1, self.legacy_peer)
+            (self.new1, self.new2) if version == "v1" else (self.old1, self.old2)
         )
         self.select_peers(sender, receiver, version)
         self.open_ready()

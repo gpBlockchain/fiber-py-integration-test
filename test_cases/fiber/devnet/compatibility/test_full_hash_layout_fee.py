@@ -49,7 +49,7 @@ test_full_hash_channels.py::test_upgrade_then_settle_committed_tlc_with_new_code
   的容量预留与承诺费边界（99/100 CKB、reserved_fee 校验）仍是 CKB 专属，不为 UDT 编造等价数值。
 - 长 shutdown lock：框架节点统一使用默认 funding lock，无法在同一轮里构造长短锁对照，
   故只覆盖短锁自动预留。
-- 外部注资 / 接收开通路径：本文件只覆盖普通开通（发起方 = new1）。
+- 外部注资 / 接收开通路径：本文件只覆盖普通开通（V1 发起方 = new1，Legacy = old1）。
 """
 
 import hashlib
@@ -59,6 +59,7 @@ import socket
 import time
 
 from framework.basic_fiber import COMMIT_LOCK_CODE_HASH
+from framework.helper.udt_contract import issue_udt_tx
 from framework.helper.settlement_witness import (
     CKB,
     SettlementWitness,
@@ -124,20 +125,44 @@ class TestFullHashLayoutFee(FullHashChannelSupport):
 
     def setUp(self):
         cls = self.__class__
-        if not hasattr(cls, "legacy_peer"):
-            # Legacy 对端固定为 PR base 9a561b3；generate_account 是实例方法，
-            # 旧对端在 setUp 里惰性启动一次。
-            cls.legacy_peer = self.start_new_fiber(
+        if not getattr(cls, "_legacy_peers_ready", False):
+            # SPEC-01: new nodes reject Legacy opens. Legacy fee/layout coverage
+            # uses an old-old V091 pair (same pattern as test_full_hash_channels).
+            cls.old1 = self.start_new_fiber(
                 self.generate_account(5000), fiber_version=FiberConfigPath.V091_DEV
             )
+            cls.old2 = self.start_new_fiber(
+                self.generate_account(5000), fiber_version=FiberConfigPath.V091_DEV
+            )
+            cls._legacy_peers_ready = True
 
     # ---- H32V2-19 helpers ------------------------------------------------
 
     def peers_for(self, version):
-        """该版本对应的 (sender, receiver)；Legacy 固定使用旧节点。"""
+        """该版本对应的 (sender, receiver)；Legacy 用旧旧节点开通。"""
         return (
-            (self.new1, self.new2) if version == "v1" else (self.new1, self.legacy_peer)
+            (self.new1, self.new2) if version == "v1" else (self.old1, self.old2)
         )
+
+    def fund_old1_udt(self):
+        """Give the old-old Legacy pair xUDT of the existing owner type."""
+        owner = self.new1.get_account()["lock_arg"]
+        old_lock = self.old1.get_account()["lock_arg"]
+        if self.udtContract.balance(self.ckb, owner, old_lock) >= 10**12:
+            return
+        tx_hash = issue_udt_tx(
+            self.udtContract,
+            self.node.rpcUrl,
+            self.new1.account_private,
+            self.old1.account_private,
+            10**12,
+        )
+        self.Miner.miner_until_tx_committed(self.node, tx_hash)
+        for _ in range(60):
+            if self.udtContract.balance(self.ckb, owner, old_lock) >= 10**12:
+                return
+            time.sleep(1)
+        self.fail(f"old1 xUDT issuance not indexed after confirmation: {tx_hash}")
 
     def commitment_args_len(self, version):
         """承诺锁 args 长度：V1 = 57 + 1 字节 feature，Legacy = 57。"""
@@ -558,7 +583,7 @@ class TestFullHashLayoutFee(FullHashChannelSupport):
 
     # TEST-MAP: H32V2-19
     # TEST-EVIDENCE-BEGIN: H32V2-19
-    # Evidence | partial | xUDT：普通开通 V1 (new-new) 与 Legacy (new1-legacy_peer) xUDT 通道，断言
+    # Evidence | partial | xUDT：普通开通 V1 (new-new) 与 Legacy (old-old) xUDT 通道，断言
     # 承诺锁布局 58/0x01 vs 57、1 笔已承诺 TLC 的 settle 含 commitment-lock 与 xUDT 代码 dep、witness
     # 宽度 90 + (97|85) * 1 + 99、V1 比 Legacy 宽 12 字节，以及 xUDT 资产减量与收款净增量、付款 Success
     # 与正确原像。评审行的短锁 CKB 自动预留 99/100 CKB 是 CKB 专属，不为 UDT 编造等价数值，本方法
@@ -573,8 +598,10 @@ class TestFullHashLayoutFee(FullHashChannelSupport):
         widths = {}
         for version in ("v1", "legacy"):
             with self.subTest(version=version):
-                # peers_for 保证出资方始终是持有 xUDT 的 new1；Legacy 对端是 PR base 旧节点。
+                # V1: new-new (new1 holds xUDT). Legacy: old-old after funding old1.
                 self.select_peers(*self.peers_for(version), version)
+                if version == "legacy":
+                    self.fund_old1_udt()
                 self.open_ready_udt(udt)
                 # 只保留一笔已承诺 TLC；settle_held_channel_udt 会强关、公布原像并核对链上结算。
                 payment_hash, preimage = self.hold_one_payment_udt(udt, amount=100)
