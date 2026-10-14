@@ -289,6 +289,20 @@ class Fiber:
         )
         wait_for_port(self.rpc_port, timeout=30, open=False)
 
+    def save_failure_data(self, dest_dir):
+        """Copy node.log and config.yml into dest_dir before the tmp folder is cleaned."""
+        import os
+        import shutil
+
+        if not os.path.isdir(self.tmp_path):
+            return
+        dest = os.path.join(dest_dir, os.path.basename(self.tmp_path.rstrip("/")))
+        os.makedirs(dest, exist_ok=True)
+        for name in ("node.log", "config.yml"):
+            src = os.path.join(self.tmp_path, name)
+            if os.path.exists(src):
+                shutil.copy(src, dest)
+
     def clean(self):
         run_command("rm -rf {tmp_path}".format(tmp_path=self.tmp_path))
 
