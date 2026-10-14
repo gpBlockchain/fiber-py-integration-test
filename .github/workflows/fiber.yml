@@ -425,7 +425,7 @@ jobs:
           cd ../
         env:
           GitUrl: '${{ github.event.inputs.GitUrl }}'
-          GitBranch: ${{ github.event.inputs.GitBranch || 'v0.9.1' }}
+          GitBranch: ${{ github.event.inputs.GitBranch || 'develop' }}
       - name: Run fiber_test_demo
         run: |
            make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/wasm"
