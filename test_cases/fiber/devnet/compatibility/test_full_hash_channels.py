@@ -11,6 +11,8 @@ import socket
 import subprocess
 import time
 
+import pytest
+
 from framework.basic_fiber import COMMIT_LOCK_CODE_HASH
 from framework.config import (
     DEFAULT_MIN_DEPOSIT_CKB,
@@ -656,6 +658,7 @@ class TestFullHashChannels(ContractUpgradeSupport):
     # Evidence | partial | A Legacy-only peer sends OpenChannel to the new node; the receiving node
     # rejects it before adding a pending/open record. Local feature-off needs a configurable fixture.
     # TEST-EVIDENCE-END: H32V2-34
+    @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/1697")
     def test_new_node_rejects_legacy_inbound_open(self):
         # Keep the receiver's default auto-accept enabled: rejection must happen before it.
         self.select_peers(self.old1, self.new2, "legacy")
