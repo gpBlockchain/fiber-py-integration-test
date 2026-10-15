@@ -140,9 +140,7 @@ class TestFullHashLayoutFee(FullHashChannelSupport):
 
     def peers_for(self, version):
         """该版本对应的 (sender, receiver)；Legacy 用旧旧节点开通。"""
-        return (
-            (self.new1, self.new2) if version == "v1" else (self.old1, self.old2)
-        )
+        return (self.new1, self.new2) if version == "v1" else (self.old1, self.old2)
 
     def fund_old1_udt(self):
         """Give the old-old Legacy pair xUDT of the existing owner type."""

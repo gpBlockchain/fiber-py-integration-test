@@ -25,9 +25,7 @@ class TestP2p(FiberTest):
         assert "ONCHAIN_FULL_PAYMENT_HASH is required" in message, message
 
         # Positive control: same-version V1 channels still pay end-to-end.
-        self.open_channel(
-            self.fiber1, self.fiber2, 1000 * 100000000, 1000 * 100000000
-        )
+        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 1000 * 100000000)
         self.send_payment(self.fiber1, self.fiber2, 1)
         self.send_payment(self.fiber2, self.fiber1, 1)
 
