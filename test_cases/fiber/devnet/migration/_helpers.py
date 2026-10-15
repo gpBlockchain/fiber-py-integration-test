@@ -228,6 +228,7 @@ def start_with_confirm(
     env = os.environ.copy()
     env["FIBER_SECRET_KEY_PASSWORD"] = password
     env["RUST_LOG"] = f"info,fnn={fnn_log_level}"
+    env.update(getattr(fiber, "extra_env", {}))
     log_path = node_log_path(fiber)
     cmd = [
         f"{get_project_root()}/{fiber.fiber_config_enum.fiber_bin_path}",

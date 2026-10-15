@@ -2,7 +2,7 @@ name: Fiber attack FNN regressions
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, v0.10.0]
     paths:
       - ".github/workflows/fiber-attack-fnn.yml"
       - "download_btc.py"
@@ -14,6 +14,7 @@ on:
       - "framework/p2p_peer.py"
       - "framework/test_fiber.py"
       - "scripts/build_attack_fnn.sh"
+      - "test_cases/framework/test_attack_legacy_setup.py"
       - "test_cases/fiber/devnet/security/**"
       - "test_cases/fiber/devnet/compatibility/**"
   workflow_dispatch:
@@ -76,6 +77,9 @@ jobs:
           ./venv/bin/python -m download_btc
           ./venv/bin/python -m download_lnd
           install -m 0755 download/0.202.0/ckb-cli source/ckb-cli
+
+      - name: Check Legacy channel setup and restart environment
+        run: ./venv/bin/python -m pytest -o addopts= -q test_cases/framework/test_attack_legacy_setup.py
 
       - name: Build stock and full-payment-hash attack FNN binaries
         env:

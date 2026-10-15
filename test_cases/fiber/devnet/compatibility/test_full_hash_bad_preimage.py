@@ -6,10 +6,10 @@ Merged from ``test_full_hash_invalid_preimage.py``,
 
 Topology
 --------
-For ordinary Legacy cases, two official v0.9.1 nodes open a channel; the victim
-then restarts as ``CURRENT_DEV`` on the same store. Prefix-only claim cases need
-``ATTACK_FULL_HASH_DEV`` to bypass the normal preimage check: the v0.9.1 victim
-opens to this feature-disabled test counterparty before upgrading. Both paths
+For all Legacy cases, two official v0.9.1 nodes open a channel. The victim
+then restarts as ``CURRENT_DEV`` on the same store. Prefix-only claim cases also
+restart the counterparty as ``ATTACK_FULL_HASH_DEV`` with its Legacy feature
+switch; that build rejects new Legacy channel admission. Both paths
 check the original channel ID, outpoint, balances, commitment hash and ready
 state; neither asks a current node to open a fresh Legacy channel. The attack
 path does not prove a stock old-old counterparty can later make a bad claim.
@@ -56,13 +56,13 @@ Rows
 
 Counterparty wiring
 -------------------
-``P2pFiberTest`` starts the counterparty from the class attribute ``attacker_env``
-before the test body runs, so the per-method environment is selected in
-``setup_method`` from the running method name:
+``setup_method`` selects the counterparty environment from the running method
+name. Legacy methods apply it when restarting the old peer as the attack build;
+V1 methods apply it on the initial attack-build startup:
 
-* H32V2-17 uses two stock v0.9.1 nodes. Prefix-only claim methods disable the
-  attack node's full-hash feature while the victim is still v0.9.1. Both restore
-  the same channel under the new victim binary;
+* H32V2-17 keeps the counterparty on stock v0.9.1. Prefix-only claim methods
+  upgrade it after the old-old channel is ready, then disable its full-hash
+  feature on startup. Both restore the same channel under the new victim binary;
 * V1 methods additionally let the counterparty build a V1 settlement whose
   preimage does not match the full 32-byte hash (``V1_PREFIX_CLAIM_ENV``), which
   is the only way the contract's rejection can actually be exercised.
@@ -174,8 +174,8 @@ class TestFullHashBadPreimage(P2pFiberTest):
     """Prefix-only preimage claims: Legacy vs V1, relay, restart and expiry."""
 
     attacker_fiber_version = FiberConfigPath.ATTACK_FULL_HASH_DEV
-    # Default counterparty build hides the full-hash feature; setup_method selects
-    # the per-method environment before the node starts.
+    # Legacy cases begin with the official old binary, then select the attack
+    # node's feature switch when restarting that peer on its existing store.
     attacker_env = LEGACY_COUNTERPARTY_ENV
     start_fiber_config = {
         "fiber_watchtower_check_interval_seconds": WATCHTOWER_INTERVAL
@@ -190,8 +190,7 @@ class TestFullHashBadPreimage(P2pFiberTest):
     channel_local_balance = CHANNEL_FUND
     channel_remote_balance = 0
 
-    # The counterparty environment is read once, before the node starts, so the
-    # class attribute cannot vary per method. Select it from the method name.
+    # Select the environment before either the initial V1 start or Legacy restart.
     # H32V2-07 拆成 4+4 个单组合方法后，每个方法都要在这里登记，否则
     # setup_method 拿不到 env，对端会按默认角色启动。
     _COUNTERPARTY_ENV = {
@@ -262,11 +261,9 @@ class TestFullHashBadPreimage(P2pFiberTest):
         old_old = method.__name__ in self._OLD_OLD_LEGACY_METHODS
         configured_env = self._COUNTERPARTY_ENV.get(method.__name__)
         legacy = configured_env == LEGACY_COUNTERPARTY_ENV
-        self.attacker_env = None if old_old else configured_env
+        self.attacker_env = None if legacy else configured_env
         self.attacker_fiber_version = (
-            FiberConfigPath.V091_DEV
-            if old_old
-            else FiberConfigPath.ATTACK_FULL_HASH_DEV
+            FiberConfigPath.V091_DEV if legacy else FiberConfigPath.ATTACK_FULL_HASH_DEV
         )
         self.fiber_version = (
             FiberConfigPath.V091_DEV if legacy else FiberConfigPath.CURRENT_DEV
@@ -277,11 +274,14 @@ class TestFullHashBadPreimage(P2pFiberTest):
         self.fiber2 = self.attacker
         if legacy and not self.debug:
             before = self._channel(self.victim).copy()
-            assert (
-                self._channel(self.attacker)["channel_outpoint"]
-                == before["channel_outpoint"]
-            )
+            peer_before = self._channel(self.attacker).copy()
+            assert peer_before["channel_outpoint"] == before["channel_outpoint"]
             self.victim.stop()
+            if not old_old:
+                self.attacker.stop()
+                self.attacker.fiber_config_enum = FiberConfigPath.ATTACK_FULL_HASH_DEV
+                self.attacker.extra_env = configured_env
+                start_with_confirm(self.attacker, confirm="y", timeout=60)
             self.victim.fiber_config_enum = FiberConfigPath.CURRENT_DEV
             start_with_confirm(self.victim, confirm="y", timeout=60)
             self.victim.connect_peer(self.attacker)
@@ -297,6 +297,18 @@ class TestFullHashBadPreimage(P2pFiberTest):
                 assert (
                     after[field] == before[field]
                 ), f"Legacy 通道恢复后 {field} 改变: {before[field]} -> {after[field]}"
+            peer_after = self._channel(self.attacker)
+            for field in (
+                "channel_id",
+                "channel_outpoint",
+                "local_balance",
+                "remote_balance",
+                "latest_commitment_transaction_hash",
+            ):
+                assert peer_after[field] == peer_before[field], (
+                    f"Legacy 对端恢复后 {field} 改变: "
+                    f"{peer_before[field]} -> {peer_after[field]}"
+                )
 
     # ------------------------------------------------------------------ chain
 
