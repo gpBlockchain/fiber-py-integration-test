@@ -141,9 +141,9 @@ jobs:
         run: |
           if [[ -f download/fiber/provenance.env ]]; then
             {
-              echo "```text"
+              printf '%s\n' '```text'
               cat download/fiber/provenance.env
-              echo "```"
+              printf '%s\n' '```'
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 

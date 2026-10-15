@@ -258,6 +258,23 @@ class TestFullHashBadPreimage(P2pFiberTest):
             self.__class__._clock_advanced = False
 
     def setup_method(self, method):
+        try:
+            self._setup_method(method)
+        except Exception:
+            # pytest does not call teardown_method after a failed setup. Stop
+            # nodes here so the next case does not inherit their port/store locks.
+            for fiber in reversed(getattr(self, "fibers", [])):
+                try:
+                    fiber.force_stop()
+                except Exception:
+                    self.logger.exception("could not stop node after setup failure")
+                try:
+                    fiber.clean()
+                except Exception:
+                    self.logger.exception("could not clean node after setup failure")
+            raise
+
+    def _setup_method(self, method):
         old_old = method.__name__ in self._OLD_OLD_LEGACY_METHODS
         configured_env = self._COUNTERPARTY_ENV.get(method.__name__)
         legacy = configured_env == LEGACY_COUNTERPARTY_ENV
