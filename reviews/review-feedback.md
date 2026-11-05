@@ -4,3 +4,12 @@
 - model: unavailable | cases: PR1671 CI 接入 | feedback: 没必要啊 手动触发一下就行 但是之后的CI得跑到这些用例
 - model: unavailable | cases: PR1671-01～08 中文表述 | feedback: 生硬的英语翻中文全给我检查并改正一下
 - model: unavailable | cases: UDT-CLOSE-01 UDT-CLOSE-02 | feedback: 那先把这两处遗漏补齐，按规则先给我看用例，确认后再改自动化、跑聚焦测试，更新到这个 PR，因为这个上额外的修改（帮我确认一下） 跟这个pr的场景无关，可以再搞一个commit做这个事情。
+- model: unavailable | cases: PR1677-01 PR1677-02 PR1677-03 PR1677-04 PR1677-05 PR1677-06 PR1677-07 | feedback: 所以集成这边最主要做重连混沌测试
+- model: unavailable | cases: PR1677-01 PR1677-04 PR1677-08 | feedback: 我没看到用例里说做重连混沌测试
+- model: unavailable | cases: PR1677 review scope | feedback: guopeng: 这个pr 应该只需要测压测重连重启混沌测试，然后tlc不会卡住；Quake: 对，顺便再跑一下性能测试；Quake: 我自己测试有30%的下降；guopeng: 重启要考虑强制kill吗；Quake: 可以试试看 设计上是不确保的，但是可以看看会出现什么样的问题
+- model: unavailable | cases: PR1677-01 PR1677-02 PR1677-04 PR1677-08 | feedback: 断连有2种 一种是重启，一种是调用rpc disconnect 都需要考虑
+- model: unavailable | cases: PR1677-10 | feedback: 可以补充极端情况a-b-c-d-a，手续费为0，然后每个节点都自己给自己发压测交易，期间不停断连重启
+- model: unavailable | cases: PR1677-11 | feedback: 还需要补充长时间断连重启用例，跑1h看看，后面可以不回归
+- model: unavailable | cases: PR1677-11 | feedback: 路由场景可以复杂一点
+- model: unavailable | cases: PR1677-11 | feedback: 每十分钟改成每分钟
+- model: unavailable | cases: PR1677-09 | feedback: PR1677-09 不需要 可以删

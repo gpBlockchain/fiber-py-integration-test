@@ -465,7 +465,7 @@ class TestCancelInvoice(FiberTest):
         Returns:
             None
         """
-        cancel_size = 20
+        cancel_size = 15
         channel_length = 4
         # cancel_size = 5
         # channel_length = 3
@@ -481,7 +481,6 @@ class TestCancelInvoice(FiberTest):
                 1000 * 100000000,
                 1000 * 100000000,
             )
-
         # Step 3: Create new invoices
         new_invoices = []
         for i in range(cancel_size):

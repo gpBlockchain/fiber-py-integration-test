@@ -18,7 +18,7 @@ on:
         default: 'https://github.com/nervosnetwork/fiber.git'
       GitBranch:
         description: 'fiber -git branch'
-        default: 'develop'
+        default: 'fix/channel-v2-nonce'
   schedule:
     - cron: '0 0 */7 * *'
 
@@ -45,7 +45,7 @@ jobs:
         run: make prepare
         env:
           GitUrl: '${{ github.event.inputs.GitUrl }}'
-          GitBranch: ${{ github.event.inputs.GitBranch || 'develop' }}
+          GitBranch: ${{ github.event.inputs.GitBranch || 'fix/channel-v2-nonce' }}
 
 
       - name: Tar backup
@@ -159,7 +159,7 @@ jobs:
           tar -xzf prepare-backup.tar.gz
 
       - name: Run fiber_test_demo
-        run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/get_invoice test_cases/fiber/devnet/graph_channels test_cases/fiber/devnet/graph_nodes test_cases/fiber/devnet/list_channels test_cases/fiber/devnet/new_invoice"
+        run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/get_invoice test_cases/fiber/devnet/graph_channels test_cases/fiber/devnet/graph_nodes test_cases/fiber/devnet/list_channels test_cases/fiber/devnet/list_payments test_cases/fiber/devnet/new_invoice"
 
       - name: Publish reports
         if: failure()
@@ -425,7 +425,7 @@ jobs:
           cd ../
         env:
           GitUrl: '${{ github.event.inputs.GitUrl }}'
-          GitBranch: ${{ github.event.inputs.GitBranch || 'develop' }}
+          GitBranch: ${{ github.event.inputs.GitBranch || 'fix/channel-v2-nonce' }}
       - name: Run fiber_test_demo
         run: |
            make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/wasm"
@@ -727,7 +727,7 @@ jobs:
           name: jfoa-fnn-cli-reports-${{ runner.os }}
           path: ./report
 
-  fiber_test_security:
+  fiber_test_security_list_payments:
     needs: prepare
     runs-on: ubuntu-22.04
 
@@ -754,7 +754,7 @@ jobs:
           tar -xzf prepare-backup.tar.gz
 
       - name: Run security tests
-        run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/security"
+        run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/security test_cases/fiber/devnet/list_payments"
 
       - name: Publish reports
         if: failure()

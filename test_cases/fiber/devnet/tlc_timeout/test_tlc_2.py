@@ -85,14 +85,15 @@ class TestPR1618OnchainTlcReconcile(FiberTest):
         hours, minutes = divmod(minutes, 60)
         change_time(hours, minutes)
 
-    def _advance_to_receiver_remove(self, receiver_tlc):
+    def _advance_to_receiver_remove(self, receiver_tlc, minutes_before=0):
         # HoldTlcTimeout fires before absolute expiry.  This is the same
         # threshold used by the existing tlc_timeout integration coverage.
         remove_lead_seconds = 60 + 2 * COMMITMENT_DELAY_SECONDS / 3
         remove_time_ms = int(receiver_tlc["expiry"], 16) - int(
             remove_lead_seconds * 1000
         )
-        self._advance_clock_to(remove_time_ms)
+        self._advance_clock_to(remove_time_ms - minutes_before * 60 * 1000)
+        return remove_time_ms
 
     def _advance_past_tlc_expiry_and_delay(self, tlc):
         # Cross the exact B-C TLC expiry, then advance one CKB epoch so the
@@ -259,31 +260,64 @@ class TestPR1618OnchainTlcReconcile(FiberTest):
     def test_uncommitted_remote_removed_reconciles_upstream_tlc(self):
         """#1612: RemoteRemoved without remove confirmation must reconcile on-chain."""
         case = self._setup_held_payment()
-        close_tx = self._force_close_b_c(case)
-
-        # Keep the close unconfirmed while D times out.  B receives C's
-        # RemoveTlc and marks the TLC RemoteRemoved, but ShuttingDown rejects
-        # the following commitment handshake, so A-B is still unresolved.
-        self._advance_to_receiver_remove(case["receiver_tlc"])
-        remote_removed = self._wait_for_tlc_status(
-            self.fiber2,
-            case["b_c_channel_id"],
-            case["payment_hash"],
-            {"Outbound": "RemoteRemoved"},
+        # Cross the random TLC expiry padding before broadcasting the close.
+        pre_close_minutes = 10
+        remove_time_ms = self._advance_to_receiver_remove(
+            case["receiver_tlc"], minutes_before=pre_close_minutes
         )
-        time.sleep(2)
-        b_c_channel = self._channel(self.fiber2, case["b_c_channel_id"])
-        assert b_c_channel["state"]["state_name"] == "ShuttingDown", b_c_channel
-        assert self._payment_tlc(
-            self.fiber1, case["a_b_channel_id"], case["payment_hash"]
-        ), "upstream TLC disappeared before the B-C remove handshake was rejected"
-        close_status = self.node.getClient().get_transaction(close_tx)["tx_status"][
-            "status"
-        ]
-        assert close_status in ("pending", "proposed"), close_status
-        assert remote_removed["status"] == {"Outbound": "RemoteRemoved"}
+        seconds_until_remove = remove_time_ms / 1000 - time.time()
+        assert (
+            5 * 60 <= seconds_until_remove <= (pre_close_minutes + 1) * 60
+        ), seconds_until_remove
+        receiver_tlc = self._payment_tlc(
+            case["fiber4"], case["c_d_channel_id"], case["payment_hash"]
+        )
+        assert receiver_tlc is not None, "D removed its TLC before B-C force-close"
+        assert receiver_tlc["status"] == {"Inbound": "Committed"}, receiver_tlc
+        b_c_tlc = self._payment_tlc(
+            self.fiber2, case["b_c_channel_id"], case["payment_hash"]
+        )
+        assert b_c_tlc is not None, "B-C TLC disappeared before force-close"
+        assert b_c_tlc["status"] == {"Outbound": "Committed"}, b_c_tlc
 
-        self.Miner.miner_until_tx_committed(self.node, close_tx)
+        self.node.stop_miner()
+        try:
+            close_tx = self._force_close_b_c(case)
+            # close_tx_transaction = self.node.getClient().get_transaction(close_tx)['transaction']
+            # Keep the close unconfirmed while D times out.  B receives C's
+            # RemoveTlc and marks the TLC RemoteRemoved, but ShuttingDown rejects
+            # the following commitment handshake, so A-B is still unresolved.
+            self._advance_to_receiver_remove(case["receiver_tlc"])
+            remote_removed = self._wait_for_tlc_status(
+                self.fiber2,
+                case["b_c_channel_id"],
+                case["payment_hash"],
+                {"Outbound": "RemoteRemoved"},
+            )
+            time.sleep(2)
+            b_c_channel = self._channel(self.fiber2, case["b_c_channel_id"])
+            assert b_c_channel["state"]["state_name"] == "ShuttingDown", b_c_channel
+            assert self._payment_tlc(
+                self.fiber1, case["a_b_channel_id"], case["payment_hash"]
+            ), "upstream TLC disappeared before the B-C remove handshake was rejected"
+            close_status = self.node.getClient().get_transaction(close_tx)["tx_status"][
+                "status"
+            ]
+            # if close_status == 'rejected':
+            #     del close_tx_transaction['hash']
+            #     self.node.getClient().send_transaction(close_tx_transaction)
+            # close_status = self.node.getClient().get_transaction(close_tx)["tx_status"][
+            #     "status"
+            # ]
+            assert close_status in ("pending", "proposed"), close_status
+            assert remote_removed["status"] == {"Outbound": "RemoteRemoved"}
+
+            self.Miner.miner_until_tx_committed(self.node, close_tx)
+        finally:
+            self.node.start_miner()
         self._advance_past_tlc_expiry_and_delay(case["b_c_tlc"])
         self._wait_for_spending_tx(close_tx)
         self._assert_upstream_failed(case)
+
+    def test_0000(self):
+        self.fiber1.get_client().list_channels({})

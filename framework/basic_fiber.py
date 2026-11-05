@@ -1317,6 +1317,39 @@ class FiberTest(CkbTest):
         print("restored time:", time.time())
         print("restored datetime:", datetime.now())
 
+    def wait_channel_peer_connect(self, timeout=120):
+        """Wait until every non-closed channel peer is connected on every node.
+
+        Only observe connections; do not initiate reconnects or wait for
+        CHANNEL_READY. RPC failures propagate to the caller.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            missing_peers = {}
+            for fiber in self.fibers:
+                client = fiber.get_client()
+                channel_pubkeys = {
+                    channel["pubkey"]
+                    for channel in client.list_channels({"include_closed": False})[
+                        "channels"
+                    ]
+                }
+                if not channel_pubkeys:
+                    continue
+                peer_pubkeys = {peer["pubkey"] for peer in client.list_peers()["peers"]}
+                missing = channel_pubkeys - peer_pubkeys
+                if missing:
+                    missing_peers[client.url] = sorted(missing)
+            if not missing_peers:
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"Timed out waiting for channel peers to connect after {timeout}s; "
+                    f"missing peers by RPC URL: {missing_peers}"
+                )
+            time.sleep(min(1, remaining))
+
 
 def check_port(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
