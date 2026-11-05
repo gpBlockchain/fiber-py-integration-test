@@ -44,9 +44,8 @@ def wait_for_port(port, timeout=30, open=True):
 class FiberConfigPath(Enum):
     CURRENT_DEV = (
         "/source/fiber/dev_config_3.yml.j2",
-        "download/fiber/channel-v2-nonce/fnn",
-        # "download/fiber/develop/fnn",
-
+        # "download/fiber/channel-v2-nonce/fnn",
+        "download/fiber/develop/fnn",
     )
 
     CURRENT_CCH = (
