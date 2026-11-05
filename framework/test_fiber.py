@@ -85,6 +85,14 @@ class FiberConfigPath(Enum):
         "download/fiber/0.9.1/fnn",
     )
 
+    # Pre-PR-1628 build (2026-08-06, e6cb7ac). Used by the MuSig2 nonce-reuse
+    # wire PoC: after PR 1628 the stock victim no longer emits the reciprocal
+    # empty CommitmentSigned that carries signature A.
+    V090_DEV = (
+        "/source/fiber/dev_config_3.yml.j2",
+        "download/fiber/0.9.0/fnn",
+    )
+
     V081_DEV = (
         "/source/fiber/dev_config_3.yml.j2",
         "download/fiber/0.8.1/fnn",
@@ -227,6 +235,7 @@ class Fiber:
         password="password0",
         fnn_log_level="debug",
         rpc_biscuit_public_key=None,
+        timeout=300,
     ):
         # env_map = dict(os.environ)  # Make a copy of the current environment
         # if node:,
@@ -247,7 +256,7 @@ class Fiber:
             # env=env_map,
         )
         # wait rpc port open
-        wait_for_port(self.rpc_port, timeout=300, open=True)
+        wait_for_port(self.rpc_port, timeout, open=True)
         print("start fiber client ")
 
     def stop(self):

@@ -405,7 +405,7 @@ class TestFundingAmount(FiberTest):
                 "funding_amount": hex(100000 * 100000000 + 1),
             }
         )
-
+        time.sleep(5)
         channels = self.fiber2.get_client().list_channels({})
         assert len(channels["channels"]) == 0
         # todo add check
