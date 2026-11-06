@@ -67,10 +67,6 @@ stock_sha="$(checkout_ref origin "$STOCK_FIBER_REF")"
 build_fnn "$ROOT_DIR/download/fiber/current/fnn"
 
 attack_sha="$(checkout_ref attack "$ATTACK_FIBER_REF")"
-if ! git -C "$FIBER_BUILD_DIR" merge-base --is-ancestor "$stock_sha" "$attack_sha"; then
-    echo "attack FNN commit must descend from stock FNN commit" >&2
-    exit 1
-fi
 build_fnn "$ATTACK_DESTINATION"
 
 stock_hash="$(sha256_file "$ROOT_DIR/download/fiber/current/fnn")"
@@ -86,7 +82,7 @@ attack_fiber_repository=$ATTACK_FIBER_REPOSITORY
 attack_fiber_ref=$ATTACK_FIBER_REF
 attack_fiber_sha=$attack_sha
 attack_destination=$ATTACK_DESTINATION
-attack_base_verified=true
+attack_base_verified=false
 attack_fnn_profile=debug
 attack_fnn_sha256=$attack_hash
 PROVENANCE
