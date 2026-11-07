@@ -175,19 +175,8 @@ class TestExternalFundingInvalidSignedTx(ExternalFundingBase):
             external_context["external_private_key"],
         )
 
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(Exception, match="Invalid state:"):
             self._submit_external_funding(normal_channel_id, signed_funding_tx)
-
-        error_message = exc_info.value.args[0]
-        error_pattern = (
-            r"Expected channel in "
-            r"(?:AwaitingExternalFunding|AWAITING_EXTERNAL_FUNDING)-compatible state, "
-            r"but got [A-Za-z_]+"
-        )
-        assert re.search(error_pattern, error_message), (
-            f"Expected pattern '{error_pattern}' "
-            f"not found in actual string '{error_message}'"
-        )
 
     def test_duplicate_submit_signed_funding_tx(self):
         """T-10: the same signed funding tx cannot be submitted twice."""

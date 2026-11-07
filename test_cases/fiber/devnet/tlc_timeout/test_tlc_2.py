@@ -126,9 +126,13 @@ class TestPR1618OnchainTlcReconcile(FiberTest):
         )
         return [unlock.unlock_type for unlock in witness.unlocks]
 
-    def _setup_held_payment(self):
-        fiber3 = self.start_new_fiber(self.generate_account(10000))
-        fiber4 = self.start_new_fiber(self.generate_account(10000))
+    def _setup_held_payment(self, tlc_expiry_limit_ms=None):
+        fiber3 = self.start_new_fiber(
+            self.generate_account(10000), fiber_version=self.fiber_version
+        )
+        fiber4 = self.start_new_fiber(
+            self.generate_account(10000), fiber_version=self.fiber_version
+        )
 
         a_b_channel_id = self.open_channel(self.fiber1, self.fiber2, CHANNEL_BALANCE, 0)
         b_c_channel_id = self.open_channel(self.fiber2, fiber3, CHANNEL_BALANCE, 0)
@@ -143,12 +147,13 @@ class TestPR1618OnchainTlcReconcile(FiberTest):
                 "payment_hash": self.generate_random_preimage(),
             }
         )
-        payment = self.fiber1.get_client().send_payment(
-            {
-                "invoice": invoice["invoice_address"],
-                "max_fee_rate": hex(1000000000000000),
-            }
-        )
+        payment_params = {
+            "invoice": invoice["invoice_address"],
+            "max_fee_rate": hex(1000000000000000),
+        }
+        if tlc_expiry_limit_ms is not None:
+            payment_params["tlc_expiry_limit"] = hex(tlc_expiry_limit_ms)
+        payment = self.fiber1.get_client().send_payment(payment_params)
         payment_hash = payment["payment_hash"]
         self.wait_invoice_state(fiber4, payment_hash, "Received", timeout=120)
 
@@ -259,16 +264,9 @@ class TestPR1618OnchainTlcReconcile(FiberTest):
 
     def test_uncommitted_remote_removed_reconciles_upstream_tlc(self):
         """#1612: RemoteRemoved without remove confirmation must reconcile on-chain."""
-        case = self._setup_held_payment()
-        # Cross the random TLC expiry padding before broadcasting the close.
-        pre_close_minutes = 10
-        remove_time_ms = self._advance_to_receiver_remove(
-            case["receiver_tlc"], minutes_before=pre_close_minutes
-        )
-        seconds_until_remove = remove_time_ms / 1000 - time.time()
-        assert (
-            5 * 60 <= seconds_until_remove <= (pre_close_minutes + 1) * 60
-        ), seconds_until_remove
+        # Bound the random expiry padding; the close is confirmed before any
+        # clock advance, so the transaction never sits in the pool for days.
+        case = self._setup_held_payment(tlc_expiry_limit_ms=48 * 60 * 60 * 1000)
         receiver_tlc = self._payment_tlc(
             case["fiber4"], case["c_d_channel_id"], case["payment_hash"]
         )
@@ -284,10 +282,16 @@ class TestPR1618OnchainTlcReconcile(FiberTest):
         try:
             close_tx = self._force_close_b_c(case)
             # close_tx_transaction = self.node.getClient().get_transaction(close_tx)['transaction']
-            # Keep the close unconfirmed while D times out.  B receives C's
-            # RemoveTlc and marks the TLC RemoteRemoved, but ShuttingDown rejects
-            # the following commitment handshake, so A-B is still unresolved.
-            self._advance_to_receiver_remove(case["receiver_tlc"])
+            # Cancel D's held invoice while the close is unconfirmed.  This
+            # makes C send RemoveTlc without racing C-D's own expiry handling.
+            # B records RemoteRemoved, but ShuttingDown prevents the remove
+            # handshake from completing, so A-B is still unresolved.
+            case["fiber4"].get_client().cancel_invoice(
+                {"payment_hash": case["payment_hash"]}
+            )
+            self.wait_invoice_state(
+                case["fiber4"], case["payment_hash"], "Cancelled", timeout=30
+            )
             remote_removed = self._wait_for_tlc_status(
                 self.fiber2,
                 case["b_c_channel_id"],
@@ -318,6 +322,3 @@ class TestPR1618OnchainTlcReconcile(FiberTest):
         self._advance_past_tlc_expiry_and_delay(case["b_c_tlc"])
         self._wait_for_spending_tx(close_tx)
         self._assert_upstream_failed(case)
-
-    def test_0000(self):
-        self.fiber1.get_client().list_channels({})

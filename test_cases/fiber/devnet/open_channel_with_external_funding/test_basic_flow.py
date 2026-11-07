@@ -110,10 +110,12 @@ class TestExternalFundingBasicFlow(ExternalFundingBase):
 
         The PR-1252 state-machine refactor folded the standalone
         `AwaitingExternalFunding` state into
-        `NegotiatingFunding(AWAITING_EXTERNAL_FUNDING)`. So the valid
-        observable states are now:
+        `NegotiatingFunding(AWAITING_EXTERNAL_FUNDING)`. The current node can
+        also exchange commitment signatures before the external transaction
+        is submitted. Valid pre-submit observations are:
           * state_name == "NegotiatingFunding" with state_flags containing
             "AWAITING_EXTERNAL_FUNDING", OR
+          * "SigningCommitment" with both commitment signatures exchanged, OR
           * legacy "AwaitingExternalFunding" (for older binaries).
         """
         context = self._open_external_funding_channel(public=True)
@@ -133,6 +135,10 @@ class TestExternalFundingBasicFlow(ExternalFundingBase):
             ok = name == "AwaitingExternalFunding" or (
                 name == "NegotiatingFunding"
                 and "AWAITING_EXTERNAL_FUNDING" in (flags or "")
+            ) or (
+                name == "SigningCommitment"
+                and "OUR_COMMITMENT_SIGNED_SENT" in (flags or "")
+                and "THEIR_COMMITMENT_SIGNED_SENT" in (flags or "")
             )
             assert ok, (
                 f"pre-submit channel should be awaiting external funding, "

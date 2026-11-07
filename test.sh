@@ -43,11 +43,15 @@ echo "Passed test cases:${passed_cases}"
 echo "Failed test cases:${failed_cases}"
 echo "ERROR test cases:${error_cases}"
 
-# Write summary to GITHUB_STEP_SUMMARY
-echo "# Test Results Summary" >> $GITHUB_STEP_SUMMARY
-echo "Passed test cases: ${passed_cases}" >> $GITHUB_STEP_SUMMARY
-echo "Failed test cases: ${failed_cases}" >> $GITHUB_STEP_SUMMARY
-echo "ERROR test cases: ${error_cases}" >> $GITHUB_STEP_SUMMARY
+# Write the GitHub summary only when a test failed or errored.
+if { [ -n "$failed_cases" ] || [ -n "$error_cases" ]; } && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    {
+        echo "# Test Results Summary"
+        echo "Passed test cases: ${passed_cases}"
+        echo "Failed test cases: ${failed_cases}"
+        echo "ERROR test cases: ${error_cases}"
+    } >> "$GITHUB_STEP_SUMMARY"
+fi
 # Function to sanitize filename: replace invalid characters for artifact upload
 # Invalid chars: " : < > | * ? \r \n /
 # Also truncate to 200 chars max to avoid filesystem limits

@@ -71,6 +71,10 @@ def _is_awaiting_external_funding(channel):
     flags = state.get("state_flags", "")
     return name == "AwaitingExternalFunding" or (
         name == "NegotiatingFunding" and "AWAITING_EXTERNAL_FUNDING" in (flags or "")
+    ) or (
+        name == "SigningCommitment"
+        and "OUR_COMMITMENT_SIGNED_SENT" in (flags or "")
+        and "THEIR_COMMITMENT_SIGNED_SENT" in (flags or "")
     )
 
 
