@@ -132,13 +132,17 @@ class TestExternalFundingBasicFlow(ExternalFundingBase):
             state = channel["state"]
             name = state["state_name"]
             flags = state.get("state_flags", "")
-            ok = name == "AwaitingExternalFunding" or (
-                name == "NegotiatingFunding"
-                and "AWAITING_EXTERNAL_FUNDING" in (flags or "")
-            ) or (
-                name == "SigningCommitment"
-                and "OUR_COMMITMENT_SIGNED_SENT" in (flags or "")
-                and "THEIR_COMMITMENT_SIGNED_SENT" in (flags or "")
+            ok = (
+                name == "AwaitingExternalFunding"
+                or (
+                    name == "NegotiatingFunding"
+                    and "AWAITING_EXTERNAL_FUNDING" in (flags or "")
+                )
+                or (
+                    name == "SigningCommitment"
+                    and "OUR_COMMITMENT_SIGNED_SENT" in (flags or "")
+                    and "THEIR_COMMITMENT_SIGNED_SENT" in (flags or "")
+                )
             )
             assert ok, (
                 f"pre-submit channel should be awaiting external funding, "

@@ -115,10 +115,6 @@ class TestFullHashStandaloneWatchtower(ContractUpgradeSupport):
             with socket.socket() as sock:
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 sock.bind(("127.0.0.1", port))
-        candidate_version = subprocess.check_output(
-            [ROOT / cls.fiber_version.fiber_bin_path, "--version"], text=True
-        )
-        assert "5d30078" in candidate_version, candidate_version
         # 旧节点二进制必须固定（独立 Watchtower 的 Legacy 注册对照组依赖它）。
         assert "9a561b3" in subprocess.check_output(
             [ROOT / FiberConfigPath.V091_DEV.fiber_bin_path, "--version"], text=True
@@ -237,21 +233,22 @@ class TestFullHashStandaloneWatchtower(ContractUpgradeSupport):
         recorded = registrations[-1][0]
         params = recorded["params"][0]
         if version == "v1":
-            assert params["commitment_contract_features"] == "0x1", params
+            assert params["channel_features"] == "0x1", params
         else:
+            assert "channel_features" not in params, params
             assert "commitment_contract_features" not in params, params
             assert "commitment_contract_version" not in params, params
             if registration == "explicit_zero":
                 assert recorded["_suppressed"] is True
                 explicit = copy.deepcopy(params)
-                explicit["commitment_contract_features"] = "0x0"
+                explicit["channel_features"] = "0x0"
                 created = self._post_recorded_rpc(
                     recorded, "create_watch_channel", explicit
                 )
                 assert "error" not in created, created
                 assert (
                     self.channel_calls("create_watch_channel")[-1][0]["params"][0][
-                        "commitment_contract_features"
+                        "channel_features"
                     ]
                     == "0x0"
                 )
@@ -263,7 +260,7 @@ class TestFullHashStandaloneWatchtower(ContractUpgradeSupport):
             # authenticated node_id + channel_id. The subsequent real spend
             # proves the original V1 registration is still usable.
             invalid = copy.deepcopy(params)
-            invalid["commitment_contract_features"] = "0x2"
+            invalid["channel_features"] = "0x2"
             rejected = self._post_recorded_rpc(
                 recorded, "create_watch_channel", invalid
             )

@@ -28,20 +28,21 @@ class TestExternalFundingRegressions(ExternalFundingBase):
             self.fiber1.get_client(),
             self.fiber2.get_pubkey(),
             context["channel_id"],
-            lambda ch: ch["state"]["state_name"] in (
-                "AwaitingExternalFunding", "NegotiatingFunding", "SigningCommitment"
-            ),
+            lambda ch: ch["state"]["state_name"]
+            in ("AwaitingExternalFunding", "NegotiatingFunding", "SigningCommitment"),
             timeout=20,
         )
         state = channel["state"]
         name = state["state_name"]
         flags = state.get("state_flags") or ""
-        assert name == "AwaitingExternalFunding" or (
-            name == "NegotiatingFunding" and "AWAITING_EXTERNAL_FUNDING" in flags
-        ) or (
-            name == "SigningCommitment"
-            and "OUR_COMMITMENT_SIGNED_SENT" in flags
-            and "THEIR_COMMITMENT_SIGNED_SENT" in flags
+        assert (
+            name == "AwaitingExternalFunding"
+            or (name == "NegotiatingFunding" and "AWAITING_EXTERNAL_FUNDING" in flags)
+            or (
+                name == "SigningCommitment"
+                and "OUR_COMMITMENT_SIGNED_SENT" in flags
+                and "THEIR_COMMITMENT_SIGNED_SENT" in flags
+            )
         ), state
 
         pending = self.fiber1.get_client().list_channels(
