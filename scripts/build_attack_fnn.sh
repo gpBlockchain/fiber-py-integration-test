@@ -2,11 +2,11 @@
 set -euo pipefail
 
 # Keep the honest node and the instrumented peer on one protocol baseline.
-# Defaults follow branches; workflow_dispatch may override either ref.
+# Pin the stock release; workflow_dispatch may override either ref.
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 STOCK_FIBER_REPOSITORY="${STOCK_FIBER_REPOSITORY:-https://github.com/nervosnetwork/fiber.git}"
-STOCK_FIBER_REF="${STOCK_FIBER_REF:-develop}"
+STOCK_FIBER_REF="${STOCK_FIBER_REF:-v0.10.0-rc2}"
 ATTACK_FIBER_REPOSITORY="${ATTACK_FIBER_REPOSITORY:-https://github.com/gpBlockchain/fiber.git}"
 ATTACK_FIBER_REF="${ATTACK_FIBER_REF:-p2p-tap}"
 # Destination may be overridden so one workflow can build both the legacy

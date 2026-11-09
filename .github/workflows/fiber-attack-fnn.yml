@@ -25,9 +25,9 @@ on:
         default: https://github.com/nervosnetwork/fiber.git
         type: string
       stock_fiber_ref:
-        description: Branch used to build the unmodified FNN
+        description: Branch or tag used to build the unmodified FNN
         required: true
-        default: develop
+        default: v0.10.0-rc2
         type: string
       attack_fiber_repository:
         description: Repository containing the debug attack RPCs
@@ -49,7 +49,7 @@ concurrency:
 
 env:
   STOCK_FIBER_REPOSITORY: ${{ inputs.stock_fiber_repository || 'https://github.com/nervosnetwork/fiber.git' }}
-  STOCK_FIBER_REF: ${{ inputs.stock_fiber_ref || 'develop' }}
+  STOCK_FIBER_REF: ${{ inputs.stock_fiber_ref || 'v0.10.0-rc2' }}
   ATTACK_FIBER_REPOSITORY: ${{ inputs.attack_fiber_repository || 'https://github.com/gpBlockchain/fiber.git' }}
   ATTACK_FIBER_REF: ${{ inputs.attack_fiber_ref || 'p2p-tap-full-payment-hash' }}
 

@@ -20,6 +20,7 @@ versions = [
     "0.8.1",
     "0.9.0",
     "0.9.1",
+    "0.10.0-rc2",
 ]
 
 DOWNLOAD_DIR = "download/fiber"
@@ -117,7 +118,7 @@ def download_ckb(ckb_version, last_one=False):
     ext = SYSTEMS[system][architecture]["ext"]
 
     filename = f"ckb_light_client_v{ckb_version}_binary{ext}"
-    download_path = os.path.join(DOWNLOAD_DIR, ckb_version).split("-")[0]
+    download_path = os.path.join(DOWNLOAD_DIR, ckb_version)
     os.makedirs(download_path, exist_ok=True)
 
     download_file(url, filename)

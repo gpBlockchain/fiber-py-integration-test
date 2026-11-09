@@ -1,8 +1,8 @@
 set -ex
 
-# Compatibility/full-payment-hash CI must build this fiber head, not the v0.9.1
-# tag: download/fiber/current/fnn is the binary every fiber.yml job runs.
-DEFAULT_FIBER_BRANCH="develop"
+# Build the selected Fiber release into the shared CI runtime path.
+# GitBranch may override the default tag for targeted regression runs.
+DEFAULT_FIBER_BRANCH="v0.10.0-rc2"
 DEFAULT_FIBER_URL="https://github.com/nervosnetwork/fiber.git"
 
 GitFIBERBranch="${GitBranch:-$DEFAULT_FIBER_BRANCH}"

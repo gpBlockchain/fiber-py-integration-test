@@ -9,8 +9,8 @@ on:
         description: 'fiber -git url'
         default: 'https://github.com/nervosnetwork/fiber.git'
       GitBranch:
-        description: 'fiber -git branch'
-        default: 'develop'
+        description: 'fiber -git branch or tag'
+        default: 'v0.10.0-rc2'
       BuildFIBER:
         description: 'build fiber'
         default: 'true'
