@@ -1,4 +1,4 @@
-import datetime
+import time
 
 import pytest
 
@@ -21,6 +21,7 @@ class TestGetInvoice(FiberTest):
         Returns:
         """
         # Step 1: Create a new invoice
+        creation_started_ms = time.time_ns() // 1_000_000
         invoice = self.fiber1.get_client().new_invoice(
             {
                 "amount": hex(1),
@@ -33,6 +34,7 @@ class TestGetInvoice(FiberTest):
                 "allow_mpp": True,
             }
         )
+        creation_finished_ms = time.time_ns() // 1_000_000
 
         # Step 2: Retrieve the created invoice using its payment hash
         result = self.fiber1.get_client().get_invoice(
@@ -60,9 +62,11 @@ class TestGetInvoice(FiberTest):
         assert invoice["invoice"]["data"]["attrs"][1]["expiry_time"] == hex(3600)
         assert invoice["invoice"]["data"]["attrs"][5]["hash_algorithm"] == "sha256"
 
-        # Step 5: Verify the timestamp of the invoice
-        assert int(int(invoice["invoice"]["data"]["timestamp"], 16) / 1000) == int(
-            datetime.datetime.now().timestamp()
+        # Step 5: Verify the timestamp falls within the invoice creation request.
+        invoice_timestamp_ms = int(invoice["invoice"]["data"]["timestamp"], 16)
+        assert creation_started_ms <= invoice_timestamp_ms <= creation_finished_ms, (
+            f"Invoice timestamp {invoice_timestamp_ms} is outside creation interval "
+            f"[{creation_started_ms}, {creation_finished_ms}]"
         )
 
     def test_get_not_exist_invoice(self):

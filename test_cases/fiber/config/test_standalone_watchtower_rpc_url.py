@@ -156,10 +156,35 @@ class TestWatchTower(FiberTest):
             }
         )
         tx = self.wait_and_check_tx_pool_fee(1000, False)
-        self.Miner.miner_until_tx_committed(self.node, tx)
-        while len(self.get_commit_cells()) > 0:
+        tx_response = self.Miner.miner_until_tx_committed(self.node, tx)
+        commitment_lock = tx_response["transaction"]["outputs"][0]["lock"]
+        # Follow confirmed spends: an empty live-cell query can precede settlement.
+        # Even without TLCs, the two parties can receive funds in separate spends.
+        for _ in range(3):
+            if not any(
+                output["lock"]["code_hash"] == commitment_lock["code_hash"]
+                and output["lock"]["hash_type"] == commitment_lock["hash_type"]
+                for output in tx_response["transaction"]["outputs"]
+            ):
+                break
             self.node.getClient().generate_epochs("0x1", 0)
-            time.sleep(10)
+            for _ in range(60):
+                settlement_tx, _ = self.get_ln_cell_death_hash(tx)
+                if settlement_tx is not None:
+                    break
+                time.sleep(1)
+            else:
+                raise TimeoutError(f"Commitment output {tx}:0 was not settled")
+            tx_response = self.Miner.miner_until_tx_committed(self.node, settlement_tx)
+            assert any(
+                tx_input["previous_output"] == {"tx_hash": tx, "index": "0x0"}
+                for tx_input in tx_response["transaction"]["inputs"]
+            )
+            tx = settlement_tx
+        else:
+            raise TimeoutError(f"Commitment outputs remain after settlement: {tx}")
+        # Balance queries use the indexer, which can lag behind transaction confirmation.
+        self.Miner.miner_with_version(self.node, "0x0")
         after_balance = self.get_fibers_balance()
         result = self.get_balance_change(before_balance, after_balance)
         assert result[0]["ckb"] < 2000
