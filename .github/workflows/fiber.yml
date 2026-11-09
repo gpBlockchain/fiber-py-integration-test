@@ -586,6 +586,16 @@ jobs:
   fiber_test_compatibility:
     needs: prepare
     runs-on: ubuntu-22.04
+    name: fiber_test_compatibility (${{ matrix.shard }})
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      FIBER_COMPATIBILITY_SHARD_COUNT: "4"
+      FIBER_COMPATIBILITY_SHARD_INDEX: ${{ matrix.shard }}
 
     steps:
       - uses: actions/checkout@v3
@@ -616,7 +626,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: jfoa-fiber_test_send_payment_debug_mixed-reports-${{ runner.os }}
+          name: compatibility-${{ matrix.shard }}-reports-${{ runner.os }}
           path: ./report
 
   fiber_test_open_channel_with_external_funding:
