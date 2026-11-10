@@ -13,6 +13,11 @@
 - model: unavailable | cases: PR1677-11 | feedback: 路由场景可以复杂一点
 - model: unavailable | cases: PR1677-11 | feedback: 每十分钟改成每分钟
 - model: unavailable | cases: PR1677-09 | feedback: PR1677-09 不需要 可以删
+- model: unavailable | cases: PR1705-01 PR1705-02 | feedback: Pr1705Build 为什么有这个东西，这是要长期回归的测试用例
+- model: unavailable | cases: PR1705-01 PR1705-02 | feedback: 旧版本只考虑仓库有的0.9.1
+- model: unavailable | cases: PR1705-01 PR1705-02 | feedback: evidence 和signal 回归不需要
+- model: unavailable | cases: PR1705-01 PR1705-02 | feedback: 用例名不能包含pr1705
+- model: unavailable | cases: PR1705-01 PR1705-02 | feedback: 文件名不可以包含这个，后期不好复用
 - model: unavailable | cases: PR1728-01 PR1728-02 | feedback: 回归用例不需要 evidence 不需要
 - model: unavailable | cases: PR1728-01 PR1728-02 | feedback: signal 也不需要
 - model: unavailable | cases: PR1728-01 PR1728-02 | feedback: 加个flag 只有true 时才检查`WAITING_ONCHAIN_SETTLEMENT` ，ci上不用检查这个判断
