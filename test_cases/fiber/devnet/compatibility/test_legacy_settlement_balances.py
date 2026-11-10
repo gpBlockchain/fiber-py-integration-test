@@ -38,7 +38,14 @@ class TestLegacySettlementBalances(FiberTest):
 
     @classmethod
     def setup_class(cls):
-        for port in (27214, 27215, 27228, 27227, 27229, 27230):
+        for port in (
+            cls.ckb_rpc_port,
+            cls.ckb_p2p_port,
+            cls.fiber1_rpc_port,
+            cls.fiber1_p2p_port,
+            cls.fiber2_rpc_port,
+            cls.fiber2_p2p_port,
+        ):
             with socket.socket() as sock:
                 sock.bind(("127.0.0.1", port))
         assert not (ROOT / cls.tmp_path_name).exists(), "测试目录已存在，请保留并检查"
@@ -559,18 +566,17 @@ class TestLegacySettlementBalances(FiberTest):
                 or [a - b for a, b in zip(value[1], tokens_before)] == self.expected
             ),
         )
-        closed = self._wait(
-            "双方通道最终关闭",
-            self._channels,
-            lambda rows: all(
-                c["state"]["state_name"] == "Closed"
-                and (
-                    not self.check_onchain_settlement
-                    or "WAITING_ONCHAIN_SETTLEMENT"
+        channels = self._channels()
+        if self.check_onchain_settlement:
+            channels = self._wait(
+                "双方通道最终关闭",
+                self._channels,
+                lambda rows: all(
+                    c["state"]["state_name"] == "Closed"
+                    and "WAITING_ONCHAIN_SETTLEMENT"
                     not in c["state"].get("state_flags", "")
-                )
-                for c in rows
-            ),
-            660,
-        )
-        assert all(not c["pending_tlcs"] for c in closed)
+                    for c in rows
+                ),
+                660,
+            )
+        assert all(not c["pending_tlcs"] for c in channels)

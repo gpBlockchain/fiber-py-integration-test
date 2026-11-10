@@ -22,13 +22,13 @@
 - 每行分别使用 CKB 和 UDT 两种资产，独立建链和记账；UDT 使用真实发行资产并在两侧准备足够余额及 CKB 预留。使用直连通道，付款不经过中继；两侧资金、TLC 数量和在途额度均足够。
 - 先用一笔正常付款证明升级后的原通道可用，再记余额基线。每轮 A 向 B 发四笔不同 hash、不同金额的持单付款，必须逐笔在 B 观察到 `Received`、A 观察到 `Inflight` 后，才提交结算或取消。执行三轮，每轮提交四个独立 RPC 请求而不逐个等待付款终态，同时 B 向 A 发两笔普通付款；每轮结束等待所有付款和余额收敛再开始下一轮。该负载不约束 P2P 消息顺序，也不声称必然触发 `RemoveWaitPrevAck`。
 - 测试使用正常 release 构建，自选原像并独立计算 SHA-256。目标付款的接受、结算/取消在首笔 `Received` 后 30 秒内完成，低于 [release 默认持单超时 120 秒](https://github.com/nervosnetwork/fiber/blob/46ff437800a0743c804ce1a3a5ad4fbd5d3f9974/crates/fiber-lib/src/fiber/config.rs#L73-L77)；超出时该轮失败，避免把自然超时当取消成功。debug 默认仅 20 秒，不直接套用本时间预算。所有 RPC 接受、付款完成和探针等待各有上限；结束后再发一笔正常探针并计入账本，然后由 A 调用 `shutdown_channel(force=true)`。
-- **耗时预算**：开启结算等待标记检查时，每个资产变体实测约 11 分钟；默认关闭后预计约 6 分钟，仍需等对端首次识别强关。使用各步骤自身的有界等待，不设置进程级 signal 闹钟。两行共四个变体。单次启动/迁移 90 秒、开通/恢复 120 秒、每轮收敛 60 秒；结算后的节点关闭状态预留 660 秒，以覆盖旧版按 300 秒扫描的兼容路径。660 秒是测试等待上限，具体目标构建扫描周期在实施时核对，不按 Watchtower 的短轮询推定。CKB devnet 通过公开出块 RPC 推进承诺锁要求的 epoch；节点自身墙钟超时照常等待。
+- **耗时预算**：开启最终通道状态检查时，每个资产变体实测约 11 分钟；默认关闭后在链上结算与到账验证完成时结束，四项实测总耗时 259.62 秒，测试主体各耗时 42–48 秒（另有环境启停时间）。使用各步骤自身的有界等待，不设置进程级 signal 闹钟。两行共四个变体。单次启动/迁移 90 秒、开通/恢复 120 秒、每轮收敛 60 秒；结算后的节点关闭状态预留 660 秒，以覆盖旧版按 300 秒扫描的兼容路径。660 秒是测试等待上限，具体目标构建扫描周期在实施时核对，不按 Watchtower 的短轮询推定。CKB devnet 通过公开出块 RPC 推进承诺锁要求的 epoch；节点自身墙钟超时照常等待。
 
 <!-- TEST-CASES-BEGIN -->
 | 用例 | 场景 | 预期结果 | 防止的问题 | 优先级 |
 | --- | --- | --- | --- | --- |
-| `PR1728-01` | - [x] 两个 v0.9.1 节点建好 Legacy 通道后升级双方；分别用 CKB、UDT，在原通道分三轮把 A→B 已接收的四笔持单并发提交正确原像，同时完成 B→A 普通付款；收敛后探针付款并由 A 强关（每资产默认预计约 6 分钟；开启标记检查时实测约 11 分钟） | 每笔持单 Paid、付款 Success 且原像正确；双方通道余额按实际成功付款净额变化，无遗留在途资金，探针成功；强关承诺和结算交易确认，双方链上到账与独立账本一致，UDT 数量守恒、CKB 仅扣真实链上手续费，通道最终关闭 | 已完成付款未计入收款方、金额缺失或重复计账，旧通道升级后付款或兑付卡住 | P0 |
-| `PR1728-02` | - [x] 两个 v0.9.1 节点建好 Legacy 通道后升级双方；分别用 CKB、UDT，在原通道分三轮把 A→B 已接收的四笔持单并发取消且始终保密原像，同时完成 B→A 普通付款；收敛后探针付款并由 A 强关（每资产默认预计约 6 分钟；开启标记检查时实测约 11 分钟） | 每笔目标发票 Cancelled、付款 Failed；取消金额全部恢复为 A 可用余额，B 不因取消收款，只有普通成功付款和探针改变净余额；无遗留在途资金，探针成功；双方强关到账与独立账本一致，UDT 数量守恒、CKB 仅扣真实链上手续费，通道最终关闭 | 已失败付款仍占发送方资金、错误转给接收方，或退款只在 RPC 中出现而链上少到账 | P0 |
+| `PR1728-01` | - [x] 两个 v0.9.1 节点建好 Legacy 通道后升级双方；分别用 CKB、UDT，在原通道分三轮把 A→B 已接收的四笔持单并发提交正确原像，同时完成 B→A 普通付款；收敛后探针付款并由 A 强关（每资产默认约 1 分钟；开启最终状态检查时实测约 11 分钟） | 每笔持单 Paid、付款 Success 且原像正确；双方通道余额按实际成功付款净额变化，无遗留在途资金，探针成功；强关承诺和结算交易确认，双方链上到账与独立账本一致，UDT 数量守恒、CKB 仅扣真实链上手续费；开启最终状态检查时双方通道 Closed 且结算等待标记清除 | 已完成付款未计入收款方、金额缺失或重复计账，旧通道升级后付款或兑付卡住 | P0 |
+| `PR1728-02` | - [x] 两个 v0.9.1 节点建好 Legacy 通道后升级双方；分别用 CKB、UDT，在原通道分三轮把 A→B 已接收的四笔持单并发取消且始终保密原像，同时完成 B→A 普通付款；收敛后探针付款并由 A 强关（每资产默认约 1 分钟；开启最终状态检查时实测约 11 分钟） | 每笔目标发票 Cancelled、付款 Failed；取消金额全部恢复为 A 可用余额，B 不因取消收款，只有普通成功付款和探针改变净余额；无遗留在途资金，探针成功；双方强关到账与独立账本一致，UDT 数量守恒、CKB 仅扣真实链上手续费；开启最终状态检查时双方通道 Closed 且结算等待标记清除 | 已失败付款仍占发送方资金、错误转给接收方，或退款只在 RPC 中出现而链上少到账 | P0 |
 <!-- TEST-CASES-END -->
 
 ## 测试树
@@ -93,7 +93,7 @@
 
 链上核对逐笔验证原 funding cell 的消费、A 的已签承诺 hash、57 字节 Legacy 布局、实际 commitment-lock code dep、两方解锁方向、无残留 TLC、交易费用和钱包净增。CKB 的承诺手续费从最后一方取得的剩余容量中扣除；UDT 的首笔结算释放多余 CKB 预留、末笔释放按脚本字节数独立计算的剩余占用容量，代币数量另按付款账本精确核对。每方结算费来自该交易输入减输出，额外输入必须属于对应收款方；另限制单笔费小于 10,000 Shannon，远小于本批任何付款金额。
 
-最终关闭断言始终要求两端 `Closed`、无 pending TLC。环境变量 `FIBER_ASSERT_LEGACY_SETTLEMENT` 默认 `false`，仅设为 `true`（忽略大小写）时额外等待两端清除 `WAITING_ONCHAIN_SETTLEMENT`；compatibility CI 显式设置为 `false`。链上到账、真实手续费、代币数量和无遗留在途资金的断言始终执行。目标提交的 `CHECK_CHANNELS_SHUTDOWN_INTERVAL` 固定为 [300 秒](https://github.com/nervosnetwork/fiber/blob/46ff437800a0743c804ce1a3a5ad4fbd5d3f9974/crates/fiber-lib/src/fiber/network.rs#L192)，最终关闭状态的等待上限为 660 秒。默认仍会等待对端首次扫描后进入 `Closed`，开关关闭仅省去后续清除等待标记的扫描。
+环境变量 `FIBER_ASSERT_LEGACY_SETTLEMENT` 默认 `false`，compatibility CI 显式设置为 `false`；默认只查询一次通道快照核对无 pending TLC，不等待节点把状态同步为 `Closed`。仅设为 `true`（忽略大小写）时等待两端 `Closed` 且清除 `WAITING_ONCHAIN_SETTLEMENT`。链上到账、真实手续费、代币数量和无遗留在途资金的断言始终执行。目标提交的 `CHECK_CHANNELS_SHUTDOWN_INTERVAL` 固定为 [300 秒](https://github.com/nervosnetwork/fiber/blob/46ff437800a0743c804ce1a3a5ad4fbd5d3f9974/crates/fiber-lib/src/fiber/network.rs#L192)，最终关闭状态的等待上限为 660 秒。整个最终通道状态轮询均受开关控制，默认路径跳过两次关闭状态扫描。
 
 原生复现命令（仓库根目录）：
 
@@ -101,7 +101,7 @@
 venv/bin/python -u -m pytest test_cases/fiber/devnet/compatibility/test_legacy_settlement_balances.py -v -s -x -o log_cli=false -o log_level=INFO
 ```
 
-需要额外核对结算等待标记时：
+需要额外核对双方最终关闭状态及结算等待标记时：
 
 ```bash
 FIBER_ASSERT_LEGACY_SETTLEMENT=true venv/bin/python -m pytest test_cases/fiber/devnet/compatibility/test_legacy_settlement_balances.py -v -s
@@ -113,7 +113,7 @@ FIBER_ASSERT_LEGACY_SETTLEMENT=true venv/bin/python -m pytest test_cases/fiber/d
 
 首例规范确认后，`PR1728-02` 在同一文件新增 `test_cancelled_legacy_ckb_after_upgrade`、`test_cancelled_legacy_udt_after_upgrade`，复用原有升级、账本和逐方链上兑付检查。每轮四笔持单全部到达 Received / Inflight 后，并发发起四次 `cancel_invoice` 和两笔反向正常付款。原像只保留在测试端，取消请求仅传 hash；每笔都要求发票 Cancelled、付款 Failed、错误类型 InvoiceCancelled，且付款方未取得原像。取消金额不进入成功账本，只有两笔反向成功付款影响本轮净余额。每轮操作限定 30 秒，排除将自然超时当作主动取消的结果。
 
-`list_channels.pending_tlcs` 也展示已确认移除的失败记录，列表非空不等于仍占资金。每轮仅允许本轮已逐笔核验取消的 hash 保留为公开 RPC 的 RemoveAckConfirmed 状态，同时两端可用余额必须精确吻合账本、offered/received 在途余额均为零。最后一笔正常探针后仍要求列表为空；强关时再次核对无在途金额、实际结算 witness 无 TLC、每方链上资金到账及双方最终关闭。成功付款方法使用空的取消集合，保持首例原有的空列表要求。
+`list_channels.pending_tlcs` 也展示已确认移除的失败记录，列表非空不等于仍占资金。每轮仅允许本轮已逐笔核验取消的 hash 保留为公开 RPC 的 RemoveAckConfirmed 状态，同时两端可用余额必须精确吻合账本、offered/received 在途余额均为零。最后一笔正常探针后仍要求列表为空；强关时再次核对无在途金额、实际结算 witness 无 TLC、每方链上资金到账；双方最终关闭状态由开关控制。成功付款方法使用空的取消集合，保持首例原有的空列表要求。
 
 新增两项的聚焦命令（仓库根目录）：
 
@@ -121,4 +121,4 @@ FIBER_ASSERT_LEGACY_SETTLEMENT=true venv/bin/python -m pytest test_cases/fiber/d
 venv/bin/python -u -m pytest test_cases/fiber/devnet/compatibility/test_legacy_settlement_balances.py -k cancelled -v -s -x -o log_cli=false -o log_level=INFO
 ```
 
-回归直接使用上述 pytest 命令，测试不创建 evidence 目录、不复制节点日志或配置，也不使用 signal 闹钟；RPC、状态收敛和链上消费仍使用有界等待。此前成功付款与取消退款各两个资产变体均已通过。移除报告收集和信号处理后通过静态检查和用例收集；该清理及本次开关调整未重跑 devnet。
+回归直接使用上述 pytest 命令，测试不创建 evidence 目录、不复制节点日志或配置，也不使用 signal 闹钟；RPC、状态收敛和链上消费仍使用有界等待。此前成功付款与取消退款各两个资产变体均已通过。本次默认路径使用独立端口 28214/28215、28228/28227、28229/28230 和 `tmp-pr1728-fast-check` 运行真实节点；pytest 收集后仅覆盖测试类的端口与目录配置，四个测试方法和资金断言直接执行当前源码。原生结果为 `4 passed in 259.62s (0:04:19)`，退出码 0；成功付款 CKB/UDT 测试主体分别 44.67/48.00 秒，取消退款分别 42.44/46.55 秒。被测版本仍为 v0.9.1 (9a561b3) → v0.10.0-rc1 (7aa1d5d)。开启最终状态检查的完整路径沿用此前通过结果，本轮未重跑。
