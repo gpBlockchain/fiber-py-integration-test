@@ -580,7 +580,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: jfoa-fiber_test_send_payment_debug_mixed-reports-${{ runner.os }}
+          name: fiber_test_trampoline_routing_one_way-reports-${{ runner.os }}
           path: ./report
 
   fiber_test_compatibility:
