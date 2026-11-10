@@ -97,7 +97,7 @@ PR 自带四个测试：test_failed_tlc_pruning_only_drops_confirmed_forward_mar
 - `PR1672-02/03/04` 均仅各一处映射，在 test_cases/fiber/devnet/settle_invoice/test_pr1672_forwarded_local_invoice.py。02/03 通过 send_payment_with_router 做普通转发，无 trampoline_hops；04 是本地直达对照。原有断言仍适用，均不等于本批升级覆盖。
 - `PR1673-02` 仅一处映射，在 test_cases/fiber/devnet/security/test_poc_trampoline_inner_hash_algorithm_mismatch.py；已有两跳资金断言可参考，但整个文件使用 attack/debug 夹具，不直接当本批未修改节点的验证。
 - trampoline_routing/test_same_invoice_race.py 与 test_same_invoice_mpp_overpay.py 已检查失败后再次付款；没有版本升级或同哈希本地发票前提，且部分分支把 send_payment 抛错直接记为失败，复用前需保留本批“已真正到达下游”的前提。
-- `PR1705-01`、`PR1705-02` 映射至 test_cases/fiber/devnet/trampoline_routing/test_pr1705_upgrade_forward.py，分别对应升级后结算/取消方法，均由 CKB/UDT 两个类执行。公共 helper 只复用旧版转发历史、持单和升级准备，结算/退款断言保留在各用例方法中。复选框只表示映射存在，执行结果独立记录。现有 CI 的 fiber_test_trampoline_routing_one_way job 包含该分类，沿用 prepare 产物中的 0.9.1/current；download_fiber.py 已包含 0.9.1，无需 PR 专用构建；通用 make fiber_test 的显式目录列表没有 trampoline_routing，本阶段保留其原范围。
+- `PR1705-01`、`PR1705-02` 映射至 test_cases/fiber/devnet/trampoline_routing/test_trampoline_upgrade_forward.py，分别对应升级后结算/取消方法，均由 CKB/UDT 两个类执行。公共 helper 只复用旧版转发历史、持单和升级准备，结算/退款断言保留在各用例方法中。复选框只表示映射存在，执行结果独立记录。现有 CI 的 fiber_test_trampoline_routing_one_way job 包含该分类，沿用 prepare 产物中的 0.9.1/current；download_fiber.py 已包含 0.9.1，无需 PR 专用构建；通用 make fiber_test 的显式目录列表没有 trampoline_routing，本阶段保留其原范围。
 
 环境核对：测试仓库 HEAD `004e5132bbc00e0b1c0c150fd1a6c06b96395a87`，既存修改保留。本地 fiber 工作区在 `4319344528ded25e9c024a66f6783736387d21a9` 且含其他修改，本次未切换；分析使用固定 base Git 对象、GitHub head 文件与完整 PR diff。长期回归使用 download/fiber/current/fnn，本次版本输出为 `fnn Fiber v0.10.0-rc1 (7aa1d5d 2026-11-09)`；0.9.1 输出为 `fnn Fiber v0.9.1 (9a561b3 2026-09-10)`。执行记录单独保存两个实际二进制的哈希；本地 fiber checkout 仅为源码环境记录，其提交不等同于 current 的构建来源。
 
@@ -110,10 +110,10 @@ PR 自带四个测试：test_failed_tlc_pruning_only_drops_confirmed_forward_mar
 2026-11-10 实际运行：旧节点 `fnn Fiber v0.9.1 (9a561b3 2026-09-10)`，升级节点 `fnn Fiber v0.10.0-rc1 (7aa1d5d 2026-11-09)`。测试始终使用仓库 `V091_DEV` / `CURRENT_DEV` 配置，不固定 PR 历史提交。仅升级 T，A/C 保持 0.9.1；两个用例的 CKB/UDT 四个变体通过。
 
 ```bash
-venv/bin/python -m pytest test_cases/fiber/devnet/trampoline_routing/test_pr1705_upgrade_forward.py -x -v -o log_cli=false
+venv/bin/python -m pytest test_cases/fiber/devnet/trampoline_routing/test_trampoline_upgrade_forward.py -x -v -o log_cli=false
 ```
 
-原始结果：`4 passed in 316.64s (0:05:16)`，退出码 `0`。成功路径验证原像、发票归属、逐跳余额只转移一次；取消路径验证无原像、四侧余额不变、TLC 释放。两条均验证原通道继续付款，UDT funding cells 保持 live 且内容不变。
+重命名前的原始结果：`4 passed in 316.64s (0:05:16)`，退出码 `0`。以上为当前文件入口；本次只按行为重命名，代码内容未变，新路径已确认收集到四个变体。成功路径验证原像、发票归属、逐跳余额只转移一次；取消路径验证无原像、四侧余额不变、TLC 释放。两条均验证原通道继续付款，UDT funding cells 保持 live 且内容不变。
 
 长期回归代码使用框架清理、RPC 超时和有界等待，无专用构建、evidence 文件输出、signal 计时器或目录备份。CI 已收集 trampoline_routing 分类。
 

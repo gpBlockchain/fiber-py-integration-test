@@ -16,3 +16,5 @@
 - model: unavailable | cases: PR1705-01 PR1705-02 | feedback: Pr1705Build 为什么有这个东西，这是要长期回归的测试用例
 - model: unavailable | cases: PR1705-01 PR1705-02 | feedback: 旧版本只考虑仓库有的0.9.1
 - model: unavailable | cases: PR1705-01 PR1705-02 | feedback: evidence 和signal 回归不需要
+- model: unavailable | cases: PR1705-01 PR1705-02 | feedback: 用例名不能包含pr1705
+- model: unavailable | cases: PR1705-01 PR1705-02 | feedback: 文件名不可以包含这个，后期不好复用
