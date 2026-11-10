@@ -1018,6 +1018,7 @@ class TestMixedVersionMppAdversarial(_MixedVersionAdversarialSupport):
     # 未覆盖/观测限制（与既有 TEST-EVIDENCE 一致）：“中继不缓存或转发错误原像”只能由
     #   Failed + payment_preimage 为空 + RemoveAckConfirmed 推断，中继持久化的原像库没有 RPC 可读；
     #   未覆盖 xUDT、超过三跳、启用重试的路由（本行前提已排除重试）。
+    @requires_attack_fnn
     def test_mixed_version_long_path_fails_upstream(self):
         payer, relay1 = self.fiber1, self.fiber2
         relay2 = self._start_extra("relay2_30", FiberConfigPath.V091_DEV)
@@ -1212,6 +1213,7 @@ class TestMixedVersionMppReconciliation(_MixedVersionAdversarialSupport):
     # ------------------------------------------------------------------ H32V2-31
 
     # TEST-MAP: H32V2-31
+    @requires_attack_fnn
     def test_mixed_version_parts_reconcile_by_own_version(self):
         payer, payee = self.fiber1, self.fiber2
         adversary = self._start_extra(

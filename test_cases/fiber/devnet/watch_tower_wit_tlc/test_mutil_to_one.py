@@ -86,18 +86,13 @@ class TestMutilToOne(FiberTest):
                     f"tip={self.node.getClient().get_tip_block_number()}, "
                     f"remaining_commit_cells={commit_cells}"
                 )
-        after_fibers_balance = []
-        for i in range(len(self.fibers)):
-            balance = self.get_fiber_balance(self.fibers[i])
-            after_fibers_balance.append(balance)
-
         after_balance = self.get_fibers_balance()
         result = self.get_balance_change(before_balance, after_balance)
-        assert result[0]["ckb"] < 1 * 100000000
-        ckb_fee = 0
-        for rt in result:
-            ckb_fee += rt["ckb"]
-        assert ckb_fee < 1 * 100000000
+        assert result[0]["ckb"] < 1 * 100000000, f"balance changes: {result}"
+        ckb_fee = sum(balance["ckb"] for balance in result)
+        assert (
+            ckb_fee < 1 * 100000000
+        ), f"total CKB change: {ckb_fee}; balance changes: {result}"
 
     def test_mutil_to_one_udt(self):
         """
