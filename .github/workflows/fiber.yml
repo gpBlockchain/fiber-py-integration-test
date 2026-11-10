@@ -596,6 +596,7 @@ jobs:
     env:
       FIBER_COMPATIBILITY_SHARD_COUNT: "4"
       FIBER_COMPATIBILITY_SHARD_INDEX: ${{ matrix.shard }}
+      FIBER_ASSERT_LEGACY_SETTLEMENT: "false"
 
     steps:
       - uses: actions/checkout@v3

@@ -18,3 +18,7 @@
 - model: unavailable | cases: PR1705-01 PR1705-02 | feedback: evidence 和signal 回归不需要
 - model: unavailable | cases: PR1705-01 PR1705-02 | feedback: 用例名不能包含pr1705
 - model: unavailable | cases: PR1705-01 PR1705-02 | feedback: 文件名不可以包含这个，后期不好复用
+- model: unavailable | cases: PR1728-01 PR1728-02 | feedback: 回归用例不需要 evidence 不需要
+- model: unavailable | cases: PR1728-01 PR1728-02 | feedback: signal 也不需要
+- model: unavailable | cases: PR1728-01 PR1728-02 | feedback: 加个flag 只有true 时才检查`WAITING_ONCHAIN_SETTLEMENT` ，ci上不用检查这个判断
+- model: unavailable | cases: PR1728-01 PR1728-02 | feedback: 还是慢
