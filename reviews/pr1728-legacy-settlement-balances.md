@@ -22,13 +22,13 @@
 - 每行分别使用 CKB 和 UDT 两种资产，独立建链和记账；UDT 使用真实发行资产并在两侧准备足够余额及 CKB 预留。使用直连通道，付款不经过中继；两侧资金、TLC 数量和在途额度均足够。
 - 先用一笔正常付款证明升级后的原通道可用，再记余额基线。每轮 A 向 B 发四笔不同 hash、不同金额的持单付款，必须逐笔在 B 观察到 `Received`、A 观察到 `Inflight` 后，才提交结算或取消。执行三轮，每轮提交四个独立 RPC 请求而不逐个等待付款终态，同时 B 向 A 发两笔普通付款；每轮结束等待所有付款和余额收敛再开始下一轮。该负载不约束 P2P 消息顺序，也不声称必然触发 `RemoveWaitPrevAck`。
 - 测试使用正常 release 构建，自选原像并独立计算 SHA-256。目标付款的接受、结算/取消在首笔 `Received` 后 30 秒内完成，低于 [release 默认持单超时 120 秒](https://github.com/nervosnetwork/fiber/blob/46ff437800a0743c804ce1a3a5ad4fbd5d3f9974/crates/fiber-lib/src/fiber/config.rs#L73-L77)；超出时该轮失败，避免把自然超时当取消成功。debug 默认仅 20 秒，不直接套用本时间预算。所有 RPC 接受、付款完成和探针等待各有上限；结束后再发一笔正常探针并计入账本，然后由 A 调用 `shutdown_channel(force=true)`。
-- **耗时预算**：每个资产变体实测约 11 分钟；使用各步骤自身的有界等待，不设置进程级 signal 闹钟。两行共四个变体。单次启动/迁移 90 秒、开通/恢复 120 秒、每轮收敛 60 秒；结算后的节点关闭状态预留 660 秒，以覆盖旧版按 300 秒扫描的兼容路径。660 秒是测试等待上限，具体目标构建扫描周期在实施时核对，不按 Watchtower 的短轮询推定。CKB devnet 通过公开出块 RPC 推进承诺锁要求的 epoch；节点自身墙钟超时照常等待。
+- **耗时预算**：开启结算等待标记检查时，每个资产变体实测约 11 分钟；默认关闭后预计约 6 分钟，仍需等对端首次识别强关。使用各步骤自身的有界等待，不设置进程级 signal 闹钟。两行共四个变体。单次启动/迁移 90 秒、开通/恢复 120 秒、每轮收敛 60 秒；结算后的节点关闭状态预留 660 秒，以覆盖旧版按 300 秒扫描的兼容路径。660 秒是测试等待上限，具体目标构建扫描周期在实施时核对，不按 Watchtower 的短轮询推定。CKB devnet 通过公开出块 RPC 推进承诺锁要求的 epoch；节点自身墙钟超时照常等待。
 
 <!-- TEST-CASES-BEGIN -->
 | 用例 | 场景 | 预期结果 | 防止的问题 | 优先级 |
 | --- | --- | --- | --- | --- |
-| `PR1728-01` | - [x] 两个 v0.9.1 节点建好 Legacy 通道后升级双方；分别用 CKB、UDT，在原通道分三轮把 A→B 已接收的四笔持单并发提交正确原像，同时完成 B→A 普通付款；收敛后探针付款并由 A 强关（每资产实测约 11 分钟） | 每笔持单 Paid、付款 Success 且原像正确；双方通道余额按实际成功付款净额变化，无遗留在途资金，探针成功；强关承诺和结算交易确认，双方链上到账与独立账本一致，UDT 数量守恒、CKB 仅扣真实链上手续费，通道最终关闭 | 已完成付款未计入收款方、金额缺失或重复计账，旧通道升级后付款或兑付卡住 | P0 |
-| `PR1728-02` | - [x] 两个 v0.9.1 节点建好 Legacy 通道后升级双方；分别用 CKB、UDT，在原通道分三轮把 A→B 已接收的四笔持单并发取消且始终保密原像，同时完成 B→A 普通付款；收敛后探针付款并由 A 强关（每资产实测约 11 分钟） | 每笔目标发票 Cancelled、付款 Failed；取消金额全部恢复为 A 可用余额，B 不因取消收款，只有普通成功付款和探针改变净余额；无遗留在途资金，探针成功；双方强关到账与独立账本一致，UDT 数量守恒、CKB 仅扣真实链上手续费，通道最终关闭 | 已失败付款仍占发送方资金、错误转给接收方，或退款只在 RPC 中出现而链上少到账 | P0 |
+| `PR1728-01` | - [x] 两个 v0.9.1 节点建好 Legacy 通道后升级双方；分别用 CKB、UDT，在原通道分三轮把 A→B 已接收的四笔持单并发提交正确原像，同时完成 B→A 普通付款；收敛后探针付款并由 A 强关（每资产默认预计约 6 分钟；开启标记检查时实测约 11 分钟） | 每笔持单 Paid、付款 Success 且原像正确；双方通道余额按实际成功付款净额变化，无遗留在途资金，探针成功；强关承诺和结算交易确认，双方链上到账与独立账本一致，UDT 数量守恒、CKB 仅扣真实链上手续费，通道最终关闭 | 已完成付款未计入收款方、金额缺失或重复计账，旧通道升级后付款或兑付卡住 | P0 |
+| `PR1728-02` | - [x] 两个 v0.9.1 节点建好 Legacy 通道后升级双方；分别用 CKB、UDT，在原通道分三轮把 A→B 已接收的四笔持单并发取消且始终保密原像，同时完成 B→A 普通付款；收敛后探针付款并由 A 强关（每资产默认预计约 6 分钟；开启标记检查时实测约 11 分钟） | 每笔目标发票 Cancelled、付款 Failed；取消金额全部恢复为 A 可用余额，B 不因取消收款，只有普通成功付款和探针改变净余额；无遗留在途资金，探针成功；双方强关到账与独立账本一致，UDT 数量守恒、CKB 仅扣真实链上手续费，通道最终关闭 | 已失败付款仍占发送方资金、错误转给接收方，或退款只在 RPC 中出现而链上少到账 | P0 |
 <!-- TEST-CASES-END -->
 
 ## 测试树
@@ -93,12 +93,18 @@
 
 链上核对逐笔验证原 funding cell 的消费、A 的已签承诺 hash、57 字节 Legacy 布局、实际 commitment-lock code dep、两方解锁方向、无残留 TLC、交易费用和钱包净增。CKB 的承诺手续费从最后一方取得的剩余容量中扣除；UDT 的首笔结算释放多余 CKB 预留、末笔释放按脚本字节数独立计算的剩余占用容量，代币数量另按付款账本精确核对。每方结算费来自该交易输入减输出，额外输入必须属于对应收款方；另限制单笔费小于 10,000 Shannon，远小于本批任何付款金额。
 
-最终关闭断言同时要求两端 `Closed`、无 `WAITING_ONCHAIN_SETTLEMENT`、无 pending TLC；不会因开关默认关闭而略过。目标提交的 `CHECK_CHANNELS_SHUTDOWN_INTERVAL` 固定为 [300 秒](https://github.com/nervosnetwork/fiber/blob/46ff437800a0743c804ce1a3a5ad4fbd5d3f9974/crates/fiber-lib/src/fiber/network.rs#L192)，最终关闭状态的等待上限为 660 秒。
+最终关闭断言始终要求两端 `Closed`、无 pending TLC。环境变量 `FIBER_ASSERT_LEGACY_SETTLEMENT` 默认 `false`，仅设为 `true`（忽略大小写）时额外等待两端清除 `WAITING_ONCHAIN_SETTLEMENT`；compatibility CI 显式设置为 `false`。链上到账、真实手续费、代币数量和无遗留在途资金的断言始终执行。目标提交的 `CHECK_CHANNELS_SHUTDOWN_INTERVAL` 固定为 [300 秒](https://github.com/nervosnetwork/fiber/blob/46ff437800a0743c804ce1a3a5ad4fbd5d3f9974/crates/fiber-lib/src/fiber/network.rs#L192)，最终关闭状态的等待上限为 660 秒。默认仍会等待对端首次扫描后进入 `Closed`，开关关闭仅省去后续清除等待标记的扫描。
 
 原生复现命令（仓库根目录）：
 
 ```bash
 venv/bin/python -u -m pytest test_cases/fiber/devnet/compatibility/test_legacy_settlement_balances.py -v -s -x -o log_cli=false -o log_level=INFO
+```
+
+需要额外核对结算等待标记时：
+
+```bash
+FIBER_ASSERT_LEGACY_SETTLEMENT=true venv/bin/python -m pytest test_cases/fiber/devnet/compatibility/test_legacy_settlement_balances.py -v -s
 ```
 
 运行时查询到实际 commitment-lock 代码 cell 为 `0x157446f77b9468f63ae741dc66e6e987b470eb2e5f66fdde62d7c90f96042202:0`，代码 data hash 为 `0x91c057ff3bf85e43ccd4baad81b9d675d1e982b85d4343e1741ac08b99e85c93`；后续结算交易必须引用该 code dep。本次没有变更链上合约。
@@ -115,4 +121,4 @@ venv/bin/python -u -m pytest test_cases/fiber/devnet/compatibility/test_legacy_s
 venv/bin/python -u -m pytest test_cases/fiber/devnet/compatibility/test_legacy_settlement_balances.py -k cancelled -v -s -x -o log_cli=false -o log_level=INFO
 ```
 
-回归直接使用上述 pytest 命令，测试不创建 evidence 目录、不复制节点日志或配置，也不使用 signal 闹钟；RPC、状态收敛和链上消费仍使用有界等待。此前成功付款与取消退款各两个资产变体均已通过。本次移除报告收集和信号处理，仅进行静态检查和用例收集，不重新运行 devnet。
+回归直接使用上述 pytest 命令，测试不创建 evidence 目录、不复制节点日志或配置，也不使用 signal 闹钟；RPC、状态收敛和链上消费仍使用有界等待。此前成功付款与取消退款各两个资产变体均已通过。移除报告收集和信号处理后通过静态检查和用例收集；该清理及本次开关调整未重跑 devnet。

@@ -15,3 +15,4 @@
 - model: unavailable | cases: PR1677-09 | feedback: PR1677-09 不需要 可以删
 - model: unavailable | cases: PR1728-01 PR1728-02 | feedback: 回归用例不需要 evidence 不需要
 - model: unavailable | cases: PR1728-01 PR1728-02 | feedback: signal 也不需要
+- model: unavailable | cases: PR1728-01 PR1728-02 | feedback: 加个flag 只有true 时才检查`WAITING_ONCHAIN_SETTLEMENT` ，ci上不用检查这个判断

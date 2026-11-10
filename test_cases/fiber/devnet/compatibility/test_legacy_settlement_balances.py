@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import os
 from pathlib import Path
 import secrets
 import shutil
@@ -31,6 +32,9 @@ class TestLegacySettlementBalances(FiberTest):
     fiber1_rpc_port, fiber1_p2p_port = 27228, 27227
     fiber2_rpc_port, fiber2_p2p_port = 27229, 27230
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 2}
+    check_onchain_settlement = (
+        os.getenv("FIBER_ASSERT_LEGACY_SETTLEMENT", "false").lower() == "true"
+    )
 
     @classmethod
     def setup_class(cls):
@@ -560,8 +564,11 @@ class TestLegacySettlementBalances(FiberTest):
             self._channels,
             lambda rows: all(
                 c["state"]["state_name"] == "Closed"
-                and "WAITING_ONCHAIN_SETTLEMENT"
-                not in c["state"].get("state_flags", "")
+                and (
+                    not self.check_onchain_settlement
+                    or "WAITING_ONCHAIN_SETTLEMENT"
+                    not in c["state"].get("state_flags", "")
+                )
                 for c in rows
             ),
             660,
