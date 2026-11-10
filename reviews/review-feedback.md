@@ -22,3 +22,11 @@
 - model: unavailable | cases: PR1728-01 PR1728-02 | feedback: signal 也不需要
 - model: unavailable | cases: PR1728-01 PR1728-02 | feedback: 加个flag 只有true 时才检查`WAITING_ONCHAIN_SETTLEMENT` ，ci上不用检查这个判断
 - model: unavailable | cases: PR1728-01 PR1728-02 | feedback: 还是慢
+
+- model: unavailable | cases: PR1711-02 PR1711-08 / SPEC-02 | feedback: SPEC-02 不就会导致资金一直卡住
+- model: unavailable | cases: PR1711-08 | feedback: 那补充这个用例
+- model: unavailable | cases: PR1711-01～08 | feedback: 08用例先skip 补充其他用例
+- model: unavailable | cases: PR1711-01～07 | feedback: 只用 v0.9.1，04 加 V2 对照（建议）
+- model: unavailable | cases: PR1711-01～08 | feedback: 长期回归用例直接使用仓库 current 配置，移除 PR 专用二进制和端口环境变量，文件名、说明和运行信息按功能命名；既有映射 ID 保持稳定。
+- model: unavailable | cases: PR1711-07 | feedback: 密钥搬移、CLI 备份恢复等底层操作封装到 FiberTest，用例只保留恢复调用和行为断言。
+- model: unavailable | cases: PR1711-01～08 | feedback: 删除 SimpleNamespace 版本包装及无意义的 --version 调用、版本打印和提交号检查。

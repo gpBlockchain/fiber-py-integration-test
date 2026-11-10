@@ -1,4 +1,6 @@
 from framework.basic import CkbTest
+from pathlib import Path
+import shutil
 import socket
 
 from framework.config import DEFAULT_MIN_DEPOSIT_CKB
@@ -297,6 +299,36 @@ class FiberTest(CkbTest):
         fiber.prepare(update_config=update_config)
         fiber.start(fnn_log_level=self.fnn_log_level)
         return fiber
+
+    def restore_fiber_from_backup(
+        self, fiber, backup_path, key_backup_dir, timeout=120
+    ):
+        """停机保留现有密钥，用节点 CLI 恢复备份并重新启动。"""
+        key_backup_dir = Path(key_backup_dir)
+        key_backup_dir.mkdir(parents=True)
+        fiber.stop()
+        for key in ("fiber/sk", "ckb/key"):
+            shutil.move(
+                Path(fiber.tmp_path) / key,
+                key_backup_dir / key.replace("/", "-"),
+            )
+        result = subprocess.run(
+            [
+                Path(get_project_root()) / fiber.fiber_config_enum.fiber_bin_path,
+                "-c",
+                fiber.fiber_config_path,
+                "-d",
+                fiber.tmp_path,
+                "--restore",
+                str(backup_path),
+            ],
+            env={**os.environ, "FIBER_SECRET_KEY_PASSWORD": "password0"},
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        fiber.start(timeout=timeout)
 
     def wait_for_node_info_counts(
         self, client, channel_count, pending_channel_count=None, timeout=120
