@@ -31,6 +31,9 @@ fiber:
   auto_accept_channel_ckb_funding_amount: {{ fiber_auto_accept_channel_ckb_funding_amount }}
   {% endif %}
   watchtower_check_interval_seconds: {{ fiber_watchtower_check_interval_seconds | default(60) }}
+  {% if fiber_store_sync_writes is defined %}
+  store_sync_writes: {{ fiber_store_sync_writes }}
+  {% endif %}
   {% if fiber_disable_built_in_watchtower is defined %}
   standalone_watchtower_rpc_url: {{ fiber_standalone_watchtower_rpc_url }}
   disable_built_in_watchtower: {{ fiber_disable_built_in_watchtower }}
