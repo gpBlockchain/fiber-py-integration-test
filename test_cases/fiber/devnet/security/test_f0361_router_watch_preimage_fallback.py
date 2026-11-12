@@ -12,6 +12,10 @@ router must not be left holding the incoming hop.
 import hashlib
 import time
 
+from framework.attack_commitment import (
+    latest_commitment_number,
+    submit_newest_commitment,
+)
 from framework.basic_p2p import P2pFiberTest
 from framework.p2p_peer import P2pPeer
 from framework.test_fiber import FiberConfigPath
@@ -88,35 +92,11 @@ class TestF0361RouterWatchPreimageFallback(P2pFiberTest):
         )
 
     def _submit_signed_commitment(self, channel_id):
-        musig = self.peer.musig2(channel_id)
-        numbers = []
-        for key in ("local_commitment_number", "remote_commitment_number"):
-            raw = musig.get(key)
-            if raw is None:
-                continue
-            number = int(raw, 16) if isinstance(raw, str) else int(raw)
-            numbers.extend([number, max(number - 1, 0), number + 1])
-        errors = []
-        tried = set()
-        for number in numbers:
-            if number in tried:
-                continue
-            tried.add(number)
-            try:
-                return self.bob.get_client().call(
-                    "submit_commitment_transaction",
-                    [
-                        {
-                            "channel_id": channel_id,
-                            "commitment_number": hex(number),
-                        }
-                    ],
-                )
-            except Exception as err:
-                errors.append(f"{number}: {err}")
-        raise AssertionError(
-            "bob could not submit the signed remote commitment: "
-            f"musig={musig} errors={errors}"
+        # Submit the newest peer-signed commitment cached after the TLC was
+        # offered (V1 and Channel V2). The musig2 number guess picked the
+        # pre-TLC commitment on V2, which settles with 0 pending TLCs.
+        return submit_newest_commitment(
+            self.bob.get_client(), channel_id, self._pre_tlc_commitment
         )
 
     def _mine_watchtower_rounds(self, rounds=4):
@@ -147,9 +127,13 @@ class TestF0361RouterWatchPreimageFallback(P2pFiberTest):
             }
         )
 
+        # Baseline: newest signed commitment cached before the TLC exists.
+        self._pre_tlc_commitment = latest_commitment_number(
+            self.bob.get_client(), ch_bob
+        )
         self.peer.intercept(
             ch_bob,
-            drop_out=["RevokeAndAck", "CommitmentSigned", "RemoveTlc"],
+            drop_out=["RevokeAndAck", "RevokeAndAckV2", "CommitmentSigned", "CommitmentSignedV2", "RemoveTlc"],
             drop_raa=True,
         )
 
