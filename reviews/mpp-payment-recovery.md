@@ -1,28 +1,22 @@
-# Issue #1705：MPP 成功判定与剩余 TLC 结算测试分析
+# MPP 付款成功、结算与恢复回归
 
 ## 导读
 
 - **目的**：修复多路径付款中，一个分片已被领取、其他分片失败后整笔付款又被判失败的问题；尤其防止 trampoline 中继已经付出钱，却向上游退款。
 - **行为变化**：发送方取得属于这笔付款的有效原像（preimage），或已有成功分片，就应显示 `Success`。其余已发出的 TLC 继续结算，付款成功不再等于所有资金锁定都已解除。收款方原有的发票金额、MPP 汇总及原像校验规则保留。
-- **主要风险**：过早退款造成中继损失；成功后再次发款；重启漏掉已知原像；中继只在链上得到原像却未恢复上游结算；链上超时已退款却一直扣着上游资金；大量历史付款拖慢启动。
+- **主要风险**：过早退款造成中继损失；成功后再次发款；重启漏掉已知原像；中继只在链上得到原像却未恢复上游结算；链上超时已退款却一直扣着上游资金；重启后历史付款遗漏或重复扣款。
 - **测试层**：采用 Fiber 测试项目的黑盒长期回归偏好，通过正式节点 RPC、启停/升级、真实 CKB devnet 交易和余额观察；以现有 Python 拓扑为复用起点。评审与自动化保存在 Fiber 测试仓库，原始分析输入作为本机证据保留。
 - **测不到的**：公开 RPC 未暴露付款 actor 数量、attempt 唤醒索引、写库次数；付款成功或 TLC 消失均不证明 actor 已退出。精确的“写通道成功、尚未写付款状态”崩溃窗口和旧 V1 协议内部状态依赖上游专门测试。
 - **测不到的**：标准收款流程不会故意只领取一个分片并拒绝另一个；`remove_tlc`、`check_channel_shutdown` 属 debug 专用 RPC，本文不据此设计正式构建的黑盒用例。该恶意收款核心反例已有上游进程内测试，须单独保留其运行证据。
 
-依据：[验收 issue](https://github.com/nervosnetwork/acceptance-internal/issues/1705)、[Fiber PR #1732](https://github.com/nervosnetwork/fiber/pull/1732)。2026-11-10 读取快照：PR open；base `7aa1d5de724fb28b8ddfc663f5da792ff48f1ee9`，head `fb49c3dcbb2812bd85d9063a5f155296d5a1398a`，17 个文件。改动涉及付款状态含义、通道通知、重启恢复、上游结算及查询；未见新增 wire 字段或存储 schema，issue 的自动标签 `protocol schema` 不能代替实际影响分析。
+依据：[MPP 付款状态改动](https://github.com/nervosnetwork/fiber/pull/1732)。用例直接使用项目现有 pytest、FiberTest 和构建配置，Case ID 仅用于维护测试映射，不参与运行选择或版本判断。
 
-2026-11-10 设计阶段完成源码、差异和现有断言的静态分析，当时未启动节点或重跑 PR 作者报告的测试；2026-11-12 的自动化及节点执行结果见文末。一次性核查精确 head 的 GitHub workflow：E2E、Continuous integration、WASM 单测及 OpenRPC 生成均 completed/success；[E2E run](https://github.com/nervosnetwork/fiber/actions/runs/42756585944)、[CI run](https://github.com/nervosnetwork/fiber/actions/runs/42756586018)。这是 workflow 级结果，不等于本文新增用例已执行，也不消除同 head 已报告的缺口。原始输入保存在 inputs（本机证据，未随 PR 提交） 和 diff（本机证据，未随 PR 提交）。
+## 维护边界
 
-## 需要你决定
-
-已确认（2026-11-10）：保留 MPP1705-07、MPP1705-08 两条 P0 trampoline 回归用例，分别覆盖中继正常运行和重启后，在全部下游无原像且链上退款确认后释放上游锁定资金。此次确认针对这两条用例的场景和预期；复选框只表示 TEST-MAP 状态。2026-11-11 已确认 MPP1705-07 首例实现规范；MPP1705-08 的两个重启变体已按该规范实现。运行状态见下方自动化验证。
-
-已确认（2026-11-12）：用户要求“自动化所有的用例”，本批 01～14 均按已确认的 07/08 首例规范进入实现，不再逐条等待确认。12 的未定性能阈值保持未定；实现采集及功能校验，不把采集完成计作性能验收通过。
-
-- **建议与开发同步，优先处理链上超时回归**：同一 head 的[既有评审](https://github.com/nervosnetwork/fiber/pull/1732#issuecomment-6760148569)报告 actor 不退出、trampoline 上游长期不退款。源码显示 pending 判定依赖 `REMOVE`，而两条 origin-payer 超时路径只设置 removal reason，静态路径与报告吻合；本轮没有重新复现。MPP1705-07、MPP1705-08 应作为修复验收重点；actor 退出还需开发侧补内部断言。
-- **MPP1705-12**：待确认启动性能验收阈值（历史规模、启动至可付款的时限、RSS 上限及相对 base 退化比例）。评审中的“8,000 笔约 13 秒”是其 debug 本地测量，不能作为 release 基线或统一门槛。
-- **慢测预算**：MPP1705-07～09 涉及真实链上超时。正式构建的最小 final TLC delta 为 160 分钟；转发还会增加期限差，合约等待另计。建议安排慢速回归；不把改系统时间、修改编译常量或直接写数据库作为前提。
-- **升级覆盖边界**：MPP1705-10 使用 base 能经正常操作创建的“已拿到原像但另一分片尚未结算”数据。旧库中“Failed 且已有成功分片”的精确变体，本轮只核对上游 store 测试；进入黑盒升级验收前需有可重放的真实旧版数据来源。
+- 普通回归使用 `CURRENT_DEV`；升级使用仓库已有的 `V091_DEV → CURRENT_DEV`，不读取 PR 专用路径、提交号或构建 manifest。
+- 只保留公开接口可构造的付款、重启、升级与链上资金检查；内部 actor 清理和精确写库竞争不由这些黑盒用例替代。
+- 真实到期退款按实际 expiry 等待；大规模历史用例仍是慢测，采用原生 pytest 节点选择器单独执行。
+- MPP1705-12 按用户确认保留 0/1,000/8,000 笔历史的重启功能回归，检查历史、余额和新付款；不再承担 base/head、后端比较、RSS 或 SLA 验收。
 
 ## Spec
 
@@ -30,7 +24,7 @@
 - Condition: 本付款的一个 TLC 返回与付款 hash 算法匹配的原像，或持久化 attempt 已成功。
 - Expected: 付款变为 Success，返回原像并清除付款级旧错误；其他分片的迟到结果不降级成功，不触发新的付款/重试；已有 TLC 正常走完。
 - Observable: get_payment / list_payments 的新响应、开放通道 TLC、最终通道/链上余额；actor 退出另行验证。
-- Basis: [PR 行为契约](https://github.com/nervosnetwork/fiber/pull/1732)、[状态计算](https://github.com/nervosnetwork/fiber/blob/fb49c3dcbb2812bd85d9063a5f155296d5a1398a/crates/fiber-types/src/payment.rs#L1099)、[原像观察与退出条件](https://github.com/nervosnetwork/fiber/blob/fb49c3dcbb2812bd85d9063a5f155296d5a1398a/crates/fiber-lib/src/fiber/payment.rs#L1292)。发票足额检查保留；Success 不额外承诺所有分片已结清或 fee 已最终稳定。
+- Basis: [PR 行为契约](https://github.com/nervosnetwork/fiber/pull/1732)、[状态计算](https://github.com/nervosnetwork/fiber/pull/1732)、[原像观察与退出条件](https://github.com/nervosnetwork/fiber/pull/1732)。发票足额检查保留；Success 不额外承诺所有分片已结清或 fee 已最终稳定。
 - Source: explicit
 - Testing: required
 
@@ -38,7 +32,7 @@
 - Condition: trampoline 的下游付款有有效原像、仍有未知结果的 TLC，或全部 TLC 已有失败结果。
 - Expected: 有效原像推动上游领取，不必等付款 actor 退出；个别分片已失败但其他分片对 T 仍未知时，也不得先退款，付款会话的 Failed 标记不替代全部 TLC 结果；没有成功证明且失败结果全部确定后正常失败上游。
 - Observable: 发送方付款状态、上游开放通道的锁定资金和余额、中继全路径净资金变化；未知链上结果与已确认退款分开建立前提。
-- Basis: [上游结算实现与注释](https://github.com/nervosnetwork/fiber/blob/fb49c3dcbb2812bd85d9063a5f155296d5a1398a/crates/fiber-lib/src/fiber/network.rs#L7871)、[超时回归报告](https://github.com/nervosnetwork/fiber/pull/1732#issuecomment-6760148569)。预期来自“不在下游结局未知时退款”的付款安全规则，不把当前疑似卡住行为写作正确预期。
+- Basis: [上游结算实现与注释](https://github.com/nervosnetwork/fiber/pull/1732)、[超时回归报告](https://github.com/nervosnetwork/fiber/pull/1732#issuecomment-6760148569)。预期来自“不在下游结局未知时退款”的付款安全规则，不把当前疑似卡住行为写作正确预期。
 - Source: explicit
 - Testing: required
 
@@ -46,7 +40,7 @@
 - Condition: 通道结果或链上结算已持久化，发送方/中继尚有 TLC 工作，或上游离线错过结算。
 - Expected: 重启先恢复成功证明，再消费旧失败/重试；首次仅在链上出现的有效原像也应恢复付款成功，并驱动中继完成上游领取；继续已有结算并恢复上游结果，不重复扣款；无原像的确定失败同样应完成退款。
 - Observable: 同一数据目录重启后的新 RPC 结果、链上确认和余额；内部写入间隙不是黑盒用例的声明前提。
-- Basis: [启动恢复](https://github.com/nervosnetwork/fiber/blob/fb49c3dcbb2812bd85d9063a5f155296d5a1398a/crates/fiber-lib/src/fiber/network.rs#L8508)、[付款启动原像观察](https://github.com/nervosnetwork/fiber/blob/fb49c3dcbb2812bd85d9063a5f155296d5a1398a/crates/fiber-lib/src/fiber/payment.rs#L982)、PR 描述的 durable channel recovery；[链上领取恢复后调用上游结算](https://github.com/nervosnetwork/fiber/blob/fb49c3dcbb2812bd85d9063a5f155296d5a1398a/crates/fiber-lib/src/fiber/network.rs#L5190)。
+- Basis: [启动恢复](https://github.com/nervosnetwork/fiber/pull/1732)、[付款启动原像观察](https://github.com/nervosnetwork/fiber/pull/1732)、PR 描述的 durable channel recovery；[链上领取恢复后调用上游结算](https://github.com/nervosnetwork/fiber/pull/1732)。
 - Source: explicit
 - Testing: required
 
@@ -54,7 +48,7 @@
 - Condition: 新付款或升级前保留的付款具有已领取分片，另一些分片尚未完成。
 - Expected: get_payment、无过滤列表与 Success 过滤均显示成功；Failed/Inflight/Created 过滤不包含它，分页不漏项或重复；只做查询不等同于验证底层记录已写回。
 - Observable: 预先记录的付款 hash 集合、状态、原像与排他游标；完成所有页后比较集合。
-- Basis: [查询过滤改动](https://github.com/nervosnetwork/fiber/blob/fb49c3dcbb2812bd85d9063a5f155296d5a1398a/crates/fiber-lib/src/store/store_impl/mod.rs#L1503)、[历史部分成功测试](https://github.com/nervosnetwork/fiber/blob/fb49c3dcbb2812bd85d9063a5f155296d5a1398a/crates/fiber-lib/src/store/tests/store.rs#L1822)。
+- Basis: [查询过滤改动](https://github.com/nervosnetwork/fiber/pull/1732)、[历史部分成功测试](https://github.com/nervosnetwork/fiber/pull/1732)。
 - Source: explicit
 - Testing: required
 
@@ -62,16 +56,16 @@
 - Condition: 单路/MPP、CKB/UDT、自付或并发付款经过这次状态/生命周期改动。
 - Expected: 有效付款保持成功，invoice 正常结算，开放通道锁定资金最终释放，链上分支交付给正确一方；相同付款不多扣、其他付款继续可用。
 - Observable: 逐资产余额守恒、独立统计的矿工手续费、invoice、开放通道 TLC 以及后续健康付款；不靠全局空池断言掩盖其他在途付款。
-- Basis: PR 保留发票和通道验证的承诺、[混合资产自付等待调整](https://github.com/nervosnetwork/fiber/blob/fb49c3dcbb2812bd85d9063a5f155296d5a1398a/crates/fiber-lib/src/fiber/tests/payment.rs#L4838)、既有 Python MPP/自付测试。此处将既有资金不变式用于真实节点集成回归。
+- Basis: PR 保留发票和通道验证的承诺、[混合资产自付等待调整](https://github.com/nervosnetwork/fiber/pull/1732)、既有 Python MPP/自付测试。此处将既有资金不变式用于真实节点集成回归。
 - Source: inference
 - Testing: required
 
-### SPEC-06：历史付款规模下启动仍满足部署可用性预算
-- Condition: 同一硬件/构建类型/后端，有 0、1,000、8,000 笔公开接口产生的终态付款，通道数和 attempt 密度受控。
-- Expected: 完成启动并处理新付款；启动时间、首笔付款时间和峰值 RSS 满足待确认的预算，历史余额和状态不被重放破坏。
-- Observable: 从进程启动到 node_info 与真实新付款分别可用的耗时、RSS、付款结果；保留 base/head 分布和失败样本。
-- Basis: [新增全历史恢复扫描](https://github.com/nervosnetwork/fiber/blob/fb49c3dcbb2812bd85d9063a5f155296d5a1398a/crates/fiber-lib/src/fiber/network.rs#L8510)、[既有性能风险报告](https://github.com/nervosnetwork/fiber/pull/1732#issuecomment-6760148569)；具体 SLA 未定义。
-- Source: inference
+### SPEC-06：付款历史在重启后保持完整且节点仍可付款
+- Condition: 当前版本通过公开接口形成 0、1,000、8,000 笔已完成付款，然后保留原数据重启付款节点。
+- Expected: 历史 hash、原像和成功状态完整，两端本金和锁定不因启动重放改变；原通道的新付款成功且只扣付一次。
+- Observable: 分页遍历得到的完整历史集合、两端通道余额与 TLC 锁定、新付款的状态和原像。
+- Basis: 已确认的历史恢复功能回归要求；移除一次性性能验收矩阵，不把功能通过当作性能预算通过。
+- Source: explicit
 - Testing: required
 
 ## 测试树
@@ -93,12 +87,12 @@
     - 同一确定超时结果在重启后完成上游退款：MPP1705-08 [primary] -> SPEC-02, SPEC-03
     - 普通发送方链上退款后可继续付款：MPP1705-09 [primary] -> SPEC-03, SPEC-05
   - 查询与升级
-    - base 的可公开构造在途数据升级，查询/过滤/分页反映成功：MPP1705-10 [primary] -> SPEC-01, SPEC-03, SPEC-04
-    - [pending] 旧库 Failed 且已有成功 attempt — 原始 fixture 及其公开操作生成过程待提供；恢复入口为 base 的部分 MPP 失败重现，当前只核对 store 原生测试
+    - 0.9.1 的可公开构造在途数据升级，查询/过滤/分页反映成功：MPP1705-10 [primary] -> SPEC-01, SPEC-03, SPEC-04
+    - [pending] 旧库 Failed 且已有成功 attempt — 原始 fixture 及其公开操作生成过程待提供；恢复入口为旧版的部分 MPP 失败重现，当前只核对 store 原生测试
   - 并发、资产与自身付款
     - CKB/UDT 自付和普通 MPP 并发、断连重启后守恒：MPP1705-11 [primary] -> SPEC-01, SPEC-03, SPEC-05
-  - 启动性能
-    - 历史规模、数据库后端和 base/head 对比：MPP1705-12 [primary] -> SPEC-06
+  - 历史恢复
+    - 0/1,000/8,000 笔付款重启后历史、余额与新付款正确：MPP1705-12 [primary] -> SPEC-06
   - 上游原生测试保留的精确性质
     - [not_applicable] 恶意只领取一片、拒绝另一片及相反消息顺序 — 正常发票接口不产生该行为，debug remove_tlc 和内部钩子不符合本次黑盒偏好；核对 trampoline 原生反例
     - [not_applicable] 错误原像、错误 attempt/通道归属及旧 V2 receipt 匹配 — 直接构造内部上下文不符合本次偏好，交由原生 channel/payment 测试；本次不声称重跑
@@ -116,7 +110,7 @@
 
 时间预算（设计值，未实测）：`W开通` 为 120 秒单阶段观察窗；`W结果` 为原像/退款证据可用后最多 420 秒（包含 300 秒后台关停检查、60 秒付款检查与余量）；`W链` 为实际 commitment delay/epoch 与必要交易确认的等待；`W超时` 按 RPC 记录的 TLC expiry 及合约要求计时。正式构建最小 delta=9,600,000ms（160 分钟），debug=1,333ms；二者数据不混作同一性能或时限证据。正常用例另有约 5 分钟拓扑准备；链上用例耗时按 `W链` 单列，不能承诺全部十分钟内完成。测试用 CKB devnet 正常出块推进 epoch，不修改主机时钟。超时是失败/前提不满足，不能跳过后报告通过。
 
-MPP1705-01～14 均已建立 TEST-MAP；复选框只表示映射存在，不表示运行或性能验收通过。分组入口与实际结果见文末。
+MPP1705-01～14 均已建立 TEST-MAP；复选框只表示映射存在，不表示运行通过。分组入口见文末，实际结果由 pytest/CI 记录。
 
 <!-- TEST-CASES-BEGIN -->
 | 用例 | 场景 | 预期结果 | 防止的问题 | 优先级 |
@@ -132,20 +126,20 @@ MPP1705-01～14 均已建立 TEST-MAP；复选框只表示映射存在，不表�
 | `MPP1705-07` | - [x] 延续 06，P/T 在线，停止 R 保证没有原像；正常推进至全部下游 TLC 的退款交易已确认且资金归 T（约 5 分钟准备＋W超时＋W链＋W结果） | W结果 内 P–T 释放对应锁定金额、付款失败且无原像；P 收回原本金，健康上游通道继续可付款 | 已确认下游超时仍无限推迟上游退款 | P0 |
 | `MPP1705-08` | - [x] 独立重建 07 的公开状态，分别在下游关闭未退款、退款已确认两个阶段正常重启 T，P 保持在线（每变体约 5 分钟准备＋W超时＋W链＋W结果） | 重启前未知结果不提前退款；全部下游退款确认后上游正常失败并释放本金，不因重启永久挂起或重放扣款 | 启动扫描重新唤醒已确定超时工作并卡住上游 | P0 |
 | `MPP1705-09` | - [x] 普通 P–R hold 付款接收后停止 R，P 强关通道；无原像地完成链上超时退款，重启 P 并通过另一健康通道付款（约 5 分钟准备＋W超时＋W链＋W结果） | 旧付款 Failed、无原像，退款到 P 的正确 lock且扣费可核对；新付款成功；本例只证明用户资金和可用性，不声称 actor 已退出 | 直接付款资金回不来、旧结果阻塞后续使用 | P1 |
-| `MPP1705-10` | - [x] 用 base 正常创建 01 的已获原像但尚有链上分片状态并记录旧查询；停机备份数据，升级 P 到 head；与普通成功/失败对照付款一起按 limit=1 遍历列表（约 5 分钟准备＋升级时间＋W结果＋W链） | 升级后目标付款由旧在途变 Success、原像正确；无过滤/Success 集合恰含目标，其他状态过滤排除，分页无漏重；剩余链上交付完成 | 升级后继续显示在途，或 Failed 提前过滤误排成功证明 | P1 |
+| `MPP1705-10` | - [x] 用 0.9.1 正常创建 01 的已获原像但尚有链上分片状态并记录旧查询；停机备份数据，升级 P 到 CURRENT_DEV；与普通成功/失败对照付款一起按 limit=1 遍历列表（约 5 分钟准备＋升级时间＋W结果＋W链） | 升级后目标付款由旧在途变 Success、原像正确；无过滤/Success 集合恰含目标，其他状态过滤排除，分页无漏重；剩余链上交付完成 | 升级后继续显示在途，或 Failed 提前过滤误排成功证明 | P1 |
 | `MPP1705-11` | - [x] CKB/UDT 环形自付及 MPP 以每批 10 笔共 100 笔唯一 hash 付款；在第 3/6 批用 hold invoice 等到 Received/Committed 后，分别对指定中继 M 做 disconnect_peer/connect_peer 和正常停启，再用原 hash/原像结算（约 15～30 分钟设计预算） | 故障期间确有目标在途 TLC；恢复后原付款完成且成功款不二次扣付，自付各资产本金守恒，相应锁定释放；最后一笔健康付款成功 | 故障未打到在途工作却误报覆盖，或并发恢复后重复扣款和长期锁定 | P1 |
-| `MPP1705-12` | - [x] 同一机器对 base/head、RocksDB/SQLite 分别用公开接口积累 0/1,000/8,000 笔终态历史，固定通道数并记录实际分片密度；每规模重复启动 10 次测首笔付款与 RSS（数据准备计时另列，每次启动观察上限暂定 5 分钟） | 待确认：启动/首笔付款时限、RSS 上限和允许退化比例；先提交逐次数据及分布，历史记录和资产不变，新付款完成 | 全历史恢复扫描使大数据库启动慢或占用过高 | P1 |
+| `MPP1705-12` | - [x] 当前版本经公开接口分别形成 0/1,000/8,000 笔成功付款，核对初始本金后正常重启 P，重连原接收节点并支付一笔新款（大规模造数另计，每笔付款等待上限 120 秒、启动上限 120 秒） | 历史 hash/原像/状态完整且分页无漏重；两端余额和锁定不因重启变化；新付款成功且只扣一次 | 启动遗漏历史、重复扣款或旧记录影响新付款 | P1 |
 <!-- TEST-CASES-END -->
 
 ## 验证设计
 
 1. **关键前提**：01～04 必须同时留存“正确原像已可观察”和“另一分片尚未链上完成”的证据，再断言提前成功。使用暂停 devnet 出块形成宽窗口，避免精确卡消息；若节点在该场景没有得到早期证明，应报告前提未建立，不能退化为全部结清后检查 Success。05 单独证明原像来自链上：确认链上消费后停止 P 的唯一 Fiber 对端 M，清空启动 bootstrap 对端列表，启动后用 list_peers 核实没有 Fiber 对端；在重新启动 M 前完成 P 的原像/状态检查。CKB RPC 与链上索引服务持续可用。
-2. **超时退款前提**：06～08 要区分 commitment 上链、TLC 到期、实际超时退款三件事；只有正确 outpoint 已消费、退款交易确认及收款 lock/金额匹配才算确定失败。上游会在名义到期前进入保护性强关（[条件](https://github.com/nervosnetwork/fiber/blob/fb49c3dcbb2812bd85d9063a5f155296d5a1398a/crates/fiber-lib/src/fiber/channel.rs#L3867)）。07/08 通过公开通道/付款参数加大上游期限裕量，按实际 TLC expiry 与 commitment_delay_epoch 检查：上游 expiry 必须晚于“预计全部下游退款确认时间＋W结果＋上游 2/3 commitment delay 换算毫秒＋60 秒维护周期＋运行余量”；每次重启后重新检查剩余窗口。观察期间 P–T 必须维持开放，避免把上游自身到期强关取回的钱混作中继正常失败传播。裕量不够是前提失败，须调整公开期限参数后重建独立 fixture。
+2. **超时退款前提**：06～08 要区分 commitment 上链、TLC 到期、实际超时退款三件事；只有正确 outpoint 已消费、退款交易确认及收款 lock/金额匹配才算确定失败。上游会在名义到期前进入保护性强关（[条件](https://github.com/nervosnetwork/fiber/pull/1732)）。07/08 通过公开通道/付款参数加大上游期限裕量，按实际 TLC expiry 与 commitment_delay_epoch 检查：上游 expiry 必须晚于“预计全部下游退款确认时间＋W结果＋上游 2/3 commitment delay 换算毫秒＋60 秒维护周期＋运行余量”；每次重启后重新检查剩余窗口。观察期间 P–T 必须维持开放，避免把上游自身到期强关取回的钱混作中继正常失败传播。裕量不够是前提失败，须调整公开期限参数后重建独立 fixture。
 3. **独立预期**：01～05、10、13 的原像由测试生成并用独立 hash 实现核对；付款 hash 及 TLC/channel identity 由创建阶段记录。资金 oracle 为逐资产守恒和已知初始余额，不以 send_payment 返回 fee 或单次状态查询直接推出到账。链上先验证准确消费关系及接收者，再加总容量/UDT；只看到交易条数或 commitment cell 消失不算交付证明。
 4. **成功后不再付的可观测范围**：保留 Success 后对应开放通道 TLC identity 和最终净支出；出现新锁定/额外支出即失败。RPC 采样不能证明“从未调过某个内部重试函数”，该精确性质依赖原生测试。链上剩余分片合法支付会改变余额，应与重复付款区分。
-5. **升级**：10 使用同一数据目录副本、同样合约及公开创建步骤，仅替换 FNN；分别保留旧查询和新查询。基准 head 是比较用，不在长期自动化中按某版本跳过断言。旧 Failed 部分成功数据尚无符合偏好的稳定构造，不冒充 10 已覆盖；V1/V2 协议也不与 commitment lock 的 Legacy/V1 编码混称。
+5. **升级**：10 使用同一数据目录副本、同样合约及公开创建步骤，仅将 FNN 从 V091_DEV 升到 CURRENT_DEV；分别检查升级前后的付款查询，不按提交号跳过断言。旧 Failed 部分成功数据尚无符合偏好的稳定构造，不冒充 10 已覆盖；V1/V2 协议也不与 commitment lock 的 Legacy/V1 编码混称。
 6. **并发恢复**：11 在环形/多路径图中指定同一个转发角色 M，禁止付款路由绕开 M；第 3 批在 M 的两侧分别调用 disconnect_peer，核实 list_peers 断开后 connect_peer；第 6 批正常停止/启动 M。操作前保留该批 Received/Committed 和 TLC identity，恢复后 settle_invoice 使用原 hash/原像，不由测试另造新付款掩盖丢单。每批结算并检查本金/锁定后再进入下一批。自付的 receiver=P、ordinary MPP 的 receiver=R，CKB/UDT 分开记账。
-7. **性能**：12 固定硬件、优化级别、日志级别和后端，逐规模从同一准备快照复制独立运行目录；base 与 head 不共写数据库。分别记录冷/热缓存条件、历史数量、成功/失败比例、attempt 密度、数据准备耗时；输出全部 10 次样本和中位数/范围。RPC 端口能连不等于网络 actor 已可处理付款；以真实新付款完成作为另一计时点。造数失败、启动超时和支付失败均保留，不丢弃再重跑算通过。
+7. **历史恢复**：12 的三种规模分别创建独立环境。付款 hash 和原像由测试生成，通过正常 hold/settle 形成终态历史；准备完成后，余额必须等于开通余额加减固定笔数×单笔金额，不能把错误的准备结果当作基准。保留原目录重启 P，逐页比较完整旧集合和两端余额，再完成一笔新付款，核对集合仅新增该 hash、本金仅变化该笔金额及锁定归零。不保存验收报告、不替换二进制、不采样 RSS 或设定性能 SLA。
 
 
 8. **中继仅从链上取得原像后结算上游（13）**：沿用拓扑 T 与 hold invoice，通道转发费设为零，但 trampoline 的转付预算必须为正，二者分别记录。固定发票金额 A=1500 CKB、send_payment.max_fee_amount=B=A/100；故障前核对 P/T 两端 Committed 的上游金额一致为 A+F、0<F≤B，且两片实际金额合计为 A，再冻结 F 作为这笔已承诺付款的费用基准，不从付款完成后的 fee 字段反推预期。使用正式 RPC、正常启停及独立 CKB devnet；不修改二进制、数据库或主机时间。预先记录付款 hash、两片实际金额、通道/TLC identity、起始余额和独立生成的原像。确认 invoice=Received、两片两端 Committed，且 P/T 的 get_payment 未成功、payment_preimage 为空，再正常停止 P/T并确认进程退出。原像此时尚未交给任何 Fiber 节点；只在 P/T 停止后向 R 调用 settle_invoice，避免把原像事后隐藏当成“首次链上取得”。
@@ -161,82 +155,23 @@ MPP1705-01～14 均已建立 TEST-MAP；复选框只表示映射存在，不表�
    - **最后一个失败到达后收尾**：窗口结束后用 M 原数据目录启动，W开通 内重连原 T–M、M–R。从重连开始直至最终断言，持续检查 P–T、T–R、T–M、M–R 的可查询端均保持 ChannelReady、原 funding outpoint 未消费；M 恢复后覆盖各通道两端，任何自动强关均失败，不以链上取款作为正常退款。随后 W结果 内，原 B 的失败完成，上游 P 付款 Failed、无原像，P–T 释放 U、P 收回包括 trampoline 费用预算的全部原锁定金额；A/B 及上游各端目标锁定清零，付款前通道余额逐一恢复。没有成功分片，也没有链上结算费，故不应留下实际路由扣费或重复扣款；允许历史失败 TLC 行保留，不强制列表为空。全程跟踪原付款与 TLC，另发新付款不作为本例收尾证据。
    - **时间与证明边界**：P 的公开付款 timeout 覆盖整个取消、混合观察及重连退款流程（至少 W开通+3×W结果+准备余量，可设 1800 秒），避免本地请求超时混淆上游失败。逐跳实际 TLC expiry 必须晚于预计流程结束，再加各通道 2/3 commitment delay、60 秒维护周期及余量；启动后再次核对。每阶段有上述明确预算，余量不足直接判前提失败，无需真实到期或修改系统时间。本例证明 T 的公开通道已完成 A 的失败、B 仍在途时不退上游；正式 RPC 不暴露逐 attempt 失败状态，因此不声称已直接验证内部 actor 消费顺序或精确 Failed+pending 分支。原生测试继续负责“恶意失败一片、另一片随后出原像”等内部精确排列；本例也不证明 B 对所有节点都未知。
 
-## 现有覆盖与复用
+## 长期维护与运行
 
-本地参照项目：本测试仓库，Git HEAD `004e5132bbc00e0b1c0c150fd1a6c06b96395a87`；读取其现有工作树文件，未声称所有文件与该提交完全相同。其 AGENTS.md 指定黑盒、公开操作、避免重复进程内用例与测试钩子。以下为静态核对：
-
-| 现有入口 | 已有断言/能力 | 本次需要补的差别 |
-| --- | --- | --- |
-| `test_cases/fiber/devnet/send_payment/mpp/test_mpp_force_close_preimage.py` | 平行通道、hold invoice、单通道强关、线上分片清理及链上消费 | 增加链上完成前 payer Success＋原像，精确接收 lock/金额；仅有交易数量/容量差不足以证明交付 |
-| `test_cases/fiber/devnet/watch_tower_wit_tlc/test_force_close_mpp.py` | 多/单通道强关、中间节点重启、最终 invoice/payment 状态 | 可复用拓扑；补提前成功、无原像的已确认超时退款，以及持久恢复后的上游资金释放 |
-| `test_cases/fiber/devnet/trampoline_routing/test_mpp.py` | trampoline MPP 和两种 hash 算法正常付款 | 现有 Success 等待不足以证明中继本金无损或上游早于下游全部结算 |
-| `test_cases/fiber/devnet/list_payments/test_list_payment.py`，评审 PR1721-01～04 | 有效状态过滤、分页与结算迁移 | 复用查询断言；补部分已领取、其他分片尚未完成及升级数据，旧“持久化 Failed 必须优先”预期需调整 |
-| `tests/bruno/e2e/watchtower/force-close-mpp`（上游） | 本 PR 已将中途 `Inflight` 改成 `Success` 并检查原像，保留最终结算 | 精确 head 的 E2E workflow 已 success；未逐条检查其执行日志，其 debug 检查关停入口不作为正式构建快进手段 |
-| 上游 `tests/trampoline.rs`、`tests/payment.rs`、`payment.rs::closed_add_tests`、`store/tests/store.rs` | 单片成功另一片失败、成功后处理迟到失败/重启、早期原像观察、未发 attempt 不改 Failed、旧库查询 | 保留这些原生性质，不在 Python 重做内部钩子；本轮未运行，不能用作者历史通过数宣称当前全部通过 |
-
-**建议执行顺序**：先确认 01、02 的宽窗口和资金 oracle，以及 14 的部分失败不退款窗口；并行安排开发修复/验证 07、08 的已报告回归；随后 03～05、13、10，再做 11 与已有发票/哈希/自付回归；12 在性能门槛确定后验收。06～09 用独立慢测环境；自动化仍按确认后的首例规范推进。
-
-## 设计与执行证据边界
-
-设计阶段已完成独立复核；该结论只针对设计，不代表本批实现已获独立覆盖审查。07/08 首例规范已确认，本批延续相同公开接口、链上消费和资金断言。原始本机执行记录保留在作者环境，以下列出实际构建、命令和结果，不发布机器绝对路径或未提交的报告链接。
-
-## 2026-11-12：全部已确认用例的自动化
-
-新增文件位于 `test_cases/fiber/devnet/send_payment/mpp/`：
-- `test_mpp_success_recovery.py`：01/02 的提前成功及精确链上净额，03/04 重启，05/13 隔离 Fiber 对端的链上原像恢复，10 真实 base 数据升级和分页集合。
-- `test_mpp_failure_boundaries.py`：06 全未知持单、14 一片已失败另一片隔离，09 普通付款真实超时退款。
-- `test_mpp_batch_recovery.py`：11 十条资金 lane 共用普通中继，十批共 100 笔原 hash；CKB/UDT、自付/普通 MPP，第三/第六批对在途持单断连/重启。每批结算后用公开单通道路由反向调平；这些调平付款单独生成，不冒充那 100 笔目标付款。
-- `test_mpp_startup_history.py`：12 的 4 构建 × 3 历史规模 × 10 次启动，完整样本、失败、时延分布及采样 RSS。数据库来自正常付款和停机复制，不编辑 DB；检查实际 RocksDB/SQLite 文件格式。SLA 未设置时结果标记 `pending`。
-- `mpp_fixture.py`：复用 07 的准确 outpoint 消费与所有者净额辅助；原像独立生成，开放通道两端余额比较以付款前为基准，链费通过交易输入输出独立计算。
-
-05 的隔离阶段同时暂时停止 R，避免已持久化的 gossip 地址自动接入 P；纯链上原像断言完成后才恢复 M/R。03 选择金额较大的分片通道强关，为原健康通道保留后续付款流动性。13 先登记原像并推进链，再等最终 Paid，不把全部对端离线时的提前 Paid 当作前提。
-
-07/08 原有文件及断言保留。新增的离线辅助负向测试不计为产品用例通过。这里完成的是实现及聚焦验证，不声称独立 B 已复核本批代码；已有 B 结论仍只针对设计。
-
-### 长期回归运行方式
-
-用例直接由项目已有 pytest / Makefile 流程发现和执行，不维护 issue 专用运行脚本。普通回归继承 `FiberTest` 的 `CURRENT_DEV` 构建配置；不要在测试中绑定本机 PR 分支二进制。使用项目 Python 环境，从仓库根目录选择文件、类或测试方法：
+- 测试场景和资金断言按功能命名；`TEST-MAP` 保留稳定 Case ID。
+- `mpp_fixture.py` 只复用公开通道、付款和链上资金检查；使用框架默认端口及独立 `tmp-mpp-regression` 数据目录，串行运行。
+- 升级通过 `FiberConfigPath.V091_DEV` 建立旧数据，使用已有 `start_with_confirm` 升到 `CURRENT_DEV`；不检查提交号，也不自造版本配置对象。升级前仍须证明目标付款已有原像但链上片未完成。
+- 历史回归位于 `test_mpp_payment_history.py`，0/1,000/8,000 各为独立入口。空历史入口纳入普通 CI；1,000/8,000 笔历史、批量、升级和真实到期慢测单独执行，普通 CI 排除不等于通过。
+- 当前快照不维护一次性运行结果、构建 SHA、性能阈值或验收状态；测试结果由 pytest/CI 记录。
 
 ```bash
-# 成功、重启、纯链上原像恢复（01～05、13）
+# 成功、重启及链上恢复
 python -m pytest test_cases/fiber/devnet/send_payment/mpp/test_mpp_success_recovery.py::TestMppSuccessRecovery -v
-
-# 未知结果与首片失败的上游持单边界（06、14）
-python -m pytest test_cases/fiber/devnet/send_payment/mpp/test_mpp_failure_boundaries.py -k 'not direct_timeout' -v
-
-# 混合资产批量与故障恢复（11）
-python -m pytest test_cases/fiber/devnet/send_payment/mpp/test_mpp_batch_recovery.py -v
-
-# 真实到期退款慢测（07～09），串行执行
-python -m pytest \
-  test_cases/fiber/devnet/trampoline_routing/test_trampoline_timeout_refund.py \
-  test_cases/fiber/devnet/trampoline_routing/test_trampoline_timeout_refund_restart.py \
-  test_cases/fiber/devnet/send_payment/mpp/test_mpp_failure_boundaries.py::TestMppFailureBoundaries::test_direct_timeout_refund_then_sender_restart_and_new_payment -v
-
-# 升级使用明确的历史构建；升级后的目标沿用 CURRENT_DEV（10）
-MPP1705_BASE_FNN=/absolute/base/fnn python -m pytest \
-  test_cases/fiber/devnet/send_payment/mpp/test_mpp_success_recovery.py::TestMppUpgrade -v
-
-# 启动历史规模矩阵（12）
-MPP1705_PERF_BUILDS=/absolute/builds.json python -m pytest \
-  test_cases/fiber/devnet/send_payment/mpp/test_mpp_startup_history.py -v
+# 旧版数据升级与查询
+python -m pytest test_cases/fiber/devnet/send_payment/mpp/test_mpp_success_recovery.py::TestMppUpgrade -v
+# 历史恢复，按规模单独选择
+python -m pytest test_cases/fiber/devnet/send_payment/mpp/test_mpp_payment_history.py::TestMppPaymentHistory::test_restart_without_payment_history -v
+python -m pytest test_cases/fiber/devnet/send_payment/mpp/test_mpp_payment_history.py::TestMppPaymentHistory::test_restart_with_thousand_payments -v
+python -m pytest test_cases/fiber/devnet/send_payment/mpp/test_mpp_payment_history.py::TestMppPaymentHistory::test_restart_with_large_payment_history -v
+# fixture 辅助测试
+python -m pytest test_cases/framework/test_mpp_fixture.py -q
 ```
-
-向相同命令追加 `--collect-only` 只收集，不启动节点。不要并行启动使用公共 CLI 临时文件的节点测试；本批没有独立并发调度器或自动端口分配。慢测按实际 expiry 等待，可能超过一天。既有 MPP CI 直接运行目录，并排除真实到期、升级、批量和性能用例；这些用例可用上述 pytest 节点选择器独立运行，不以排除计作通过。
-
-升级案例保留已确认的 base `7aa1d5d` 输入，用于经公开操作重建历史部分成功状态；这是历史数据来源，不是目标版本锁定。性能 manifest 是四项 JSON 数组，每项含 `label`（base/head）、`backend`（rocksdb/sqlite）、`binary`（绝对路径）、`commit`、`profile`（release）、`flags`（相同的通用优化参数，后端区别另由 backend 表示）。缺少构建或格式不符直接失败。可用 `MPP1705_PERF_THRESHOLDS` 提供已确认阈值：`max_node_info_seconds`、`max_first_payment_seconds`、`max_sampled_peak_rss_kib`、`max_head_base_ratio`；未确认前不设置。缓存记录为未主动清缓存，RSS 为 100ms 周期采样峰值。
-
-### 本批验证结果
-
-实测构建：base `7aa1d5d`（SHA-256 `95b7118f33c4abcfcb80d91583cc815bb8c71b0d303b1b5639b150f096607f39`），head `fb49c3d`（SHA-256 `e930839f8102fbe73403f48788fca632074b891a0416c119df816dee153cb228`）。收据中的 `product` 是现有源码检出 `43193445` 的环境快照，不代表实际执行的是该源码版本；节点版本及上述二进制哈希才标识本次被测构建。
-
-- 调整为原生 pytest 前，常规、升级和批量组合的历史记录（本机运行记录）：11 个原生入口，8 passed、3 failed，退出 1。通过项包括 01 两种哈希、02、04、06、10、11、14；11 完成 100 笔混合付款和在途断连/重启，14 完成 420 秒混合失败窗口及全部退款。首次失败均保留，不用后续结果覆盖原始日志。
-- 03/05/13 修复测试夹具后单独重跑：3 passed、退出 0，约 1009 秒（本机运行记录）。05/13 均在 Fiber 对端隔离时恢复正确原像；13 随后在 R 仍离线时完成开放上游结算。03/05/13 原失败分别来自健康探针流动性、gossip 自动重连和全离线时提前等待 Paid，均已通过调整公开前提修正，原资金断言保留。
-- 最终辅助负向测试：7 passed，退出 0（本机运行记录），只验证测试辅助；全部入口收集（本机运行记录）为 `16 tests collected`、退出 0，不启动节点。
-- 项目原有全局映射脚本退出 1（本机运行记录）：既有 `RSETTLE-01` 重复以及 `PMP-01～05`、`PR1677-09`、`SETTLE-01` 孤儿映射；这些 ID 不在本批范围。本批单文档的结构、14 条映射和补丁/回滚另用限定输入检查，不据此宣称全仓检查通过。
-- 07/08 的原有三个慢测入口保留；历史真实运行均因 RPC `request time out` 结束，无通过证据，本批未重新等待其真实到期。09 已实现并收集，本批未运行真实到期。12 已实现完整采集和功能检查，尚缺经过核验的四构建 manifest，未运行 120 次矩阵；性能阈值仍待确认。上述四个 Case 不计为实测通过。
-
-本批没有修改产品源码、时间或编译常量。最终版未重新执行整个 fast/upgrade/batch 组合；运行结果按各收据固定的输入版本解释。
-
-
-发布前在最新 `v0.10.0` 干净导出上验证辅助测试和全部入口收集。源码以 Black 格式化，语法树与已实测文件逐个比较，除格式外保持相同；真实节点完整组合未在该导出上重跑。

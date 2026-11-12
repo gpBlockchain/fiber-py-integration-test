@@ -466,10 +466,11 @@ jobs:
       - name: Run fiber_test_demo
         run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/send_payment/mpp"
         env:
-          # Run real-expiry, upgrade, batch, and startup-matrix tests directly with pytest.
+          # Run real-expiry, upgrade, batch, and large-history tests directly with pytest.
           # These are deselected here, not counted as passed or skipped behavior checks.
           PYTEST_ADDOPTS: >-
-            --ignore=test_cases/fiber/devnet/send_payment/mpp/test_mpp_startup_history.py
+            --deselect=test_cases/fiber/devnet/send_payment/mpp/test_mpp_payment_history.py::TestMppPaymentHistory::test_restart_with_thousand_payments
+            --deselect=test_cases/fiber/devnet/send_payment/mpp/test_mpp_payment_history.py::TestMppPaymentHistory::test_restart_with_large_payment_history
             --ignore=test_cases/fiber/devnet/send_payment/mpp/test_mpp_batch_recovery.py
             --deselect=test_cases/fiber/devnet/send_payment/mpp/test_mpp_success_recovery.py::TestMppUpgrade::test_upgrade_partial_success_and_paginated_queries
             --deselect=test_cases/fiber/devnet/send_payment/mpp/test_mpp_failure_boundaries.py::TestMppFailureBoundaries::test_direct_timeout_refund_then_sender_restart_and_new_payment

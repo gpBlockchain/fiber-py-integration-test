@@ -34,3 +34,6 @@
 - model: unavailable | cases: PR1711-01～08 | feedback: 删除 SimpleNamespace 版本包装及无意义的 --version 调用、版本打印和提交号检查。
 
 - model: unavailable | cases: MPP1705-01～14 | feedback: 这些用例要沉淀成长期回归用例，不需要 scripts/run_mpp1705.py；直接使用项目已有 pytest / Makefile 和 CURRENT_DEV 配置，保留场景、断言及稳定映射 ID。
+- model: unavailable | cases: MPP1705-01～14 | feedback: 再检查 PR #127，清理其他 PR 专用配置、硬编码提交号和一次性验收逻辑，按项目现有长期回归风格维护；保留稳定 Case ID，配置使用 CURRENT_DEV / V091_DEV。
+- model: unavailable | cases: MPP1705-12 | feedback: 保留 CURRENT_DEV 下 0/1,000/8,000 笔历史的重启功能回归，检查历史、余额和新付款；不再做 base/head、RSS 或 SLA 验收。
+- model: unavailable | cases: MPP1705-01～14 | feedback: MppFixture 不要依赖具体测试类；通用方法放 framework，场景和变量要易读，避免包装层与重复 review，并将这些约束写入 AGENTS.md。

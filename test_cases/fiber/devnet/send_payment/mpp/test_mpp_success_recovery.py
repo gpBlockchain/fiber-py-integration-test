@@ -1,16 +1,26 @@
-"""Issue 1705：成功证明先于最终资金交付，重启/升级和纯链上恢复。"""
+"""MPP：成功证明先于最终资金交付，重启/升级和纯链上恢复。"""
 
-import json
-import os
 from pathlib import Path
 import shutil
-import subprocess
+import tempfile
 import time
 
-from test_cases.fiber.devnet.send_payment.mpp import mpp_fixture as fixture
+from framework.test_fiber import FiberConfigPath
+from framework.helper.fiber_ops import start_with_confirm
+from test_cases.fiber.devnet.send_payment.mpp.mpp_fixture import (
+    MppFixture,
+    CKB,
+    RESULT_WAIT,
+)
+from framework.helper.fiber_ops import (
+    calculate_payment_hash,
+    wait_for_result,
+    start_fiber,
+    restart_fiber,
+)
 
 
-class TestMppSuccessRecovery(fixture.MppFixture):
+class TestMppSuccessRecovery(MppFixture):
     # TEST-MAP: MPP1705-01
     def test_early_success_sha256(self):
         """
@@ -19,20 +29,20 @@ class TestMppSuccessRecovery(fixture.MppFixture):
         3. 恢复出块，核对接收本金、每端净额与独立链费，不重复交付。
         """
         # 1. 两片 Committed 之后才强关。
-        self._topology("D", "sha256")
-        chain = self._close(self.split[0], self.m)
+        self.prepare_payment("direct", "sha256")
+        chain = self.force_close_channel(self.split_channels[0], self.relay)
 
         # 2. 保留稳定的链上未完成窗口，不以最终成功代替提前成功。
         self.node.stop_miner()
         try:
-            self._settle()
-            self._success(self.p)
-            assert self._spend(chain["outpoint"]) is None
+            self.settle_payment()
+            self.assert_payment_success(self.sender)
+            assert self.settlement.find_spending_transaction(chain["outpoint"]) is None
         finally:
             self.node.start_miner()
 
         # 3. 原付款精确消费链和开放通道都须只交付应有金额。
-        self._final_funds(chain)
+        self.assert_payment_fully_settled(chain)
 
     # TEST-MAP: MPP1705-01
     def test_early_success_ckb_hash(self):
@@ -42,20 +52,20 @@ class TestMppSuccessRecovery(fixture.MppFixture):
         3. 恢复出块核对原付款全路径资金及手续费。
         """
         # 1. 输入只改变 hash 算法，资金与分片前提保持一致。
-        self._topology("D", "ckb_hash")
-        chain = self._close(self.split[0], self.m)
+        self.prepare_payment("direct", "ckb_hash")
+        chain = self.force_close_channel(self.split_channels[0], self.relay)
 
         # 2. 成功查询与链上未消费证据必须同时成立。
         self.node.stop_miner()
         try:
-            self._settle()
-            self._success(self.p)
-            assert self._spend(chain["outpoint"]) is None
+            self.settle_payment()
+            self.assert_payment_success(self.sender)
+            assert self.settlement.find_spending_transaction(chain["outpoint"]) is None
         finally:
             self.node.start_miner()
 
         # 3. 不以 RPC Success 替代实际交付。
-        self._final_funds(chain)
+        self.assert_payment_fully_settled(chain)
 
     # TEST-MAP: MPP1705-02
     def test_trampoline_settles_upstream_before_chain_finishes(self):
@@ -65,24 +75,28 @@ class TestMppSuccessRecovery(fixture.MppFixture):
         3. 恢复链，核对 R 本金和 T 扣除实际链费后的全路径资金。
         """
         # 1. 明确走 trampoline，禁止旁路与单片付款冒充。
-        self._topology("T")
-        chain = self._close(self.split[0], self.r)
+        self.prepare_payment("trampoline")
+        chain = self.force_close_channel(self.split_channels[0], self.receiver)
 
         # 2. 下游仍待链上交付时，上游已经结清。
         self.node.stop_miner()
         try:
-            self._settle()
-            self._success(self.m)
-            self._success(self.p)
-            self._wait(
-                "上游只结算一次", lambda: self._cleared(self.up), fixture.RESULT_WAIT
+            self.settle_payment()
+            self.assert_payment_success(self.relay)
+            self.assert_payment_success(self.sender)
+            wait_for_result(
+                "上游只结算一次",
+                lambda: self.settlement.payment_is_settled(
+                    self.upstream_channel, self.payment_hash
+                ),
+                RESULT_WAIT,
             )
-            assert self._spend(chain["outpoint"]) is None
+            assert self.settlement.find_spending_transaction(chain["outpoint"]) is None
         finally:
             self.node.start_miner()
 
         # 3. 各通道守恒和分所有者链费共同证明中继无本金损失。
-        self._final_funds(chain)
+        self.assert_payment_fully_settled(chain)
 
     # TEST-MAP: MPP1705-03
     def test_sender_restart_preserves_success_and_remaining_work(self):
@@ -92,27 +106,27 @@ class TestMppSuccessRecovery(fixture.MppFixture):
         3. 恢复链并核对只交付一次，再通过原健康通道付款。
         """
         # 1. 强关并暂停出块，交出原像后观察早期成功。
-        self._topology("D")
-        closed = max(self.split, key=lambda edge: edge["sent"])
-        healthy = next(edge for edge in self.split if edge is not closed)
-        chain = self._close(closed, self.m)
+        self.prepare_payment("direct")
+        closed = max(self.split_channels, key=lambda edge: edge["sent"])
+        healthy = next(edge for edge in self.split_channels if edge is not closed)
+        chain = self.force_close_channel(closed, self.relay)
         self.node.stop_miner()
         try:
-            self._settle()
-            self._success(self.p)
-            assert self._spend(chain["outpoint"]) is None
+            self.settle_payment()
+            self.assert_payment_success(self.sender)
+            assert self.settlement.find_spending_transaction(chain["outpoint"]) is None
 
             # 2. 重启不重新 send_payment，也不替换数据。
-            self._restart(self.p, peers=(self.m,))
-            self._success(self.p)
-            assert self._spend(chain["outpoint"]) is None
+            restart_fiber(self.sender, peers=(self.relay,))
+            self.assert_payment_success(self.sender)
+            assert self.settlement.find_spending_transaction(chain["outpoint"]) is None
         finally:
             self.node.start_miner()
 
         # 3. 原款完整交付后健康通道再付一笔，原款仍保持成功。
-        self._final_funds(chain)
-        self._healthy_probe(self.p, self.m, healthy)
-        self._success(self.p)
+        self.assert_payment_fully_settled(chain)
+        self.assert_healthy_payment(self.sender, self.relay, healthy)
+        self.assert_payment_success(self.sender)
 
     # TEST-MAP: MPP1705-04
     def test_offline_upstream_and_trampoline_restart_settle_once(self):
@@ -122,38 +136,40 @@ class TestMppSuccessRecovery(fixture.MppFixture):
         3. 完成下游交付，再次重启 T/P 并核对余额和锁定不变化。
         """
         # 1. P 在原像交给 R 前停机。
-        self._topology("T")
-        self.p.stop()
-        chain = self._close(self.split[0], self.r)
+        self.prepare_payment("trampoline")
+        self.sender.stop()
+        chain = self.force_close_channel(self.split_channels[0], self.receiver)
         self.node.stop_miner()
         try:
-            self._settle()
-            self._success(self.m)
-            assert self._spend(chain["outpoint"]) is None
+            self.settle_payment()
+            self.assert_payment_success(self.relay)
+            assert self.settlement.find_spending_transaction(chain["outpoint"]) is None
 
             # 2. T 的原数据重启后才恢复上游。
-            self._restart(self.m, peers=(self.r,))
-            self._success(self.m)
-            self._start(self.p, peers=(self.m,))
-            self._success(self.p)
-            self._wait(
+            restart_fiber(self.relay, peers=(self.receiver,))
+            self.assert_payment_success(self.relay)
+            start_fiber(self.sender, peers=(self.relay,))
+            self.assert_payment_success(self.sender)
+            wait_for_result(
                 "离线上游恢复后一次结算",
-                lambda: self._cleared(self.up),
-                fixture.RESULT_WAIT,
+                lambda: self.settlement.payment_is_settled(
+                    self.upstream_channel, self.payment_hash
+                ),
+                RESULT_WAIT,
             )
         finally:
             self.node.start_miner()
 
         # 3. 第二次重启后仍按原始余额验证，而不是把错误新余额当基准。
-        self._final_funds(chain)
-        self._restart(self.m, peers=(self.r, self.p))
-        self._restart(self.p, peers=(self.m,))
-        self._success(self.p)
-        for edge in (self.up, self.split[1]):
-            self._wait(
+        self.assert_payment_fully_settled(chain)
+        restart_fiber(self.relay, peers=(self.receiver, self.sender))
+        restart_fiber(self.sender, peers=(self.relay,))
+        self.assert_payment_success(self.sender)
+        for edge in (self.upstream_channel, self.split_channels[1]):
+            wait_for_result(
                 "再次重启无重放扣款",
-                lambda e=edge: self._cleared(e),
-                fixture.RESULT_WAIT,
+                lambda e=edge: self.settlement.payment_is_settled(e, self.payment_hash),
+                RESULT_WAIT,
             )
 
     # TEST-MAP: MPP1705-05
@@ -164,26 +180,26 @@ class TestMppSuccessRecovery(fixture.MppFixture):
         3. 恢复 M，原付款继续成功且全路径金额正确。
         """
         # 1. 原像只在 P 停机后交给 R。
-        self._topology("D")
-        self._no_preimage(self.p)
-        self.p.stop()
-        chain = self._close(self.split[0], self.m)
-        self._settle()
+        self.prepare_payment("direct")
+        self.assert_no_preimage(self.sender)
+        self.sender.stop()
+        chain = self.force_close_channel(self.split_channels[0], self.relay)
+        self.settle_payment()
 
         # 2. 先证明原像已实际用于原 TLC 领取，再隔离 P 的唯一对端。
-        self._chain_until(chain, claimed_only=True)
+        self.wait_for_chain_settlement(chain, claimed_only=True)
         assert chain["claimed"]
-        self.m.stop()
+        self.relay.stop()
         # R 也暂时离线，避免已持久化的 gossip 地址自动接入 P。
-        self.r.stop()
-        self._start(self.p)
-        self._success(self.p, isolated=True)
-        assert self.p.get_client().list_peers()["peers"] == []
+        self.receiver.stop()
+        start_fiber(self.sender)
+        self.assert_payment_success(self.sender, isolated=True)
+        assert self.sender.get_client().list_peers()["peers"] == []
 
         # 3. 重连仅负责剩余结算，不作为原像来源证明。
-        self._start(self.r)
-        self._start(self.m, peers=(self.p, self.r))
-        self._final_funds(chain)
+        start_fiber(self.receiver)
+        start_fiber(self.relay, peers=(self.sender, self.receiver))
+        self.assert_payment_fully_settled(chain)
 
     # TEST-MAP: MPP1705-13
     def test_trampoline_chain_preimage_then_offline_upstream(self):
@@ -193,83 +209,80 @@ class TestMppSuccessRecovery(fixture.MppFixture):
         3. R 仍停机时只恢复 P，上游开放通道只结算一次，再恢复 R 核对全部资金。
         """
         # 1. 冻结 U=A+F，原像未交给任意节点前停止 P/T。
-        self._topology("T")
-        self._no_preimage(self.p)
-        self._no_preimage(self.m)
-        self.p.stop()
-        self.m.stop()
-        chain = self._close(self.split[0], self.r)
+        self.prepare_payment("trampoline")
+        self.assert_no_preimage(self.sender)
+        self.assert_no_preimage(self.relay)
+        self.sender.stop()
+        self.relay.stop()
+        chain = self.force_close_channel(self.split_channels[0], self.receiver)
         # 对端全部离线时 Paid 可能要等实际领取；先登记原像并推进链。
-        self._settle(wait_paid=False)
-        self._chain_until(chain, claimed_only=True)
+        self.settle_payment(wait_paid=False)
+        self.wait_for_chain_settlement(chain, claimed_only=True)
         assert chain["claimed"]
 
         # 2. 隔离来源阶段禁止 Fiber 重连，也不向 T 调用提供原像的 RPC。
-        self.r.stop()
-        started = self._start(self.m)
-        self._success(
-            self.m,
+        self.receiver.stop()
+        started = start_fiber(self.relay)
+        self.assert_payment_success(
+            self.relay,
             isolated=True,
-            timeout=fixture.RESULT_WAIT - (time.monotonic() - started),
+            timeout=RESULT_WAIT - (time.monotonic() - started),
         )
-        rows = self._open(self.up, offline=(self.p,))
-        assert int(rows[0]["received_tlc_balance"], 16) == self.up["sent"]
+        rows = self.settlement.assert_channel_open(
+            self.upstream_channel, offline=(self.sender,)
+        )
+        assert int(rows[0]["received_tlc_balance"], 16) == self.upstream_channel["sent"]
         assert {
             (t["id"], t["amount"])
             for t in rows[0]["pending_tlcs"]
-            if t["payment_hash"] == self.hash
-        } == {(t["id"], t["amount"]) for t in self.up["tlcs"]}
-        self._expiry_margin(2 * fixture.RESULT_WAIT)
+            if t["payment_hash"] == self.payment_hash
+        } == {(t["id"], t["amount"]) for t in self.upstream_channel["tlcs"]}
+        self.assert_expiry_margin(2 * RESULT_WAIT)
 
         # 3. R 离线时上游已领取，随后才恢复剩余下游。
-        self._start(self.p, peers=(self.m,))
-        self._success(self.p)
-        self._wait(
-            "R 离线时上游结清", lambda: self._cleared(self.up), fixture.RESULT_WAIT
+        start_fiber(self.sender, peers=(self.relay,))
+        self.assert_payment_success(self.sender)
+        wait_for_result(
+            "R 离线时上游结清",
+            lambda: self.settlement.payment_is_settled(
+                self.upstream_channel, self.payment_hash
+            ),
+            RESULT_WAIT,
         )
-        assert {p["pubkey"] for p in self.m.get_client().list_peers()["peers"]} == {
-            self.p.get_pubkey()
+        assert {p["pubkey"] for p in self.relay.get_client().list_peers()["peers"]} == {
+            self.sender.get_pubkey()
         }
-        self._start(self.r, peers=(self.m,))
-        self._final_funds(chain)
+        start_fiber(self.receiver, peers=(self.relay,))
+        self.assert_payment_fully_settled(chain)
 
 
-class TestMppUpgrade(fixture.MppFixture):
-    def setup_method(self, method):
-        self.head_config = self.fiber_version
-        base = os.environ.get(
-            "MPP1705_BASE_FNN",
-            str(Path(fixture.get_project_root()) / "download/fiber/current/fnn"),
-        )
-        version = subprocess.check_output([base, "--version"], text=True)
-        assert "7aa1d5d" in version, f"升级前必须是已评审 base 7aa1d5d: {version}"
-        self.fiber_version = fixture.binary_config(base)
-        super().setup_method(method)
+class TestMppUpgrade(MppFixture):
+    fiber_version = FiberConfigPath.V091_DEV
 
     # TEST-MAP: MPP1705-10
     def test_upgrade_partial_success_and_paginated_queries(self):
         """
-        1. base 经正常操作生成成功/失败对照和已有原像、链上片未完成的旧付款。
-        2. 停 P 并备份原数据，升级同一副本到 head，查询须显示原像及 Success。
+        1. 0.9.1 经正常操作生成成功/失败对照和已有原像、链上片未完成的旧付款。
+        2. 停 P 并备份原数据，升级同一副本到 CURRENT_DEV，查询须显示原像及 Success。
         3. 按 limit=1 遍历无过滤/各状态列表，核对集合无漏重，再核对原款交付。
         """
         # 1. 独立控制通道不通往目标 R，既不改变两片路由也不改写数据库。
         control = self.start_new_fiber(
             self.generate_account(10000), fiber_version=self.fiber_version
         )
-        self._edge(self.fiber1, control, 200 * fixture.CKB)
+        self.open_payment_channel(self.fiber1, control, 200 * CKB)
         ok = self.fiber1.get_client().send_payment(
             {
                 "target_pubkey": control.get_pubkey(),
-                "amount": hex(fixture.CKB),
+                "amount": hex(CKB),
                 "keysend": True,
             }
         )
         self.wait_payment_state(self.fiber1, ok["payment_hash"], "Success", timeout=120)
-        bad_hash = fixture.payment_hash(self.generate_random_preimage(), "ckb_hash")
+        bad_hash = calculate_payment_hash(self.generate_random_preimage(), "ckb_hash")
         invoice = control.get_client().new_invoice(
             {
-                "amount": hex(fixture.CKB),
+                "amount": hex(CKB),
                 "currency": "Fibd",
                 "payment_hash": bad_hash,
                 "hash_algorithm": "ckb_hash",
@@ -278,49 +291,52 @@ class TestMppUpgrade(fixture.MppFixture):
         self.fiber1.get_client().send_payment({"invoice": invoice["invoice_address"]})
         self.wait_invoice_state(control, bad_hash, "Received", timeout=120)
         control.get_client().cancel_invoice({"payment_hash": bad_hash})
-        self.wait_payment_state(
-            self.fiber1, bad_hash, "Failed", timeout=fixture.RESULT_WAIT
-        )
-        self._topology("D")
-        chain = self._close(self.split[0], self.m)
+        self.wait_payment_state(self.fiber1, bad_hash, "Failed", timeout=RESULT_WAIT)
+        self.prepare_payment("direct")
+        chain = self.force_close_channel(self.split_channels[0], self.relay)
         self.node.stop_miner()
         try:
-            self._settle()
-            old = self._wait("base 已获原像但尚未成功", lambda: self._old_partial())
-            assert self._spend(chain["outpoint"]) is None
-            print("base query: " + json.dumps(old), flush=True)
+            self.settle_payment()
+            wait_for_result("旧版已获原像但尚未成功", self._old_partial)
+            assert self.settlement.find_spending_transaction(chain["outpoint"]) is None
 
-            # 2. 停机复制完整目录，备份只读保留；在原运行目录替换可执行版本。
-            self.p.stop()
-            backup = Path(self.p.tmp_path).with_name("payer-pre-upgrade-backup")
-            assert not backup.exists(), backup
-            shutil.copytree(self.p.tmp_path, backup)
-            self._start(self.p, peers=(self.m,), config=self.head_config)
-            self._success(self.p)
+            # 2. 停机复制完整目录；临时备份由测试清理，不阻塞后续重复运行。
+            self.sender.stop()
+            backup = tempfile.TemporaryDirectory(
+                prefix="mpp-upgrade-", dir=Path(self.sender.tmp_path).parent
+            )
+            self.addCleanup(backup.cleanup)
+            shutil.copytree(self.sender.tmp_path, Path(backup.name) / "payer")
+            self.sender.fiber_config_enum = FiberConfigPath.CURRENT_DEV
+            start_with_confirm(
+                self.sender, fnn_log_level=self.fnn_log_level, timeout=120
+            )
+            self.sender.connect_peer(self.relay)
+            self.assert_payment_success(self.sender)
 
             # 3. 游标必须前进，逐页全量集合与独立创建的 hash 对照。
-            expected = {self.hash, ok["payment_hash"], bad_hash}
+            expected = {self.payment_hash, ok["payment_hash"], bad_hash}
             all_rows = self._pages()
             assert set(all_rows) == expected, all_rows
             succeeded = self._pages("Success")
-            assert set(succeeded) == {self.hash, ok["payment_hash"]}
+            assert set(succeeded) == {self.payment_hash, ok["payment_hash"]}
             assert set(self._pages("Failed")) == {bad_hash}
             for status in ("Created", "Inflight"):
-                assert self.hash not in self._pages(status)
-            assert all_rows[self.hash]["payment_preimage"] == self.preimage
-            assert succeeded[self.hash]["payment_preimage"] == self.preimage
-            assert self._spend(chain["outpoint"]) is None
+                assert self.payment_hash not in self._pages(status)
+            assert all_rows[self.payment_hash]["payment_preimage"] == self.preimage
+            assert succeeded[self.payment_hash]["payment_preimage"] == self.preimage
+            assert self.settlement.find_spending_transaction(chain["outpoint"]) is None
         finally:
             self.node.start_miner()
-        self._final_funds(chain)
+        self.assert_payment_fully_settled(chain)
 
     def _old_partial(self):
-        row = self.p.get_client().get_payment({"payment_hash": self.hash})
+        row = self.sender.get_client().get_payment({"payment_hash": self.payment_hash})
         if row.get("payment_preimage") != self.preimage:
             return None
         assert (
             row["status"] != "Success"
-        ), "base 未产生设计要求的旧在途状态，需核对构建身份"
+        ), "旧版付款未处于已有原像、尚未完成的升级前状态"
         return row
 
     def _pages(self, status=None):
@@ -331,7 +347,7 @@ class TestMppUpgrade(fixture.MppFixture):
                 request["status"] = status
             if cursor is not None:
                 request["after"] = cursor
-            page = self.p.get_client().list_payments(request)
+            page = self.sender.get_client().list_payments(request)
             entries = page["payments"]
             if not entries:
                 return rows

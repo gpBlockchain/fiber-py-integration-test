@@ -26,6 +26,7 @@ from pathlib import Path
 import requests
 
 from framework.basic_fiber import FiberTest, XUDT_TX_HASH
+from framework.helper.fiber_ops import start_with_confirm
 from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 from framework.helper.udt_contract import UdtContract
 from framework.util import get_project_root
@@ -211,75 +212,6 @@ def send_invoice_payment_with_retry(test_case, fiber1, fiber2, amount, timeout=1
             last_error = e
             time.sleep(1)
     raise TimeoutError(f"payment did not succeed within {timeout}s: {last_error}")
-
-
-def start_with_confirm(
-    fiber,
-    confirm="y",
-    password="password0",
-    fnn_log_level="debug",
-    timeout=300,
-):
-    """Start fnn and answer the migration confirm prompt.
-
-    This is local to migration tests because normal Fiber tests should keep
-    using `fiber.start()`.
-    """
-    env = os.environ.copy()
-    env["FIBER_SECRET_KEY_PASSWORD"] = password
-    env["RUST_LOG"] = f"info,fnn={fnn_log_level}"
-    env.update(getattr(fiber, "extra_env", {}))
-    log_path = node_log_path(fiber)
-    cmd = [
-        f"{get_project_root()}/{fiber.fiber_config_enum.fiber_bin_path}",
-        "-c",
-        f"{fiber.tmp_path}/config.yml",
-        "-d",
-        fiber.tmp_path,
-    ]
-
-    log_file = open(log_path, "ab")
-    proc = subprocess.Popen(
-        cmd,
-        stdin=subprocess.PIPE,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-        env=env,
-    )
-    log_file.close()
-
-    if proc.stdin is not None:
-        try:
-            proc.stdin.write(f"{confirm}\n".encode())
-            proc.stdin.close()
-        except BrokenPipeError:
-            pass
-
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(1)
-            if s.connect_ex(("127.0.0.1", int(fiber.rpc_port))) == 0:
-                return
-
-        exit_code = proc.poll()
-        if exit_code is not None:
-            raise RuntimeError(
-                f"Fiber exited before RPC port {fiber.rpc_port} opened "
-                f"(exit code {exit_code}).\n--- node.log tail ---\n"
-                f"{read_node_log(fiber)[-4000:]}"
-            )
-        time.sleep(0.3)
-
-    proc.terminate()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-    raise TimeoutError(
-        f"Port {fiber.rpc_port} did not become open within {timeout}s.\n"
-        f"--- node.log tail ---\n{read_node_log(fiber)[-4000:]}"
-    )
 
 
 def start_blocking(
