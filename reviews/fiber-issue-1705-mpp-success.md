@@ -193,27 +193,44 @@ MPP1705-01～14 均已建立 TEST-MAP；复选框只表示映射存在，不表�
 
 07/08 原有文件及断言保留。新增的离线辅助负向测试不计为产品用例通过。这里完成的是实现及聚焦验证，不声称独立 B 已复核本批代码；已有 B 结论仍只针对设计。
 
-### 运行入口
+### 长期回归运行方式
 
-使用项目 Python 环境运行 `scripts/run_mpp1705.py`：
+用例直接由项目已有 pytest / Makefile 流程发现和执行，不维护 issue 专用运行脚本。普通回归继承 `FiberTest` 的 `CURRENT_DEV` 构建配置；不要在测试中绑定本机 PR 分支二进制。使用项目 Python 环境，从仓库根目录选择文件、类或测试方法：
 
 ```bash
-./venv/bin/python scripts/run_mpp1705.py --group fast
-./venv/bin/python scripts/run_mpp1705.py --group upgrade
-./venv/bin/python scripts/run_mpp1705.py --group batch
-./venv/bin/python scripts/run_mpp1705.py --group slow
-./venv/bin/python scripts/run_mpp1705.py --group performance --performance-builds /absolute/builds.json
+# 成功、重启、纯链上原像恢复（01～05、13）
+python -m pytest test_cases/fiber/devnet/send_payment/mpp/test_mpp_success_recovery.py::TestMppSuccessRecovery -v
+
+# 未知结果与首片失败的上游持单边界（06、14）
+python -m pytest test_cases/fiber/devnet/send_payment/mpp/test_mpp_failure_boundaries.py -k 'not direct_timeout' -v
+
+# 混合资产批量与故障恢复（11）
+python -m pytest test_cases/fiber/devnet/send_payment/mpp/test_mpp_batch_recovery.py -v
+
+# 真实到期退款慢测（07～09），串行执行
+python -m pytest \
+  test_cases/fiber/devnet/trampoline_routing/test_trampoline_timeout_refund.py \
+  test_cases/fiber/devnet/trampoline_routing/test_trampoline_timeout_refund_restart.py \
+  test_cases/fiber/devnet/send_payment/mpp/test_mpp_failure_boundaries.py::TestMppFailureBoundaries::test_direct_timeout_refund_then_sender_restart_and_new_payment -v
+
+# 升级使用明确的历史构建；升级后的目标沿用 CURRENT_DEV（10）
+MPP1705_BASE_FNN=/absolute/base/fnn python -m pytest \
+  test_cases/fiber/devnet/send_payment/mpp/test_mpp_success_recovery.py::TestMppUpgrade -v
+
+# 启动历史规模矩阵（12）
+MPP1705_PERF_BUILDS=/absolute/builds.json python -m pytest \
+  test_cases/fiber/devnet/send_payment/mpp/test_mpp_startup_history.py -v
 ```
 
-`--group all` 收集全部 16 个原生入口（01 的两种 hash、08 的两种重启分别计入口）；`--collect-only` 不启动节点。`--port-offset` 同时改变 RPC/P2P 端口和临时目录，用于独立环境；既有 CLI 使用公共临时文件，因此本地仍须串行运行，入口以文件锁避免同组并发，也不要同时启动其他使用该 CLI 辅助的测试。默认 head 为 `download/fiber/fix-tp-mpp/fnn`，默认 base 为 `download/fiber/current/fnn`；可显式传 `--head-fnn` / `--base-fnn`，升级测试核对本次评审 base `7aa1d5d`。真实慢测可能超过一天，未缩短 expiry、未修改主机时间。常规 MPP CI 只选择 fast；升级、批量、性能和真实超时通过上述入口独立运行。
+向相同命令追加 `--collect-only` 只收集，不启动节点。不要并行启动使用公共 CLI 临时文件的节点测试；本批没有独立并发调度器或自动端口分配。慢测按实际 expiry 等待，可能超过一天。既有 MPP CI 直接运行目录，并排除真实到期、升级、批量和性能用例；这些用例可用上述 pytest 节点选择器独立运行，不以排除计作通过。
 
-性能 manifest 是四项 JSON 数组，每项含 `label`（base/head）、`backend`（rocksdb/sqlite）、`binary`（绝对路径）、`commit`、`profile`（release）、`flags`（相同的通用优化参数；后端区别另由 backend 表示）。缺少构建或格式不符直接失败，不跳过或冒用别的后端。可用 `MPP1705_PERF_THRESHOLDS` 提供 JSON 阈值：`max_node_info_seconds`、`max_first_payment_seconds`、`max_sampled_peak_rss_kib`、`max_head_base_ratio`。未确认前不设置。缓存条件记录为未主动清缓存，RSS 为 100ms 周期采样峰值，不冒充内核完整高水位。
+升级案例保留已确认的 base `7aa1d5d` 输入，用于经公开操作重建历史部分成功状态；这是历史数据来源，不是目标版本锁定。性能 manifest 是四项 JSON 数组，每项含 `label`（base/head）、`backend`（rocksdb/sqlite）、`binary`（绝对路径）、`commit`、`profile`（release）、`flags`（相同的通用优化参数，后端区别另由 backend 表示）。缺少构建或格式不符直接失败。可用 `MPP1705_PERF_THRESHOLDS` 提供已确认阈值：`max_node_info_seconds`、`max_first_payment_seconds`、`max_sampled_peak_rss_kib`、`max_head_base_ratio`；未确认前不设置。缓存记录为未主动清缓存，RSS 为 100ms 周期采样峰值。
 
 ### 本批验证结果
 
 实测构建：base `7aa1d5d`（SHA-256 `95b7118f33c4abcfcb80d91583cc815bb8c71b0d303b1b5639b150f096607f39`），head `fb49c3d`（SHA-256 `e930839f8102fbe73403f48788fca632074b891a0416c119df816dee153cb228`）。收据中的 `product` 是现有源码检出 `43193445` 的环境快照，不代表实际执行的是该源码版本；节点版本及上述二进制哈希才标识本次被测构建。
 
-- 串行 `--group fast upgrade batch` 的原始记录（本机运行记录）：11 个原生入口，8 passed、3 failed，退出 1。通过项包括 01 两种哈希、02、04、06、10、11、14；11 完成 100 笔混合付款和在途断连/重启，14 完成 420 秒混合失败窗口及全部退款。首次失败均保留，不用后续结果覆盖原始日志。
+- 调整为原生 pytest 前，常规、升级和批量组合的历史记录（本机运行记录）：11 个原生入口，8 passed、3 failed，退出 1。通过项包括 01 两种哈希、02、04、06、10、11、14；11 完成 100 笔混合付款和在途断连/重启，14 完成 420 秒混合失败窗口及全部退款。首次失败均保留，不用后续结果覆盖原始日志。
 - 03/05/13 修复测试夹具后单独重跑：3 passed、退出 0，约 1009 秒（本机运行记录）。05/13 均在 Fiber 对端隔离时恢复正确原像；13 随后在 R 仍离线时完成开放上游结算。03/05/13 原失败分别来自健康探针流动性、gossip 自动重连和全离线时提前等待 Paid，均已通过调整公开前提修正，原资金断言保留。
 - 最终辅助负向测试：7 passed，退出 0（本机运行记录），只验证测试辅助；全部入口收集（本机运行记录）为 `16 tests collected`、退出 0，不启动节点。
 - 项目原有全局映射脚本退出 1（本机运行记录）：既有 `RSETTLE-01` 重复以及 `PMP-01～05`、`PR1677-09`、`SETTLE-01` 孤儿映射；这些 ID 不在本批范围。本批单文档的结构、14 条映射和补丁/回滚另用限定输入检查，不据此宣称全仓检查通过。

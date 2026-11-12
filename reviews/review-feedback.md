@@ -32,3 +32,5 @@
 - model: unavailable | cases: PR1711-01～08 | feedback: 长期回归用例直接使用仓库 current 配置，移除 PR 专用二进制和端口环境变量，文件名、说明和运行信息按功能命名；既有映射 ID 保持稳定。
 - model: unavailable | cases: PR1711-07 | feedback: 密钥搬移、CLI 备份恢复等底层操作封装到 FiberTest，用例只保留恢复调用和行为断言。
 - model: unavailable | cases: PR1711-01～08 | feedback: 删除 SimpleNamespace 版本包装及无意义的 --version 调用、版本打印和提交号检查。
+
+- model: unavailable | cases: MPP1705-01～14 | feedback: 这些用例要沉淀成长期回归用例，不需要 scripts/run_mpp1705.py；直接使用项目已有 pytest / Makefile 和 CURRENT_DEV 配置，保留场景、断言及稳定映射 ID。

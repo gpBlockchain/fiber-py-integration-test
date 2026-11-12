@@ -466,7 +466,7 @@ jobs:
       - name: Run fiber_test_demo
         run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/send_payment/mpp"
         env:
-          # Explicit runners handle real-expiry, build-pair, stress, and full startup matrices.
+          # Run real-expiry, upgrade, batch, and startup-matrix tests directly with pytest.
           # These are deselected here, not counted as passed or skipped behavior checks.
           PYTEST_ADDOPTS: >-
             --ignore=test_cases/fiber/devnet/send_payment/mpp/test_mpp_startup_history.py
