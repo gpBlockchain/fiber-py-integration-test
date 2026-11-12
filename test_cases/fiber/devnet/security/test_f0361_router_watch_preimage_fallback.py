@@ -133,7 +133,13 @@ class TestF0361RouterWatchPreimageFallback(P2pFiberTest):
         )
         self.peer.intercept(
             ch_bob,
-            drop_out=["RevokeAndAck", "RevokeAndAckV2", "CommitmentSigned", "CommitmentSignedV2", "RemoveTlc"],
+            drop_out=[
+                "RevokeAndAck",
+                "RevokeAndAckV2",
+                "CommitmentSigned",
+                "CommitmentSignedV2",
+                "RemoveTlc",
+            ],
             drop_raa=True,
         )
 

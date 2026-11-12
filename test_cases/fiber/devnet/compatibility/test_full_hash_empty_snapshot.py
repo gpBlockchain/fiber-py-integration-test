@@ -272,7 +272,13 @@ class TestFullHashEmptySnapshot(P2pFiberTest):
         # S0 因此仍是合法快照，这正是本行要覆盖的“首次 RAA 前”窗口。
         self.peer.intercept(
             self.channel_id,
-            drop_out=["RevokeAndAck", "RevokeAndAckV2", "CommitmentSigned", "CommitmentSignedV2", "RemoveTlc"],
+            drop_out=[
+                "RevokeAndAck",
+                "RevokeAndAckV2",
+                "CommitmentSigned",
+                "CommitmentSignedV2",
+                "RemoveTlc",
+            ],
             drop_raa=True,
         )
 

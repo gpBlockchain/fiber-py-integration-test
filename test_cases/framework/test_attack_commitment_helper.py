@@ -61,6 +61,6 @@ def test_restore_time_returns_to_origin_plus_elapsed():
     ):
         Case.restore_time()
     assert Case._clock_origin is None
-    (hour, minutes), = calls
+    ((hour, minutes),) = calls
     assert hour == 0
     assert abs(minutes - (-advanced / 60)) < 1, minutes

@@ -141,7 +141,13 @@ class TestF0361LocalAnnouncedOnchainReconcile(P2pFiberTest):
         )
         self.peer.intercept(
             self.channel_id,
-            drop_out=["RevokeAndAck", "RevokeAndAckV2", "CommitmentSigned", "CommitmentSignedV2", "RemoveTlc"],
+            drop_out=[
+                "RevokeAndAck",
+                "RevokeAndAckV2",
+                "CommitmentSigned",
+                "CommitmentSignedV2",
+                "RemoveTlc",
+            ],
             drop_raa=True,
         )
 
