@@ -218,13 +218,14 @@ def hex_timestamp_to_datetime(hex_str):
 
 def change_time(hour, minutes=0):
     # 修改系统时间,加速1h
+    success = False
     try:
         # 获取当前时间并加1小时
         current_time = datetime.now()
         new_time = current_time + timedelta(hours=hour, minutes=minutes)
 
         # 格式化时间为系统命令需要的格式
-        time_str = new_time.strftime("%m%d%H%M%Y")
+        time_str = new_time.strftime("%m%d%H%M%Y.%S")
 
         # 检测是否在Docker容器中运行
         is_docker = os.path.exists("/.dockerenv")
@@ -243,6 +244,7 @@ def change_time(hour, minutes=0):
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
 
         if result.returncode == 0:
+            success = True
             print("系统时间修改成功")
         else:
             print(f"系统时间修改失败: {result.stderr}")
@@ -252,13 +254,16 @@ def change_time(hour, minutes=0):
 
     print("updated time:", time.time())
     print("updated datetime:", datetime.now())
+    return success
 
 
 import os
 
 
-def restore_time():
-    """恢复系统时间"""
+def restore_time(reference_timestamp=None):
+    """恢复系统时间；提供参考时间时不依赖 NTP 网络同步。"""
+    if reference_timestamp is not None:
+        return change_time(0, (reference_timestamp - time.time()) / 60)
     print("开始恢复系统时间...")
     print("current time:", time.time())
     print("current datetime:", datetime.now())
