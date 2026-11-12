@@ -1180,7 +1180,11 @@ class FiberTest(CkbTest):
                 "channels"
             ]
             channel = next(
-                (channel for channel in channels if channel["channel_id"] == channel_id),
+                (
+                    channel
+                    for channel in channels
+                    if channel["channel_id"] == channel_id
+                ),
                 None,
             )
             if (

@@ -39,7 +39,9 @@ def test_waits_for_both_directions_on_the_requested_channel(clock):
     client.send_payment.assert_not_called()
 
 
-@pytest.mark.parametrize("channels", [[], [channel(offered=1)], [channel(state="Closed")]])
+@pytest.mark.parametrize(
+    "channels", [[], [channel(offered=1)], [channel(state="Closed")]]
+)
 def test_timeout_reports_unsettled_or_missing_channel(clock, channels):
     fiber = Mock()
     fiber.get_client.return_value.list_channels.return_value = {"channels": channels}
@@ -79,5 +81,6 @@ def test_open_channel_waits_after_initial_balance_transfer(udt, peer_balance):
             call.settled(sender, "target"),
             call.settled(receiver, "target"),
         ]
-        if peer_balance else []
+        if peer_balance
+        else []
     )
