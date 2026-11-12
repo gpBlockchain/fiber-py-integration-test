@@ -8,8 +8,10 @@ import time
 
 import pytest
 
-from framework.basic_fiber import FiberTest
+from framework.basic_fiber import COMMIT_LOCK_CODE_HASH, FiberTest
 from framework.config import DEFAULT_MIN_DEPOSIT_CKB
+from framework.helper.channel_settlement import ChannelSettlement
+from framework.helper.fiber_ops import get_channel, wait_for_result
 
 
 class TestWatchTower(FiberTest):
@@ -23,11 +25,25 @@ class TestWatchTower(FiberTest):
         self.fiber3 = self.start_new_fiber(self.generate_account(1000))
         channel_id = self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 1)
         self.send_payment(self.fiber1, self.fiber2, 1)
+        for fiber in (self.fiber1, self.fiber2):
+            self.wait_fibers_pending_tlc_eq0(fiber)
+        channel = get_channel(self.fiber1, channel_id)
+        raw_outpoint = bytes.fromhex(channel["channel_outpoint"][2:])
+        assert len(raw_outpoint) == 36
+        funding_outpoint = {
+            "tx_hash": "0x" + raw_outpoint[:32].hex(),
+            "index": hex(int.from_bytes(raw_outpoint[32:], "little")),
+        }
+        observer = ChannelSettlement(self.node.getClient(), COMMIT_LOCK_CODE_HASH)
         self.fiber1.get_client().shutdown_channel(
             {"channel_id": channel_id, "force": True}
         )
-        commitment_tx = self.wait_and_check_tx_pool_fee(1000, False)
-        self.Miner.miner_until_tx_committed(self.node, commitment_tx)
+        # 后台矿工可能已打包交易；等待指定 funding 的已确认消费，而非全局 pending。
+        commitment = wait_for_result(
+            f"Channel {channel_id} funding spent by confirmed force-close",
+            lambda: observer.find_spending_transaction(funding_outpoint),
+        )
+        commitment_tx = commitment["hash"]
         self.fiber1.stop()
         self.fiber2.stop()
         self.fiber2.prepare(
@@ -39,8 +55,13 @@ class TestWatchTower(FiberTest):
         self.fiber2.start()
         time.sleep(5)
         self.node.getClient().generate_epochs("0x1", 0)
-        settlement_tx = self.wait_and_check_tx_pool_fee(1000, False, 20 * 5)
-        settlement = self.node.getClient().get_transaction(settlement_tx)["transaction"]
+        settlement = wait_for_result(
+            f"Commitment {commitment_tx}:0 settled by standalone watchtower",
+            lambda: observer.find_spending_transaction(
+                {"tx_hash": commitment_tx, "index": "0x0"}
+            ),
+        )
+        settlement_tx = settlement["hash"]
         assert any(
             tx_input["previous_output"]["tx_hash"] == commitment_tx
             for tx_input in settlement["inputs"]
