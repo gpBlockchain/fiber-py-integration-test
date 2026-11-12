@@ -5,7 +5,6 @@ import pytest
 from test_cases.fiber.devnet.send_payment.mpp.mpp_fixture import (
     MppFixture,
     CKB,
-    AMOUNT,
     RESULT_WAIT,
 )
 from framework.helper.fiber_ops import (
@@ -29,6 +28,7 @@ class TestMppBatchRecovery(MppFixture):
         4. 100 个唯一付款保持成功，最后健康付款完成，原成功款不重复扣付。
         """
         # 1. 每条 lane 两个出向通道均不足全额；不靠总池余额掩盖未完成付款。
+        amount = 1500 * CKB
         relay = self.fiber2
         owner = self.fiber1.account_private
         self.faucet(relay.account_private, 100000, owner, 100000 * CKB)
@@ -43,16 +43,50 @@ class TestMppBatchRecovery(MppFixture):
             forwarder = self.start_new_fiber(
                 self.generate_account(10000, owner, 10000 * CKB)
             )
+            # 拓扑（左端出资，右端 0）：sender ==(1,000 × 2)==> relay --3,000--> forwarder。
+            # 自付 lane 再加 forwarder --3,000--> sender；普通 lane 以 forwarder 为接收端。
+            # 图中数值乘 10^8；CKB lane 使用 Shannon，UDT lane 使用 UDT 最小单位。
+            delay = 0x10000000001  # 1 epoch；用于公开通道参数和到期保护核对。
+            public = {"public": True, "commitment_delay_epoch": hex(delay)}
+            sender_relay_1 = self.open_channel(
+                sender, relay, 1000 * CKB, 0, 0, 0, udt=asset, other_config=public
+            )
+            sender_relay_2 = self.open_channel(
+                sender, relay, 1000 * CKB, 0, 0, 0, udt=asset, other_config=public
+            )
+            relay_forwarder = self.open_channel(
+                relay, forwarder, 3000 * CKB, 0, 0, 0, udt=asset, other_config=public
+            )
             split = [
-                self.open_payment_channel(sender, relay, 1000 * CKB, udt=asset)
-                for _ in range(2)
+                self.settlement.snapshot_channel(
+                    sender, relay, channel, commitment_delay_epoch=delay
+                )
+                for channel in (sender_relay_1, sender_relay_2)
             ]
-            edges = split + [
-                self.open_payment_channel(relay, forwarder, 3000 * CKB, udt=asset)
+            edges = [
+                *split,
+                self.settlement.snapshot_channel(
+                    relay, forwarder, relay_forwarder, commitment_delay_epoch=delay
+                ),
             ]
             if is_self:
+                forwarder_sender = self.open_channel(
+                    forwarder,
+                    sender,
+                    3000 * CKB,
+                    0,
+                    0,
+                    0,
+                    udt=asset,
+                    other_config=public,
+                )
                 edges.append(
-                    self.open_payment_channel(forwarder, sender, 3000 * CKB, udt=asset)
+                    self.settlement.snapshot_channel(
+                        forwarder,
+                        sender,
+                        forwarder_sender,
+                        commitment_delay_epoch=delay,
+                    )
                 )
             lanes.append(
                 dict(
@@ -80,7 +114,7 @@ class TestMppBatchRecovery(MppFixture):
                 preimage = self.generate_random_preimage()
                 payment_hash = calculate_payment_hash(preimage, "ckb_hash")
                 args = dict(
-                    amount=hex(AMOUNT),
+                    amount=hex(amount),
                     currency="Fibd",
                     payment_hash=payment_hash,
                     hash_algorithm="ckb_hash",
@@ -115,9 +149,9 @@ class TestMppBatchRecovery(MppFixture):
                 )
                 for edge in lane["edges"]:
                     self.settlement.record_committed_tlcs(edge, self.payment_hash)
-                assert sum(edge["sent"] for edge in lane["split"]) == AMOUNT
+                assert sum(edge["sent"] for edge in lane["split"]) == amount
                 assert all(len(edge["tlcs"]) == 1 for edge in lane["split"])
-                assert lane["edges"][2]["sent"] == AMOUNT
+                assert lane["edges"][2]["sent"] == amount
             if batch == 3:
                 m_key = relay.get_pubkey()
                 for peer in peers:
@@ -201,8 +235,40 @@ class TestMppBatchRecovery(MppFixture):
                         for e in incident
                     )
                     assert after == before, "自付本金按资产守恒"
+                # 反向调平：沿原通道逆序，right → left，原片金额 edge["sent"]，不经其他通道。
                 for edge in reversed(lane["edges"]):
-                    self._restore_edge_liquidity(edge, lane["asset"])
+                    reverse_sender, reverse_receiver = edge["right"], edge["left"]
+                    route_request = {
+                        "amount": hex(edge["sent"]),
+                        "hops_info": [
+                            {
+                                "pubkey": reverse_receiver.get_pubkey(),
+                                "channel_outpoint": edge["before"][0][
+                                    "channel_outpoint"
+                                ],
+                            }
+                        ],
+                    }
+                    if lane["asset"]:
+                        route_request["udt_type_script"] = lane["asset"]
+                    router = reverse_sender.get_client().build_router(route_request)[
+                        "router_hops"
+                    ]
+                    assert (
+                        len(router) == 1
+                        and router[0]["channel_outpoint"]
+                        == edge["before"][0]["channel_outpoint"]
+                    )
+                    request = {"router": router, "keysend": True}
+                    if lane["asset"]:
+                        request["udt_type_script"] = lane["asset"]
+                    response = reverse_sender.get_client().send_payment_with_router(
+                        request
+                    )
+                    self._wait_direct_payment_settled(
+                        reverse_sender, reverse_receiver, edge, response["payment_hash"]
+                    )
+                    self._assert_original_balances(edge)
                 history.append(item)
 
         # 4. 100 笔原 hash 全部保持成功，调平后的固定余额也捕捉迟到重放。
@@ -222,35 +288,32 @@ class TestMppBatchRecovery(MppFixture):
             for edge in lane["edges"]:
                 self._assert_original_balances(edge)
         # 第 0 条为 CKB lane；健康探针走指定单通道，避免两条平行通道随机选择。
-        self._direct_payment(lanes[0]["edges"][0], CKB, None, reverse=False)
-
-    def _direct_payment(self, edge, amount, asset, reverse):
-        sender, receiver = (
-            (edge["right"], edge["left"]) if reverse else (edge["left"], edge["right"])
-        )
-        args = {
-            "amount": hex(amount),
-            "hops_info": [
-                {
-                    "pubkey": receiver.get_pubkey(),
-                    "channel_outpoint": edge["before"][0]["channel_outpoint"],
-                }
-            ],
-        }
-        if asset:
-            args["udt_type_script"] = asset
-        router = sender.get_client().build_router(args)["router_hops"]
+        edge = lanes[0]["edges"][0]
+        sender, receiver = edge["left"], edge["right"]
+        router = sender.get_client().build_router(
+            {
+                "amount": hex(CKB),
+                "hops_info": [
+                    {
+                        "pubkey": receiver.get_pubkey(),
+                        "channel_outpoint": edge["before"][0]["channel_outpoint"],
+                    }
+                ],
+            }
+        )["router_hops"]
         assert (
             len(router) == 1
             and router[0]["channel_outpoint"] == edge["before"][0]["channel_outpoint"]
         )
-        request = {"router": router, "keysend": True}
-        if asset:
-            request["udt_type_script"] = asset
-        response = sender.get_client().send_payment_with_router(request)
-        self.wait_payment_state(
-            sender, response["payment_hash"], "Success", timeout=120
+        response = sender.get_client().send_payment_with_router(
+            {"router": router, "keysend": True}
         )
+        self._wait_direct_payment_settled(
+            sender, receiver, edge, response["payment_hash"]
+        )
+
+    def _wait_direct_payment_settled(self, sender, receiver, edge, payment_hash):
+        self.wait_payment_state(sender, payment_hash, "Success", timeout=120)
         wait_for_result(
             "调平或探针 TLC 已释放",
             lambda: all(
@@ -259,11 +322,6 @@ class TestMppBatchRecovery(MppFixture):
                 for key in ("offered_tlc_balance", "received_tlc_balance")
             ),
         )
-        return response
-
-    def _restore_edge_liquidity(self, edge, asset):
-        self._direct_payment(edge, edge["sent"], asset, reverse=True)
-        self._assert_original_balances(edge)
 
     def _assert_original_balances(self, edge):
         rows = self.settlement.assert_channel_open(edge)

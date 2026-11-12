@@ -42,7 +42,9 @@ class TestTrampolineTimeoutRefund(FiberTest):
         3. 按真实到期时间等待，逐条核对链上消费、无原像退款和 T 实际收回的本金。
         4. 全部退款确认后 420 秒内，上游失败且本金释放；原上游通道可再次付款。
         """
-        # 1. 由公开 RPC 建立两片付款，原像只留在测试进程。
+        # 1. 拓扑：payer --3,000 CKB（public）--> trampoline ==(1,000 CKB × 2, private)==> receiver。
+        # 左端出资、右端 0；payer → receiver 为 1,500 CKB，两片经 trampoline，费用上限 15 CKB。
+        # 原像只留在测试进程，后续由 trampoline 强关两条下游等待退款。
         payer, trampoline = self.fiber1, self.fiber2
         receiver = self.start_new_fiber(self.generate_account(10000))
         for fiber in self.fibers:

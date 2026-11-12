@@ -13,6 +13,23 @@ class ChannelSettlement:
         self.ckb = ckb_client
         self.commitment_lock_code_hash = commitment_lock_code_hash
 
+    def snapshot_channel(self, left, right, channel_id, *, commitment_delay_epoch):
+        """只读取已开通通道的两端余额和 funding；不创建通道或发起付款。"""
+        before = [get_channel(f, channel_id) for f in (left, right)]
+        raw = bytes.fromhex(before[0]["channel_outpoint"][2:])
+        assert len(raw) == 36
+        return dict(
+            left=left,
+            right=right,
+            channel_id=channel_id,
+            before=before,
+            commitment_delay_epoch=commitment_delay_epoch,
+            funding={
+                "tx_hash": "0x" + raw[:32].hex(),
+                "index": hex(int.from_bytes(raw[32:], "little")),
+            },
+        )
+
     def get_output(self, outpoint):
         return self.ckb.get_transaction(outpoint["tx_hash"])["transaction"]["outputs"][
             int(outpoint["index"], 16)

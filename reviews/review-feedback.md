@@ -38,3 +38,4 @@
 - model: unavailable | cases: MPP1705-12 | feedback: 保留 CURRENT_DEV 下 0/1,000/8,000 笔历史的重启功能回归，检查历史、余额和新付款；不再做 base/head、RSS 或 SLA 验收。
 - model: unavailable | cases: MPP1705-01～14 | feedback: MppFixture 不要依赖具体测试类；通用方法放 framework，场景和变量要易读，避免包装层与重复 review，并将这些约束写入 AGENTS.md。
 - model: unavailable | cases: MPP1705-07～12 | feedback: 耗时过长的用例先在方法上标注 pytest.mark.skip 和原因，不在 fiber.yml 维护排除清单；退款慢测后续复用已有 change_time / restore_time，验证链状态清理和时钟恢复后再启用。
+- model: unavailable | cases: MPP1705-01～14 | feedback: 通道两端、容量/资产、路由和付款操作直接展开在每条用例中，并加网络拓扑注释；公共方法只保留观察、等待、启停和核对，避免隐藏资金操作。以长期可维护、人类易懂的原生回归用例为目标，不写一次性验收脚本。

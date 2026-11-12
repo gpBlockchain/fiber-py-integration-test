@@ -8,10 +8,10 @@ from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 from test_cases.fiber.devnet.send_payment.mpp.mpp_fixture import (
     MppFixture,
     CKB,
-    AMOUNT,
     RESULT_WAIT,
 )
 from framework.helper.fiber_ops import (
+    get_channel,
     calculate_payment_hash,
     wait_for_result,
     start_fiber,
@@ -28,11 +28,74 @@ class TestMppFailureBoundaries(MppFixture):
         3. 另一笔独立健康付款成功，原付款仍未成功且上游锁定未释放。
         """
         # 1. Received/Committed 不等于领取，原像只保留在测试进程。
-        self.prepare_payment("trampoline")
+        # 拓扑：sender --(3,000 CKB, public)--> relay ==(1,000 CKB × 2, private)==> receiver
+        # 各通道左端出资、右端 0；付款 sender → receiver 为 1,500 CKB，必须拆成两片。
+        self.sender, self.relay = self.fiber1, self.fiber2
+        self.receiver = self.start_new_fiber(
+            self.generate_account(20000), fiber_version=self.fiber_version
+        )
+        delay = 0x10000000001  # 1 epoch；用于公开通道参数和到期保护核对。
+        public = {"public": True, "commitment_delay_epoch": hex(delay)}
+        private = {"public": False, "commitment_delay_epoch": hex(delay)}
+        sender_relay = self.open_channel(
+            self.sender, self.relay, 3000 * CKB, 0, 0, 0, other_config=public
+        )
+        relay_receiver_1 = self.open_channel(
+            self.relay, self.receiver, 1000 * CKB, 0, 0, 1000, other_config=private
+        )
+        relay_receiver_2 = self.open_channel(
+            self.relay, self.receiver, 1000 * CKB, 0, 0, 1000, other_config=private
+        )
+        # 快照只查询余额和 funding，不开通道、不发付款。
+        sender_relay_before = self.settlement.snapshot_channel(
+            self.sender, self.relay, sender_relay, commitment_delay_epoch=delay
+        )
+        relay_receiver_1_before = self.settlement.snapshot_channel(
+            self.relay, self.receiver, relay_receiver_1, commitment_delay_epoch=delay
+        )
+        relay_receiver_2_before = self.settlement.snapshot_channel(
+            self.relay, self.receiver, relay_receiver_2, commitment_delay_epoch=delay
+        )
+        self.upstream_channel = sender_relay_before
+        self.split_channels = [relay_receiver_1_before, relay_receiver_2_before]
+        self.channels = [self.upstream_channel, *self.split_channels]
+        self.wait_payment_routes(public_channels=1, trampoline=self.relay)
+        amount = 1500 * CKB
+        self.hash_algorithm = "ckb_hash"
+        self.preimage = self.generate_random_preimage()
+        self.payment_hash = calculate_payment_hash(self.preimage, self.hash_algorithm)
+        invoice = self.receiver.get_client().new_invoice(
+            {
+                "amount": hex(amount),
+                "currency": "Fibd",
+                "payment_hash": self.payment_hash,
+                "hash_algorithm": self.hash_algorithm,
+                "allow_mpp": True,
+                "allow_trampoline_routing": True,
+                "expiry": hex(86400),
+                "final_expiry_delta": hex(43_200_000),
+            }
+        )
+        # 付款：sender → relay（trampoline）→ receiver；两片，费用上限 15 CKB。
+        response = self.sender.get_client().send_payment(
+            {
+                "invoice": invoice["invoice_address"],
+                "max_parts": hex(2),
+                "timeout": hex(1800),
+                "max_fee_amount": hex(amount // 100),
+                "tlc_expiry_limit": hex(172_800_000),
+                "trampoline_hops": [self.relay.get_pubkey()],
+            }
+        )
+        assert response["payment_hash"] == self.payment_hash
+        self.wait_mpp_committed(amount, upstream_channel=self.upstream_channel)
         self.receiver.stop()
-        chains = [
-            self.force_close_channel(edge, self.relay) for edge in self.split_channels
-        ]
+        chains = []
+        for edge in self.split_channels:
+            self.relay.get_client().shutdown_channel(
+                {"channel_id": edge["channel_id"], "force": True}
+            )
+            chains.append(self.track_closed_channel(edge))
         self.node.getClient().generate_epochs("0x1", wait_time=0)
         self.assert_expiry_margin(RESULT_WAIT + 120)
 
@@ -50,7 +113,27 @@ class TestMppFailureBoundaries(MppFixture):
             time.sleep(3)
 
         # 3. 新付款只证明健康通道可用，不替代原付款的持单断言。
-        self.assert_healthy_payment(self.sender, self.relay, self.upstream_channel)
+        # 新付款：sender → relay，1 CKB keysend，费用上限 0。
+        probe_before = [
+            get_channel(f, self.upstream_channel["channel_id"])
+            for f in (self.sender, self.relay)
+        ]
+        probe_payment = self.sender.get_client().send_payment(
+            {
+                "target_pubkey": self.relay.get_pubkey(),
+                "amount": hex(CKB),
+                "keysend": True,
+                "max_fee_amount": "0x0",
+            }
+        )
+        self.assert_healthy_payment_settled(
+            self.sender,
+            self.relay,
+            self.upstream_channel,
+            probe_before,
+            probe_payment["payment_hash"],
+            CKB,
+        )
         assert self.assert_no_preimage(self.sender)["status"] == "Inflight"
         rows = self.settlement.assert_channel_open(self.upstream_channel)
         assert int(rows[0]["offered_tlc_balance"], 16) == self.upstream_channel["sent"]
@@ -64,7 +147,81 @@ class TestMppFailureBoundaries(MppFixture):
         3. 原目录恢复 M，所有原通道保持开放，原付款全部失败并退回含预算的全部金额。
         """
         # 1. 停稳定节点形成宽隔离窗口，不控制内部消息先后顺序。
-        self.prepare_payment("trampoline_with_bridge")
+        # 拓扑：sender --3,000 CKB--> relay --1,000 CKB--> receiver
+        #                               \--1,000 CKB--> bridge --2,000 CKB--> receiver
+        # 各通道左端出资、右端 0；付款 sender → receiver 为 1,500 CKB，必须拆成两片。
+        self.sender, self.relay = self.fiber1, self.fiber2
+        self.receiver = self.start_new_fiber(
+            self.generate_account(20000), fiber_version=self.fiber_version
+        )
+        self.bridge = self.start_new_fiber(
+            self.generate_account(20000), fiber_version=self.fiber_version
+        )
+        delay = 0x10000000001  # 1 epoch；用于公开通道参数和到期保护核对。
+        public = {"public": True, "commitment_delay_epoch": hex(delay)}
+        sender_relay = self.open_channel(
+            self.sender, self.relay, 3000 * CKB, 0, 0, 0, other_config=public
+        )
+        relay_receiver = self.open_channel(
+            self.relay, self.receiver, 1000 * CKB, 0, 0, 0, other_config=public
+        )
+        relay_bridge = self.open_channel(
+            self.relay, self.bridge, 1000 * CKB, 0, 0, 0, other_config=public
+        )
+        bridge_receiver = self.open_channel(
+            self.bridge, self.receiver, 2000 * CKB, 0, 0, 0, other_config=public
+        )
+        # 快照只查询余额和 funding，不开通道、不发付款。
+        sender_relay_before = self.settlement.snapshot_channel(
+            self.sender, self.relay, sender_relay, commitment_delay_epoch=delay
+        )
+        relay_receiver_before = self.settlement.snapshot_channel(
+            self.relay, self.receiver, relay_receiver, commitment_delay_epoch=delay
+        )
+        relay_bridge_before = self.settlement.snapshot_channel(
+            self.relay, self.bridge, relay_bridge, commitment_delay_epoch=delay
+        )
+        bridge_receiver_before = self.settlement.snapshot_channel(
+            self.bridge, self.receiver, bridge_receiver, commitment_delay_epoch=delay
+        )
+        self.upstream_channel = sender_relay_before
+        self.split_channels = [relay_receiver_before, relay_bridge_before]
+        self.forward_channel = bridge_receiver_before
+        self.channels = [
+            self.upstream_channel,
+            *self.split_channels,
+            self.forward_channel,
+        ]
+        self.wait_payment_routes(public_channels=4, trampoline=self.relay)
+        amount = 1500 * CKB
+        self.hash_algorithm = "ckb_hash"
+        self.preimage = self.generate_random_preimage()
+        self.payment_hash = calculate_payment_hash(self.preimage, self.hash_algorithm)
+        invoice = self.receiver.get_client().new_invoice(
+            {
+                "amount": hex(amount),
+                "currency": "Fibd",
+                "payment_hash": self.payment_hash,
+                "hash_algorithm": self.hash_algorithm,
+                "allow_mpp": True,
+                "allow_trampoline_routing": True,
+                "expiry": hex(86400),
+                "final_expiry_delta": hex(43_200_000),
+            }
+        )
+        # 付款：sender → relay（trampoline）→ receiver；两片，费用上限 15 CKB。
+        response = self.sender.get_client().send_payment(
+            {
+                "invoice": invoice["invoice_address"],
+                "max_parts": hex(2),
+                "timeout": hex(1800),
+                "max_fee_amount": hex(amount // 100),
+                "tlc_expiry_limit": hex(172_800_000),
+                "trampoline_hops": [self.relay.get_pubkey()],
+            }
+        )
+        assert response["payment_hash"] == self.payment_hash
+        self.wait_mpp_committed(amount, upstream_channel=self.upstream_channel)
         bridge_key = self.bridge.get_pubkey()
         self.bridge.stop()
         wait_for_result(
@@ -129,7 +286,7 @@ class TestMppFailureBoundaries(MppFixture):
 
         wait_for_result("最后一片失败后全额退款且通道开放", refunded, RESULT_WAIT)
         assert (
-            self.upstream_channel["sent"] > AMOUNT
+            self.upstream_channel["sent"] > amount
         ), "必须覆盖正 trampoline 预算的完整退款"
 
     # TEST-MAP: MPP1705-09
@@ -142,11 +299,24 @@ class TestMppFailureBoundaries(MppFixture):
         2. 按公开 TLC 真实到期等待，核对准确消费链无原像且本金回到 P 的 lock。
         3. 重启 P，旧付款失败且无原像，通过另一健康通道完成新付款。
         """
-        # 1. 不使用 trampoline；后续健康通道不属于原付款路径。
+        # 1. 拓扑：sender --1,000 CKB--> receiver；sender --1,000 CKB--> healthy。
+        # 原付款 sender → receiver 为 100 CKB；退款后再向 healthy 发送 1 CKB。
         self.sender, self.receiver = self.fiber1, self.fiber2
         healthy = self.start_new_fiber(self.generate_account(10000))
-        old = self.open_payment_channel(self.sender, self.receiver, 1000 * CKB)
-        probe = self.open_payment_channel(self.sender, healthy, 1000 * CKB)
+        delay = 0x10000000001  # 1 epoch；用于公开通道参数和到期保护核对。
+        public = {"public": True, "commitment_delay_epoch": hex(delay)}
+        old_channel = self.open_channel(
+            self.sender, self.receiver, 1000 * CKB, 0, 0, 0, other_config=public
+        )
+        old = self.settlement.snapshot_channel(
+            self.sender, self.receiver, old_channel, commitment_delay_epoch=delay
+        )
+        probe_channel = self.open_channel(
+            self.sender, healthy, 1000 * CKB, 0, 0, 0, other_config=public
+        )
+        probe = self.settlement.snapshot_channel(
+            self.sender, healthy, probe_channel, commitment_delay_epoch=delay
+        )
         self.channels = [old]
         self.hash_algorithm = "ckb_hash"
         self.preimage = self.generate_random_preimage()
@@ -173,7 +343,10 @@ class TestMppFailureBoundaries(MppFixture):
         self.settlement.record_committed_tlcs(old, self.payment_hash)
         self.assert_no_preimage(self.sender)
         self.receiver.stop()
-        chain = self.force_close_channel(old, self.sender)
+        self.sender.get_client().shutdown_channel(
+            {"channel_id": old["channel_id"], "force": True}
+        )
+        chain = self.track_closed_channel(old)
 
         # 2. 真实到期加链上结算预算；公开查询中的名义到期并不等于已退款。
         expiry = max(int(t["expiry"], 16) / 1000 for t in old["tlcs"])
@@ -201,5 +374,24 @@ class TestMppFailureBoundaries(MppFixture):
             lambda: self.assert_no_preimage(self.sender)["status"] == "Failed",
             RESULT_WAIT,
         )
-        self.assert_healthy_payment(self.sender, healthy, probe)
+        # 新付款：sender → healthy，1 CKB keysend，费用上限 0。
+        probe_before = [
+            get_channel(f, probe["channel_id"]) for f in (self.sender, healthy)
+        ]
+        probe_payment = self.sender.get_client().send_payment(
+            {
+                "target_pubkey": healthy.get_pubkey(),
+                "amount": hex(CKB),
+                "keysend": True,
+                "max_fee_amount": "0x0",
+            }
+        )
+        self.assert_healthy_payment_settled(
+            self.sender,
+            healthy,
+            probe,
+            probe_before,
+            probe_payment["payment_hash"],
+            CKB,
+        )
         assert self.assert_no_preimage(self.sender)["status"] == "Failed"

@@ -39,42 +39,8 @@ class TestTrampolineTimeoutRefundRestart(FiberTest):
         3. 等真实到期并确认两片退款，420 秒内上游失败、原本金恢复且可再付款。
         """
         # 1. 强关后精确消费尚未发生；原付款在开放上游通道中保持锁定。
-        before, chains, locks, expiry = self._prepare_closed_payment()
-        self._assert_unknown(chains)
-
-        # 2. 正常重启 T，核对同一通道/付款恢复，并观察一个完整结果窗。
-        self._restart_trampoline(held=True)
-        self._observe_unknown(chains)
-
-        # 3. 复用首例的退款净额、释放本金与健康付款断言。
-        deadline = self._wait_downstream_refunds(chains, locks, expiry)
-        self._assert_refund_and_probe(before, deadline)
-
-    # TEST-MAP: MPP1705-08
-    @pytest.mark.skip(
-        reason="真实 TLC 到期等待过长；待验证时间加速与链/时钟清理后启用。"
-    )
-    def test_restart_after_downstream_refunds(self):
-        """
-        1. 独立建立两片持单并强关下游，未知结果期间上游不提前退款。
-        2. 等真实到期，核对两条准确消费链均已无原像退款给 T。
-        3. 退款确认后正常停启 T，P 保持在线；原结果窗内本金释放且不重复扣款。
-        """
-        # 1. 本变体独立创建通道和付款；不复用前一变体的链上退款。
-        before, chains, locks, expiry = self._prepare_closed_payment()
-        self._observe_unknown(chains)
-
-        # 2. 先确认每片的退款目的、净额和无原像消费，再触发重启。
-        deadline = self._wait_downstream_refunds(chains, locks, expiry)
-        _, payment = assert_upstream_payment(*self.upstream, held=False)
-
-        # 3. 重启不重置 420 秒结果窗；已传播或尚待传播的退款都须保持正确。
-        self._restart_trampoline(held=False)
-        self._assert_refund_and_probe(before, deadline)
-
-    def _prepare_closed_payment(self):
-        """与无重启首例相同的公开拓扑、两片身份核对和强关前提。"""
-        # 1. 由公开 RPC 建立两片付款，原像只留在测试进程。
+        # 拓扑：payer --3,000 CKB（public）--> trampoline ==(1,000 CKB × 2, private)==> receiver。
+        # 左端出资、右端 0；payer → receiver 为 1,500 CKB，两片经 trampoline，费用上限 15 CKB。
         payer, trampoline = self.fiber1, self.fiber2
         receiver = self.start_new_fiber(self.generate_account(10000))
         for fiber in self.fibers:
@@ -126,6 +92,149 @@ class TestTrampolineTimeoutRefundRestart(FiberTest):
         )
         assert payment["payment_hash"] == payment_hash
         self.wait_invoice_state(receiver, payment_hash, "Received", timeout=120)
+        tlcs, incoming, expiry = self._committed_payment(
+            payer, trampoline, receiver, upstream, downstream, payment_hash, amount
+        )
+        self.upstream = (payer, trampoline, upstream, payment_hash, incoming)
+        before = upstream_before
+        locks = [
+            self.get_account_script(f.account_private) for f in (trampoline, receiver)
+        ]
+        # 停 receiver；trampoline 显式强关两条下游，payer–trampoline 保持开放。
+        receiver.stop()
+        chains = []
+        for channel_id, downstream_row, tlc in zip(
+            downstream, downstream_before, (tlcs[2], tlcs[4])
+        ):
+            trampoline.get_client().shutdown_channel(
+                {"channel_id": channel_id, "force": True}
+            )
+            chains.append(self._track_refund_commitment(downstream_row, tlc, locks))
+        self.node.getClient().generate_epochs("0x1", wait_time=0)
+        self._assert_unknown(chains)
+
+        # 2. 正常重启 T，核对同一通道/付款恢复，并观察一个完整结果窗。
+        self._restart_trampoline(held=True)
+        self._observe_unknown(chains)
+
+        # 3. 复用首例的退款净额、释放本金与健康付款断言。
+        deadline = self._wait_downstream_refunds(chains, locks, expiry)
+        self._assert_upstream_refunded(before, deadline)
+        # 新付款：退款后的原 payer–trampoline 通道，payer → trampoline 为 1 CKB keysend。
+        probe = payer.get_client().send_payment(
+            {
+                "target_pubkey": trampoline.get_pubkey(),
+                "amount": hex(CKB),
+                "keysend": True,
+            }
+        )
+        self._assert_probe_settled(before, probe["payment_hash"])
+
+    # TEST-MAP: MPP1705-08
+    @pytest.mark.skip(
+        reason="真实 TLC 到期等待过长；待验证时间加速与链/时钟清理后启用。"
+    )
+    def test_restart_after_downstream_refunds(self):
+        """
+        1. 独立建立两片持单并强关下游，未知结果期间上游不提前退款。
+        2. 等真实到期，核对两条准确消费链均已无原像退款给 T。
+        3. 退款确认后正常停启 T，P 保持在线；原结果窗内本金释放且不重复扣款。
+        """
+        # 1. 本变体独立创建通道和付款；不复用前一变体的链上退款。
+        # 拓扑：payer --3,000 CKB（public）--> trampoline ==(1,000 CKB × 2, private)==> receiver。
+        # 左端出资、右端 0；payer → receiver 为 1,500 CKB，两片经 trampoline，费用上限 15 CKB。
+        payer, trampoline = self.fiber1, self.fiber2
+        receiver = self.start_new_fiber(self.generate_account(10000))
+        for fiber in self.fibers:
+            fiber.get_client().try_count = 1
+            fiber.get_client().timeout = 10
+        upstream = self.open_channel(payer, trampoline, 3000 * CKB, 0, 0, 0)
+        downstream = [
+            self.open_channel(
+                trampoline, receiver, 1000 * CKB, 0, 0, other_config={"public": False}
+            )
+            for _ in range(2)
+        ]
+        self.wait_graph_channels_sync(payer, 1, timeout=120)
+        wait_for_result(
+            "P 已获知 T 的 trampoline 能力",
+            lambda: any(
+                n["pubkey"] == trampoline.get_pubkey()
+                and "TRAMPOLINE_ROUTING_REQUIRED" in n["features"]
+                for n in payer.get_client().graph_nodes({})["nodes"]
+            ),
+        )
+        upstream_before = [get_channel(f, upstream) for f in (payer, trampoline)]
+        downstream_before = [get_channel(trampoline, c) for c in downstream]
+        amount = 1500 * CKB
+        assert all(int(c["local_balance"], 16) < amount for c in downstream_before)
+        assert sum(int(c["local_balance"], 16) for c in downstream_before) >= amount
+        payment_hash = ckb_hash(self.generate_random_preimage())
+        invoice = receiver.get_client().new_invoice(
+            {
+                "amount": hex(amount),
+                "currency": "Fibd",
+                "payment_hash": payment_hash,
+                "hash_algorithm": "ckb_hash",
+                "allow_mpp": True,
+                "allow_trampoline_routing": True,
+                "expiry": hex(86400),
+                "final_expiry_delta": hex(10_800_000),
+            }
+        )
+        payment = payer.get_client().send_payment(
+            {
+                "invoice": invoice["invoice_address"],
+                "trampoline_hops": [trampoline.get_pubkey()],
+                "max_parts": hex(2),
+                "max_fee_amount": hex(amount // 100),
+                "tlc_expiry_limit": hex(172_800_000),
+                "timeout": hex(300),
+            }
+        )
+        assert payment["payment_hash"] == payment_hash
+        self.wait_invoice_state(receiver, payment_hash, "Received", timeout=120)
+        tlcs, incoming, expiry = self._committed_payment(
+            payer, trampoline, receiver, upstream, downstream, payment_hash, amount
+        )
+        self.upstream = (payer, trampoline, upstream, payment_hash, incoming)
+        before = upstream_before
+        locks = [
+            self.get_account_script(f.account_private) for f in (trampoline, receiver)
+        ]
+        # 停 receiver；trampoline 显式强关两条下游，payer–trampoline 保持开放。
+        receiver.stop()
+        chains = []
+        for channel_id, downstream_row, tlc in zip(
+            downstream, downstream_before, (tlcs[2], tlcs[4])
+        ):
+            trampoline.get_client().shutdown_channel(
+                {"channel_id": channel_id, "force": True}
+            )
+            chains.append(self._track_refund_commitment(downstream_row, tlc, locks))
+        self.node.getClient().generate_epochs("0x1", wait_time=0)
+        self._observe_unknown(chains)
+
+        # 2. 先确认每片的退款目的、净额和无原像消费，再触发重启。
+        deadline = self._wait_downstream_refunds(chains, locks, expiry)
+        _, payment = assert_upstream_payment(*self.upstream, held=False)
+
+        # 3. 重启不重置 420 秒结果窗；已传播或尚待传播的退款都须保持正确。
+        self._restart_trampoline(held=False)
+        self._assert_upstream_refunded(before, deadline)
+        # 新付款：退款后的原 payer–trampoline 通道，payer → trampoline 为 1 CKB keysend。
+        probe = payer.get_client().send_payment(
+            {
+                "target_pubkey": trampoline.get_pubkey(),
+                "amount": hex(CKB),
+                "keysend": True,
+            }
+        )
+        self._assert_probe_settled(before, probe["payment_hash"])
+
+    def _committed_payment(
+        self, payer, trampoline, receiver, upstream, downstream, payment_hash, amount
+    ):
         ends = [(payer, upstream, "Outbound"), (trampoline, upstream, "Inbound")]
         for channel_id in downstream:
             ends.extend(
@@ -162,59 +271,44 @@ class TestTrampolineTimeoutRefundRestart(FiberTest):
         assert amount <= incoming <= amount + amount // 100
         latest_expiry = max(int(t["expiry"], 16) for t in (tlcs[2], tlcs[4])) / 1000
         assert 600 < latest_expiry - time.time() <= 48 * 3600, tlcs
-        self.upstream = (payer, trampoline, upstream, payment_hash, incoming)
-        locks = [
-            self.get_account_script(f.account_private) for f in (trampoline, receiver)
-        ]
+        return tlcs, incoming, latest_expiry
 
-        # 2. 强关时保留准确 funding outpoint；上游任何强关都应直接失败。
-        receiver.stop()
-        chains = []
-        for channel_id, before, tlc in zip(
-            downstream, downstream_before, (tlcs[2], tlcs[4])
-        ):
-            packed = bytes.fromhex(before["channel_outpoint"][2:])
-            assert len(packed) == 36
-            outpoint = {
-                "tx_hash": "0x" + packed[:32].hex(),
-                "index": hex(int.from_bytes(packed[32:], "little")),
-            }
-            funding = self.settlement.get_output(outpoint)
-            principal = int(before["local_balance"], 16) + DEFAULT_MIN_DEPOSIT_CKB
-            assert int(funding["capacity"], 16) == (
-                principal + int(before["remote_balance"], 16) + DEFAULT_MIN_DEPOSIT_CKB
-            )
-            trampoline.get_client().shutdown_channel(
-                {"channel_id": channel_id, "force": True}
-            )
-            commitment = wait_for_result(
-                "下游强关交易确认",
-                lambda: self.settlement.find_spending_transaction(outpoint),
-            )
-            locked = [
-                i
-                for i, o in enumerate(commitment["outputs"])
-                if o["lock"]["code_hash"] == COMMIT_LOCK_CODE_HASH
-            ]
-            assert len(locked) == 1, commitment
-            net, fee = self.settlement.net_amounts(commitment, outpoint, locks)
-            chains.append(
-                {
-                    "outpoint": {
-                        "tx_hash": commitment["hash"],
-                        "index": hex(locked[0]),
-                    },
-                    "net": net,
-                    "fee": fee,
-                    "principal": principal,
-                    "funding": int(funding["capacity"], 16),
-                    "tlc": tlc,
-                    "seen_tlc": False,
-                    "refunded": False,
-                }
-            )
-        self.node.getClient().generate_epochs("0x1", wait_time=0)
-        return upstream_before, chains, locks, latest_expiry
+    def _track_refund_commitment(self, before, tlc, locks):
+        packed = bytes.fromhex(before["channel_outpoint"][2:])
+        assert len(packed) == 36
+        outpoint = {
+            "tx_hash": "0x" + packed[:32].hex(),
+            "index": hex(int.from_bytes(packed[32:], "little")),
+        }
+        funding = self.settlement.get_output(outpoint)
+        principal = int(before["local_balance"], 16) + DEFAULT_MIN_DEPOSIT_CKB
+        assert int(funding["capacity"], 16) == (
+            principal + int(before["remote_balance"], 16) + DEFAULT_MIN_DEPOSIT_CKB
+        )
+        commitment = wait_for_result(
+            "下游强关交易确认",
+            lambda: self.settlement.find_spending_transaction(outpoint),
+        )
+        locked = [
+            i
+            for i, o in enumerate(commitment["outputs"])
+            if o["lock"]["code_hash"] == COMMIT_LOCK_CODE_HASH
+        ]
+        assert len(locked) == 1, commitment
+        net, fee = self.settlement.net_amounts(commitment, outpoint, locks)
+        return {
+            "outpoint": {
+                "tx_hash": commitment["hash"],
+                "index": hex(locked[0]),
+            },
+            "net": net,
+            "fee": fee,
+            "principal": principal,
+            "funding": int(funding["capacity"], 16),
+            "tlc": tlc,
+            "seen_tlc": False,
+            "refunded": False,
+        }
 
     def _assert_unknown(self, chains):
         assert_upstream_payment(*self.upstream, held=True)
@@ -341,7 +435,7 @@ class TestTrampolineTimeoutRefundRestart(FiberTest):
 
         return time.monotonic() + RESULT_WAIT
 
-    def _assert_refund_and_probe(self, upstream_before, deadline):
+    def _assert_upstream_refunded(self, upstream_before, deadline):
         payer, trampoline, upstream, payment_hash, _ = self.upstream
 
         # 4. 退款传播后两端本金恢复，再在同一上游通道发新付款验证可用性。
@@ -362,14 +456,10 @@ class TestTrampolineTimeoutRefundRestart(FiberTest):
             after = get_channel(fiber, upstream)
             for field in ("local_balance", "remote_balance"):
                 assert after[field] == before[field], (before, after)
-        probe = payer.get_client().send_payment(
-            {
-                "target_pubkey": trampoline.get_pubkey(),
-                "amount": hex(CKB),
-                "keysend": True,
-            }
-        )
-        self.wait_payment_state(payer, probe["payment_hash"], "Success", timeout=120)
+
+    def _assert_probe_settled(self, upstream_before, probe_hash):
+        payer, trampoline, upstream, payment_hash, _ = self.upstream
+        self.wait_payment_state(payer, probe_hash, "Success", timeout=120)
         wait_for_result(
             "健康付款结清",
             lambda: all(
