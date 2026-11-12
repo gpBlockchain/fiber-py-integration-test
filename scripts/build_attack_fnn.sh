@@ -15,8 +15,6 @@ ATTACK_FIBER_REF="${ATTACK_FIBER_REF:-p2p-tap-v0.10.0-rc3}"
 ATTACK_DESTINATION="${ATTACK_DESTINATION:-$ROOT_DIR/download/fiber/attack/fnn}"
 FIBER_BUILD_DIR="${FIBER_BUILD_DIR:-$ROOT_DIR/.build/fiber-attack-fnn}"
 PROVENANCE_FILE="${PROVENANCE_FILE:-$ROOT_DIR/download/fiber/provenance.env}"
-# Optional, reviewed debug-fixture adaptation. Never applied to the stock build.
-ATTACK_FIBER_PATCH="${ATTACK_FIBER_PATCH:-}"
 
 sha256_file() {
     if command -v sha256sum >/dev/null 2>&1; then
@@ -69,13 +67,6 @@ stock_sha="$(checkout_ref origin "$STOCK_FIBER_REF")"
 build_fnn "$ROOT_DIR/download/fiber/current/fnn"
 
 attack_sha="$(checkout_ref attack "$ATTACK_FIBER_REF")"
-attack_patch_sha=none
-if [[ -n "$ATTACK_FIBER_PATCH" ]]; then
-    test -s "$ATTACK_FIBER_PATCH"
-    git -C "$FIBER_BUILD_DIR" apply --check "$ATTACK_FIBER_PATCH"
-    git -C "$FIBER_BUILD_DIR" apply "$ATTACK_FIBER_PATCH"
-    attack_patch_sha="$(sha256_file "$ATTACK_FIBER_PATCH")"
-fi
 build_fnn "$ATTACK_DESTINATION"
 
 stock_hash="$(sha256_file "$ROOT_DIR/download/fiber/current/fnn")"
@@ -90,7 +81,6 @@ stock_fnn_sha256=$stock_hash
 attack_fiber_repository=$ATTACK_FIBER_REPOSITORY
 attack_fiber_ref=$ATTACK_FIBER_REF
 attack_fiber_sha=$attack_sha
-attack_fixture_patch_sha256=$attack_patch_sha
 attack_destination=$ATTACK_DESTINATION
 attack_base_verified=false
 attack_fnn_profile=debug
