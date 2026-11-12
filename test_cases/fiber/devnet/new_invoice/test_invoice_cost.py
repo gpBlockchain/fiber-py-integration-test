@@ -19,6 +19,9 @@ class TestInvoiceStatus(FiberTest):
         self.fiber3 = self.start_new_fiber(self.generate_account(10000))
         self.open_channel(self.fiber3, self.fiber1, 1000 * 100000000, 1000 * 100000000)
         self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 1000 * 100000000)
+        # 开通道时的初始余额由付款分配，等待结算后再测试发票付款。
+        for fiber in self.fibers:
+            self.wait_fibers_pending_tlc_eq0(fiber)
         preimage = self.generate_random_preimage()
         invoice = self.fiber1.get_client().new_invoice(
             {
