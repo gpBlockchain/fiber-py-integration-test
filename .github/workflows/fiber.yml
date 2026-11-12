@@ -465,6 +465,14 @@ jobs:
 
       - name: Run fiber_test_demo
         run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/send_payment/mpp"
+        env:
+          # Explicit runners handle real-expiry, build-pair, stress, and full startup matrices.
+          # These are deselected here, not counted as passed or skipped behavior checks.
+          PYTEST_ADDOPTS: >-
+            --ignore=test_cases/fiber/devnet/send_payment/mpp/test_mpp_startup_history.py
+            --ignore=test_cases/fiber/devnet/send_payment/mpp/test_mpp_batch_recovery.py
+            --deselect=test_cases/fiber/devnet/send_payment/mpp/test_mpp_success_recovery.py::TestMppUpgrade::test_upgrade_partial_success_and_paginated_queries
+            --deselect=test_cases/fiber/devnet/send_payment/mpp/test_mpp_failure_boundaries.py::TestMppFailureBoundaries::test_direct_timeout_refund_then_sender_restart_and_new_payment
 
       - name: Publish reports
         if: failure()
@@ -575,6 +583,11 @@ jobs:
 
       - name: Run fiber_test_demo
         run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/one_way test_cases/fiber/devnet/trampoline_routing"
+        env:
+          # Real TLC expiry can take more than 19 hours; run these files separately as slow regressions.
+          PYTEST_ADDOPTS: >-
+            --ignore=test_cases/fiber/devnet/trampoline_routing/test_trampoline_timeout_refund.py
+            --ignore=test_cases/fiber/devnet/trampoline_routing/test_trampoline_timeout_refund_restart.py
 
       - name: Publish reports
         if: failure()
