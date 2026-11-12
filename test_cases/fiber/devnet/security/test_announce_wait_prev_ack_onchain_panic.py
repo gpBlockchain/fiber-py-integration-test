@@ -118,8 +118,8 @@ class TestAnnounceWaitPrevAckOnchainPanic(P2pFiberTest):
         # Drop attacker RAA so victim stays waiting_ack after its own CS.
         self.peer.intercept(
             self.channel_id,
-            capture_in=["CommitmentSigned"],
-            drop_out=["RevokeAndAck"],
+            capture_in=["CommitmentSigned", "CommitmentSignedV2"],
+            drop_out=["RevokeAndAck", "RevokeAndAckV2"],
             drop_raa=True,
         )
         outbound = self.victim.get_client().send_payment(
@@ -135,10 +135,14 @@ class TestAnnounceWaitPrevAckOnchainPanic(P2pFiberTest):
         outbound_tlc = self._wait_tlc(
             self.victim, outbound_hash, {"Outbound": "LocalAnnounced"}
         )
-        captured_cs = self.peer.wait("CommitmentSigned", timeout=10)
+        captured_cs = self.peer.wait(
+            ("CommitmentSigned", "CommitmentSignedV2"), timeout=10
+        )
         assert captured_cs.get("kind") in (
             "CommitmentSigned",
             "commitment_signed",
+            "CommitmentSignedV2",
+            "commitment_signed_v2",
         ), captured_cs
 
         # Attacker AddTlc + CS while victim is still waiting_ack. Dev add_tlc

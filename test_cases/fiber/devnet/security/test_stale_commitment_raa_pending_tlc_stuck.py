@@ -81,40 +81,33 @@ class TestStaleCommitmentRaaPendingTlcStuck(P2pFiberTest):
             16,
         )
 
-    def _submit_previous_commitment(self, pre_local_cn, pre_remote_cn):
-        # Dev RPC keys stored txs by lock-args commitment version, which is
-        # typically musig_cn or musig_cn-1. Prefer older numbers first so we
-        # publish the pre-TLC commitment, not the F-0361 post-TLC one.
-        errors = []
-        tried = set()
-        candidates = []
-        for number in (pre_local_cn, pre_remote_cn):
-            if number is None:
-                continue
-            candidates.append(max(number - 1, 0))
-            candidates.append(number)
-        for number in candidates:
-            if number in tried:
-                continue
-            tried.add(number)
-            try:
-                submitted = self.attacker.get_client().call(
-                    "submit_commitment_transaction",
-                    [
-                        {
-                            "channel_id": self.channel_id,
-                            "commitment_number": hex(number),
-                        }
-                    ],
-                )
-                return number, submitted
-            except Exception as err:
-                errors.append(f"{number}: {err}")
-        raise AssertionError(
-            "attacker could not submit the pre-TLC commitment: "
-            f"pre_local_cn={pre_local_cn} pre_remote_cn={pre_remote_cn} "
-            f"errors={errors}"
+    def _snapshot_previous_commitment(self, timeout=10):
+        # The fixture's signed-transaction cache is populated asynchronously.
+        # Read it before adding any TLC, without requesting a Legacy nonce.
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            result = self.attacker.get_client().call(
+                "list_commitment_transactions", [{"channel_id": self.channel_id}]
+            )
+            transactions = result["transactions"]
+            if transactions:
+                return max(transactions, key=lambda tx: _cn(tx["commitment_number"]))
+            time.sleep(0.2)
+        raise TimeoutError("attack fixture did not cache a signed pre-TLC commitment")
+
+    def _submit_previous_commitment(self, previous):
+        # Submit exactly the transaction snapshotted before the payment.
+        # Never retry a different number that could now contain the TLC.
+        number = _cn(previous["commitment_number"])
+        submitted = self.attacker.get_client().call(
+            "submit_commitment_transaction",
+            [{"channel_id": self.channel_id, "commitment_number": hex(number)}],
         )
+        assert submitted["tx_hash"] == previous["tx_hash"], {
+            "pre_tlc_commitment": previous,
+            "submitted": submitted,
+        }
+        return number, submitted
 
     # TEST-MAP: SETTLE-01
     def test_stale_pre_tlc_commitment_closes_and_payment_fails(self):
@@ -126,16 +119,20 @@ class TestStaleCommitmentRaaPendingTlcStuck(P2pFiberTest):
         # channel funds back to it. We do not care about the attacker's side.
         victim_ckb_before = self._chain_ckb(self.victim)
 
-        # 2. Record the pre-TLC commitment numbers only.
-        pre_musig = self.peer.musig2(self.channel_id)
-        pre_local_cn = _cn(pre_musig.get("local_commitment_number"))
-        pre_remote_cn = _cn(pre_musig.get("remote_commitment_number"))
+        # 2. Snapshot the actual signed pre-TLC transaction in the attack fixture.
+        previous = self._snapshot_previous_commitment()
 
         # 3. Attacker receives AddTlc+CS but withholds RAA, so victim stays
         # waiting_ack / LocalAnnounced.
         self.peer.intercept(
             self.channel_id,
-            drop_out=["RevokeAndAck", "CommitmentSigned", "RemoveTlc"],
+            drop_out=[
+                "RevokeAndAck",
+                "RevokeAndAckV2",
+                "CommitmentSigned",
+                "CommitmentSignedV2",
+                "RemoveTlc",
+            ],
             drop_raa=True,
         )
 
@@ -168,9 +165,7 @@ class TestStaleCommitmentRaaPendingTlcStuck(P2pFiberTest):
         assert victim_tlc.get("payment_hash") == payment_hash
 
         # 5. Broadcast the pre-TLC commitment, not the latest TLC-containing one.
-        previous_cn, submitted = self._submit_previous_commitment(
-            pre_local_cn, pre_remote_cn
-        )
+        previous_cn, submitted = self._submit_previous_commitment(previous)
         close_tx = submitted["tx_hash"]
 
         # 6. Confirm the close tx. The published tx is the pre-TLC commitment,
@@ -241,10 +236,16 @@ class TestStaleCommitmentRaaPendingTlcStuck(P2pFiberTest):
             == "live"
         )
 
-        pre_musig = self.peer.musig2(self.channel_id)
+        previous = self._snapshot_previous_commitment()
         self.peer.intercept(
             self.channel_id,
-            drop_out=["RevokeAndAck", "CommitmentSigned", "RemoveTlc"],
+            drop_out=[
+                "RevokeAndAck",
+                "RevokeAndAckV2",
+                "CommitmentSigned",
+                "CommitmentSignedV2",
+                "RemoveTlc",
+            ],
             drop_raa=True,
         )
         payment_hash = sha256_hex(self.generate_random_preimage())
@@ -288,10 +289,7 @@ class TestStaleCommitmentRaaPendingTlcStuck(P2pFiberTest):
             assert channel["state"]["state_name"] == "ChannelReady", channel
             upstream_expiries.append(_cn(tlc["expiry"]))
 
-        previous_cn, submitted = self._submit_previous_commitment(
-            _cn(pre_musig.get("local_commitment_number")),
-            _cn(pre_musig.get("remote_commitment_number")),
-        )
+        previous_cn, submitted = self._submit_previous_commitment(previous)
         close_tx = submitted["tx_hash"]
         self.Miner.miner_until_tx_committed(self.node, close_tx)
         self.node.getClient().generate_epochs("0x1", wait_time=0)
