@@ -37,7 +37,7 @@ on:
       attack_fiber_ref:
         description: Full-payment-hash branch containing the debug attack RPCs
         required: true
-        default: p2p-tap-full-payment-hash
+        default: p2p-tap-full-payment-hash-v0.10.0-rc3
         type: string
 
 permissions:
@@ -51,7 +51,7 @@ env:
   STOCK_FIBER_REPOSITORY: ${{ inputs.stock_fiber_repository || 'https://github.com/nervosnetwork/fiber.git' }}
   STOCK_FIBER_REF: ${{ inputs.stock_fiber_ref || 'v0.10.0-rc3' }}
   ATTACK_FIBER_REPOSITORY: ${{ inputs.attack_fiber_repository || 'https://github.com/gpBlockchain/fiber.git' }}
-  ATTACK_FIBER_REF: ${{ inputs.attack_fiber_ref || 'p2p-tap-full-payment-hash' }}
+  ATTACK_FIBER_REF: ${{ inputs.attack_fiber_ref || 'p2p-tap-full-payment-hash-v0.10.0-rc3' }}
 
 jobs:
   attack-fnn-regressions:
