@@ -32,6 +32,7 @@ import hashlib
 import socket
 import time
 
+from framework.attack_commitment import cached_commitments
 from framework.attack_fnn import LEGACY_COUNTERPARTY_ENV, requires_attack_fnn
 from framework.basic_fiber import COMMIT_LOCK_CODE_HASH
 from framework.basic_p2p import P2pFiberTest
@@ -170,43 +171,34 @@ class TestFullHashEmptySnapshot(P2pFiberTest):
                 self.Miner.miner_with_version(self.node, "0x0")
             time.sleep(1)
 
-    def _submit_earlier_commitment(self, pre_local_cn, pre_remote_cn):
-        """Publish the earlier (empty) commitment, preferring the older number.
+    def _snapshot_s0(self, timeout=10):
+        """Newest signed commitment cached by the attacker before the TLC exists.
 
-        The dev RPC keys stored remote commitments by the lock-args commitment
-        number, so trying ``max(number - 1, 0)`` before the recorded number
-        mirrors SETTLE-01 and keeps S1 (which holds the TLC) out of the choice.
+        The attack fixture caches peer-signed commitments by the lock-args
+        commitment number (and seeds them from the store after an in-place
+        restart). Snapshotting the exact entry avoids guessing numbers from
+        ``get_channel_musig2_public``, which is V1-only and differs on V2.
         """
-        candidates = []
-        for number in (pre_local_cn, pre_remote_cn):
-            if number is None:
-                continue
-            candidates.append(max(number - 1, 0))
-            candidates.append(number)
-        errors = []
-        tried = set()
-        for number in candidates:
-            if number in tried:
-                continue
-            tried.add(number)
-            try:
-                submitted = self.attacker.get_client().call(
-                    "submit_commitment_transaction",
-                    [
-                        {
-                            "channel_id": self.channel_id,
-                            "commitment_number": hex(number),
-                        }
-                    ],
-                )
-                return number, submitted
-            except Exception as err:
-                errors.append(f"{number}: {err}")
-        self.fail(
-            "attacker could not submit the earlier empty commitment: "
-            f"pre_local_cn={pre_local_cn} pre_remote_cn={pre_remote_cn} "
-            f"errors={errors}"
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            txs = cached_commitments(self.attacker.get_client(), self.channel_id)
+            if txs:
+                return txs[-1]
+            time.sleep(0.2)
+        self.fail("attack fixture did not cache the signed empty S0 commitment")
+
+    def _submit_earlier_commitment(self, s0):
+        """Publish exactly the S0 snapshotted before the payment (never S1)."""
+        number = cn(s0["commitment_number"])
+        submitted = self.attacker.get_client().call(
+            "submit_commitment_transaction",
+            [{"channel_id": self.channel_id, "commitment_number": hex(number)}],
         )
+        assert submitted["tx_hash"] == s0["tx_hash"], {
+            "s0": s0,
+            "submitted": submitted,
+        }
+        return number, submitted
 
     def _assert_commitment_layout(self, close_tx, version):
         """The broadcast commitment lock args must keep the negotiated layout."""
@@ -273,15 +265,14 @@ class TestFullHashEmptySnapshot(P2pFiberTest):
         # S0: commitment numbers before the offered TLC exists. S1 (with the
         # TLC) must never be exchanged because the attacker withholds RAA.
         # 证明点 1：记下 S0 的承诺号，后面据此选择“更早的那个承诺”来广播。
-        pre_musig = self.peer.musig2(self.channel_id)
-        pre_local_cn = cn(pre_musig.get("local_commitment_number"))
-        pre_remote_cn = cn(pre_musig.get("remote_commitment_number"))
+        s0 = self._snapshot_s0()
+        pre_local_cn = pre_remote_cn = cn(s0["commitment_number"])
 
         # 证明点 2：扣住 /RevokeAndAck —— S1 签了也换不到对旧承诺的撤销，
         # S0 因此仍是合法快照，这正是本行要覆盖的“首次 RAA 前”窗口。
         self.peer.intercept(
             self.channel_id,
-            drop_out=["RevokeAndAck", "CommitmentSigned", "RemoveTlc"],
+            drop_out=["RevokeAndAck", "RevokeAndAckV2", "CommitmentSigned", "CommitmentSignedV2", "RemoveTlc"],
             drop_raa=True,
         )
 
@@ -319,9 +310,7 @@ class TestFullHashEmptySnapshot(P2pFiberTest):
         # the TLC, using the SETTLE-01 selection rule.
         # 证明点 4 的前置：候选承诺号先取 max(number-1, 0) 再取 number，优先更早的那个，
         # 把含 TLC 的 S1 排除在选择之外。
-        selected_cn, submitted = self._submit_earlier_commitment(
-            pre_local_cn, pre_remote_cn
-        )
+        selected_cn, submitted = self._submit_earlier_commitment(s0)
         close_tx = submitted["tx_hash"]
 
         # The broadcast commitment is the pre-TLC one: it must still use the
