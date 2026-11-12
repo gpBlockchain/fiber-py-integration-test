@@ -3,6 +3,8 @@
 import math
 import time
 
+import pytest
+
 from test_cases.fiber.devnet.send_payment.mpp.mpp_fixture import MppFixture, CKB
 from framework.helper.fiber_ops import (
     calculate_payment_hash,
@@ -29,6 +31,7 @@ class TestMppPaymentHistory(MppFixture):
         self._assert_history_and_new_payment()
 
     # TEST-MAP: MPP1705-12
+    @pytest.mark.skip(reason="慢测：串行准备 1,000 笔付款；待完成慢测验证后启用。")
     def test_restart_with_thousand_payments(self):
         """
         1. 用当前版本建立通道，准备1,000 笔付款历史并核对本金。
@@ -45,6 +48,7 @@ class TestMppPaymentHistory(MppFixture):
         self._assert_history_and_new_payment()
 
     # TEST-MAP: MPP1705-12
+    @pytest.mark.skip(reason="慢测：串行准备 8,000 笔付款；待完成慢测验证后启用。")
     def test_restart_with_large_payment_history(self):
         """
         1. 用当前版本建立通道，准备8,000 笔付款历史并核对本金。

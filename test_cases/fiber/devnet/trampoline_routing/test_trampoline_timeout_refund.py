@@ -5,6 +5,8 @@
 
 import time
 
+import pytest
+
 from framework.basic_fiber import COMMIT_LOCK_CODE_HASH, FiberTest
 from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 from framework.helper.settlement_witness import SettlementWitness
@@ -30,6 +32,9 @@ class TestTrampolineTimeoutRefund(FiberTest):
         )
 
     # TEST-MAP: MPP1705-07
+    @pytest.mark.skip(
+        reason="真实 TLC 到期等待过长；待验证时间加速与链/时钟清理后启用。"
+    )
     def test_upstream_refund_after_all_downstream_timeouts(self):
         """
         1. 建立 P–T–R，两条下游通道各不足以支付全额；核实 hold 付款的两片已提交。

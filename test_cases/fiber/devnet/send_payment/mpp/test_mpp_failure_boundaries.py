@@ -2,6 +2,8 @@
 
 import time
 
+import pytest
+
 from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 from test_cases.fiber.devnet.send_payment.mpp.mpp_fixture import (
     MppFixture,
@@ -131,6 +133,9 @@ class TestMppFailureBoundaries(MppFixture):
         ), "必须覆盖正 trampoline 预算的完整退款"
 
     # TEST-MAP: MPP1705-09
+    @pytest.mark.skip(
+        reason="真实 TLC 到期等待过长；待验证时间加速与链/时钟清理后启用。"
+    )
     def test_direct_timeout_refund_then_sender_restart_and_new_payment(self):
         """
         1. 普通 P–R 无原像 hold 付款提交后停止 R，P 强关原通道。

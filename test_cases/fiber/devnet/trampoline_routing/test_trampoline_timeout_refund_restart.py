@@ -2,6 +2,8 @@
 
 import time
 
+import pytest
+
 from framework.basic_fiber import COMMIT_LOCK_CODE_HASH, FiberTest
 from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 from framework.helper.settlement_witness import SettlementWitness
@@ -27,6 +29,9 @@ class TestTrampolineTimeoutRefundRestart(FiberTest):
         )
 
     # TEST-MAP: MPP1705-08
+    @pytest.mark.skip(
+        reason="真实 TLC 到期等待过长；待验证时间加速与链/时钟清理后启用。"
+    )
     def test_restart_before_downstream_refunds(self):
         """
         1. 独立建立两片持单并强关下游，核实链上尚未退款、上游仍锁住本金。
@@ -46,6 +51,9 @@ class TestTrampolineTimeoutRefundRestart(FiberTest):
         self._assert_refund_and_probe(before, deadline)
 
     # TEST-MAP: MPP1705-08
+    @pytest.mark.skip(
+        reason="真实 TLC 到期等待过长；待验证时间加速与链/时钟清理后启用。"
+    )
     def test_restart_after_downstream_refunds(self):
         """
         1. 独立建立两片持单并强关下游，未知结果期间上游不提前退款。

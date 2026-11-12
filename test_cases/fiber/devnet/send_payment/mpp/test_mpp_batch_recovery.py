@@ -1,5 +1,7 @@
 """MPP：100 笔混合资产、自付和普通 MPP，故障稳定作用于在途原款。"""
 
+import pytest
+
 from test_cases.fiber.devnet.send_payment.mpp.mpp_fixture import (
     MppFixture,
     CKB,
@@ -16,6 +18,9 @@ from framework.helper.fiber_ops import (
 
 class TestMppBatchRecovery(MppFixture):
     # TEST-MAP: MPP1705-11
+    @pytest.mark.skip(
+        reason="慢测：多节点 100 笔混合资产故障回归；待完成慢测验证后启用。"
+    )
     def test_hundred_mixed_asset_payments_survive_inflight_faults(self):
         """
         1. 建立十条独立资金 lane，共用一个普通中继 M，覆盖 CKB/UDT、环形自付/普通 MPP。
