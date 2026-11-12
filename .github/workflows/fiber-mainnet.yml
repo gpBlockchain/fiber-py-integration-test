@@ -13,7 +13,7 @@ on:
         default: 'https://github.com/nervosnetwork/fiber.git'
       GitBranch:
         description: 'fiber -git branch or tag'
-        default: 'v0.10.0-rc2'
+        default: 'v0.10.0-rc3'
       BuildFIBER:
         description: 'build fiber'
         default: 'false'
@@ -82,7 +82,7 @@ jobs:
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
           title: "Fiber Mainnet Test Succeeded"
-          description: "Fiber mainnet test succeeded for fiber branch ${{ github.event.inputs.GitBranch || 'v0.10.0-rc2' }}. Triggered by ${{ github.actor }}. Check run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}."
+          description: "Fiber mainnet test succeeded for fiber branch ${{ github.event.inputs.GitBranch || 'v0.10.0-rc3' }}. Triggered by ${{ github.actor }}. Check run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}."
           color: 0x00ff00
 
       - name: Notify Discord on failure
@@ -93,5 +93,5 @@ jobs:
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
           content: "<@802020984097734656>"
           title: "Fiber Mainnet Test Failed"
-          description: "Fiber mainnet test finished with ${{ needs.build.result }} for fiber branch ${{ github.event.inputs.GitBranch || 'v0.10.0-rc2' }}. Check run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}."
+          description: "Fiber mainnet test finished with ${{ needs.build.result }} for fiber branch ${{ github.event.inputs.GitBranch || 'v0.10.0-rc3' }}. Check run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}."
           color: 0xff0000

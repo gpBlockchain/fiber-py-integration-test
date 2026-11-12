@@ -10,7 +10,7 @@ on:
         default: 'https://github.com/nervosnetwork/fiber.git'
       GitBranch:
         description: 'fiber -git branch or tag'
-        default: 'v0.10.0-rc2'
+        default: 'v0.10.0-rc3'
       BuildFIBER:
         description: 'build fiber'
         default: 'true'

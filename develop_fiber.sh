@@ -5,7 +5,7 @@ set -e
 # make prod
 # cp target/release/ckb-cli ../source/ckb-cli
 # cd ../
-DEFAULT_FIBER_BRANCH="v0.10.0-rc2"
+DEFAULT_FIBER_BRANCH="v0.10.0-rc3"
 DEFAULT_FIBER_URL="https://github.com/nervosnetwork/fiber.git"
 DEFAULT_BUILD_FIBER=false
 

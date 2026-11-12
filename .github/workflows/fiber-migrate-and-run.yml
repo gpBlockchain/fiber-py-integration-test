@@ -10,7 +10,7 @@ on:
       fiber_ref:
         description: 'Branch / tag / commit SHA to build'
         required: true
-        default: 'v0.10.0-rc2'
+        default: 'v0.10.0-rc3'
       store_date:
         description: 'DB date (YYYYMMDD), leave empty to use today'
         required: false

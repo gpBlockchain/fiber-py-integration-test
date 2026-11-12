@@ -16,7 +16,7 @@ on:
       fiber_ref:
         description: Fiber branch or tag to test
         required: true
-        default: v0.10.0-rc2
+        default: v0.10.0-rc3
         type: string
       BuildFIBER:
         description: Build Fiber from the selected source revision
