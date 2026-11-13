@@ -298,9 +298,9 @@ class TestFullHashBadPreimage(P2pFiberTest):
                 self.attacker.stop()
                 self.attacker.fiber_config_enum = FiberConfigPath.ATTACK_FULL_HASH_DEV
                 self.attacker.extra_env = configured_env
-                start_with_confirm(self.attacker, confirm="y", timeout=60)
+                start_with_confirm(self.attacker, confirm="y")
             self.victim.fiber_config_enum = FiberConfigPath.CURRENT_DEV
-            start_with_confirm(self.victim, confirm="y", timeout=60)
+            start_with_confirm(self.victim, confirm="y")
             self.victim.connect_peer(self.attacker)
             self._channel_ready(self.channel_id)
             after = self._channel(self.victim)

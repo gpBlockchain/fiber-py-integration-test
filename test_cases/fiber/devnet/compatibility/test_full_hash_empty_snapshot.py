@@ -238,9 +238,9 @@ class TestFullHashEmptySnapshot(P2pFiberTest):
         self.attacker.stop()
         self.attacker.fiber_config_enum = FiberConfigPath.ATTACK_FULL_HASH_DEV
         self.attacker.extra_env = LEGACY_COUNTERPARTY_ENV
-        start_with_confirm(self.attacker, confirm="y", timeout=60)
+        start_with_confirm(self.attacker, confirm="y")
         self.victim.fiber_config_enum = FiberConfigPath.CURRENT_DEV
-        start_with_confirm(self.victim, confirm="y", timeout=60)
+        start_with_confirm(self.victim, confirm="y")
         self.victim.connect_peer(self.attacker)
         for fiber, snapshot in (
             (self.victim, before),

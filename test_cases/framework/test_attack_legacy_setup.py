@@ -1,5 +1,6 @@
 """Keep Legacy attack cases on an old-old channel until their nodes restart."""
 
+from inspect import signature
 from io import BytesIO
 from types import SimpleNamespace
 
@@ -38,7 +39,10 @@ def test_legacy_attack_setup_opens_old_old_before_upgrading(monkeypatch):
         test.channel_id = "original-channel"
         events.append(("old-old", "ready"))
 
-    def restart(node, **_kwargs):
+    def restart(node, **kwargs):
+        arguments = signature(_helpers.start_with_confirm).bind(node, **kwargs)
+        arguments.apply_defaults()
+        assert arguments.arguments["timeout"] == 300
         events.append((node.name, "restart", node.fiber_config_enum, node.extra_env))
 
     channel = {
@@ -173,6 +177,12 @@ def test_empty_snapshot_legacy_opens_old_old_before_upgrade(monkeypatch):
         test.channel_id = "original-channel"
         events.append(("old-old", "ready"))
 
+    def restart(node, **kwargs):
+        arguments = signature(_helpers.start_with_confirm).bind(node, **kwargs)
+        arguments.apply_defaults()
+        assert arguments.arguments["timeout"] == 300
+        events.append((node.name, "restart", node.fiber_config_enum, node.extra_env))
+
     channel = {
         "channel_id": "original-channel",
         "channel_outpoint": "funding-cell",
@@ -189,13 +199,7 @@ def test_empty_snapshot_legacy_opens_old_old_before_upgrade(monkeypatch):
         "wait_channel_state",
         lambda test, node, *_args, **_kwargs: events.append((node.name, "ready")),
     )
-    monkeypatch.setattr(
-        empty_cases,
-        "start_with_confirm",
-        lambda node, **_kwargs: events.append(
-            (node.name, "restart", node.fiber_config_enum, node.extra_env)
-        ),
-    )
+    monkeypatch.setattr(empty_cases, "start_with_confirm", restart)
 
     test = empty_cases.TestFullHashEmptySnapshot()
     test.setup_method(
