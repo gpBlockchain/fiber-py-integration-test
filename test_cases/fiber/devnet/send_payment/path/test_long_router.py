@@ -60,6 +60,9 @@ class TestLongRouter(FiberTest):
             )
         )
         self.wait_payment_state(self.fibers[0], payment["payment_hash"], "Success")
+        # Payment Success can precede channel balance updates along the route.
+        for fiber in self.fibers:
+            self.wait_fibers_pending_tlc_eq0(fiber)
         after_balance = self.get_fibers_balance()
         result = self.get_channel_balance_change(before_balance, after_balance)
         print(result)

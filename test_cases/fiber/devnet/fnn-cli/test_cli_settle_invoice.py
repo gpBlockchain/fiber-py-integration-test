@@ -1,5 +1,4 @@
 import hashlib
-import time
 
 import pytest
 
@@ -43,7 +42,7 @@ class TestCliSettleInvoice(SharedFiberTest):
                 "invoice": invoice["invoice_address"],
             }
         )
-        time.sleep(5)
+        self.wait_invoice_state(self.fiber2, payment_hash, "Received")
 
         got = self.fiber2.get_client().get_invoice({"payment_hash": payment_hash})
         assert got["status"] == "Received"
@@ -52,6 +51,8 @@ class TestCliSettleInvoice(SharedFiberTest):
         cli2.settle_invoice(payment_hash, preimage)
 
         self.wait_payment_state(self.fiber1, payment_hash, "Success")
+        # Sender success can precede the receiver's invoice state update.
+        self.wait_invoice_state(self.fiber2, payment_hash, "Paid")
 
         got_after = cli2.get_invoice(payment_hash)
         assert got_after["status"] == "Paid"
@@ -76,12 +77,14 @@ class TestCliSettleInvoice(SharedFiberTest):
                 "invoice": invoice["invoice_address"],
             }
         )
-        time.sleep(5)
+        self.wait_invoice_state(self.fiber2, payment_hash, "Received")
 
         cli2 = FnnCli(f"http://127.0.0.1:{self.fiber2.rpc_port}")
         cli2.settle_invoice(payment_hash, preimage)
 
         self.wait_payment_state(self.fiber1, payment_hash, "Success")
+        # Sender success can precede the receiver's invoice state update.
+        self.wait_invoice_state(self.fiber2, payment_hash, "Paid")
 
         cli_result = cli2.get_invoice(payment_hash)
         rpc_result = self.fiber2.get_client().get_invoice(
