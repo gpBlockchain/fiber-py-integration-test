@@ -47,6 +47,10 @@ class TestNodeState(FiberTest):
         node4_info = self.fiber4.get_client().node_info()
         fiber4_pub = node4_info["pubkey"]
         for i in range(30):
+            # Bound in-flight route attempts; leave the final batch for shutdown.
+            if i and i % 10 == 0:
+                for fiber in self.fibers:
+                    self.wait_fibers_pending_tlc_eq0(fiber)
             payment = self.fiber1.get_client().send_payment(
                 {
                     "target_pubkey": fiber4_pub,

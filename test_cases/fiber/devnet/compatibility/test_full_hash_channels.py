@@ -11,8 +11,6 @@ import socket
 import subprocess
 import time
 
-import pytest
-
 from framework.basic_fiber import COMMIT_LOCK_CODE_HASH
 from framework.config import (
     DEFAULT_MIN_DEPOSIT_CKB,
@@ -668,10 +666,10 @@ class TestFullHashChannels(ContractUpgradeSupport):
     # TEST-MAP: H32V2-34
     # TEST-EVIDENCE-BEGIN: H32V2-34
     # Evidence | partial | A peer without CHANNEL_V2 sends OpenChannel to the new node;
-    # receiver rejection and sender TxAbort/failure are checked. The local feature-off
-    # direction still needs a fixture; current 704a14e may fail the TxAbort oracle.
+    # receiver has no pending record or funding side effect; opener list_channels(
+    # only_pending) shows Closed with CHANNEL_V2 failure_detail after fiber#1736 TxAbort.
+    # The local feature-off inbound direction still needs a fixture.
     # TEST-EVIDENCE-END: H32V2-34
-    @pytest.mark.skip("no errr: CHANNEL_V2")
     def test_new_node_rejects_legacy_inbound_open(self):
         """1. 核对入站两端的 CHANNEL_V2 差异；2. 旧节点发起开通并等待失败终态；3. 检查接收方无通道及 funding 副作用。"""
         # 1. 接收方保持默认自动接受，准入拒绝必须先于自动接受。
@@ -711,7 +709,7 @@ class TestFullHashChannels(ContractUpgradeSupport):
         sender_record = None
         while time.monotonic() < deadline:
             records = self.fiber1.get_client().list_channels(
-                {"include_closed": True, "pubkey": self.fiber2.get_pubkey()}
+                {"only_pending": True, "pubkey": self.fiber2.get_pubkey()}
             )["channels"]
             sender_record = next(
                 (c for c in records if c["channel_id"] == temporary_id), None

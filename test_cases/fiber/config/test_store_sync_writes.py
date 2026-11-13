@@ -44,6 +44,10 @@ class TestStoreSyncWrites(FiberTest):
         self.send_payment(self.fiber1, self.fiber2, 1 * CKB)
 
         # 3. 记录双方余额，重启 fiber1 后核对通道与余额。
+        # Payment Success 可能早于通道账本更新，先等待双方 TLC 结清。
+        for fiber in (self.fiber1, self.fiber2):
+            self.wait_fibers_pending_tlc_eq0(fiber)
+
         def balances():
             channels1 = self.fiber1.get_client().list_channels({})["channels"]
             channels2 = self.fiber2.get_client().list_channels({})["channels"]

@@ -521,6 +521,9 @@ class FiberTest(CkbTest):
         # )
         if fiber2_balance != 0:
             self.send_payment(fiber1, fiber2, fiber2_balance, True, udt, 10)
+            # 初始余额分配完成后再返回；Payment Success 可能早于通道账本更新。
+            for fiber in (fiber1, fiber2):
+                self.wait_channel_tlcs_settled(fiber, channel_id)
         if fiber2_fee != 1000:
             fiber2.get_client().update_channel(
                 {
@@ -1168,6 +1171,36 @@ class FiberTest(CkbTest):
         for _ in range(num):
             hash_str += hex(random.randint(0, 15))[2:]
         return hash_str
+
+    def wait_channel_tlcs_settled(self, fiber, channel_id, timeout=30):
+        """等待指定 CKB/UDT 通道在途金额清零，只查询、不发起或重试付款。"""
+        deadline = time.monotonic() + timeout
+        while True:
+            channels = fiber.get_client().list_channels({"include_closed": True})[
+                "channels"
+            ]
+            channel = next(
+                (
+                    channel
+                    for channel in channels
+                    if channel["channel_id"] == channel_id
+                ),
+                None,
+            )
+            if (
+                channel is not None
+                and channel["state"]["state_name"] == "ChannelReady"
+                and int(channel["offered_tlc_balance"], 16) == 0
+                and int(channel["received_tlc_balance"], 16) == 0
+            ):
+                return channel
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"Channel {channel_id} TLCs did not settle within {timeout}s: "
+                    f"{channel}"
+                )
+            time.sleep(min(1, remaining))
 
     def wait_fibers_pending_tlc_eq0(self, fiber, wait_times=30):
         for i in range(wait_times):
