@@ -20,7 +20,7 @@ versions = [
     "0.8.1",
     "0.9.0",
     "0.9.1",
-    "0.10.0-rc3",
+    "0.10.0",
 ]
 
 DOWNLOAD_DIR = "download/fiber"
