@@ -99,7 +99,9 @@ class TestMaxTlcNumberInFlight(FiberTest):
             graph_channel = next(
                 (
                     channel
-                    for channel in self.fiber1.get_client().graph_channels({})["channels"]
+                    for channel in self.fiber1.get_client().graph_channels({})[
+                        "channels"
+                    ]
                     if {channel["node1"], channel["node2"]}
                     == {self.fiber1.get_pubkey(), self.fiber2.get_pubkey()}
                 ),
