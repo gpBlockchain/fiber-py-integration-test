@@ -555,7 +555,21 @@ class TestFullHashChannels(ContractUpgradeSupport):
                 self.open_ready(external)
 
                 # 2. 已完成付款证明通道可用；再留下已承诺 TLC。
+                sender_before = int(self.channel(self.fiber1)["local_balance"], 16)
+                receiver_before = int(self.channel(self.fiber2)["local_balance"], 16)
                 self.send_payment(self.fiber1, self.fiber2, CKB)
+                self.wait_channel_tlcs_settled(
+                    self.fiber1,
+                    self.channel_id,
+                    timeout=60,
+                    expected_local_balance=sender_before - CKB,
+                )
+                self.wait_channel_tlcs_settled(
+                    self.fiber2,
+                    self.channel_id,
+                    timeout=60,
+                    expected_local_balance=receiver_before + CKB,
+                )
                 self.record_channel()
                 payment_hash, preimage = self.hold_one_payment()
 

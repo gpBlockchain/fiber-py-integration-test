@@ -92,38 +92,8 @@ class TestMaxTlcNumberInFlight(FiberTest):
             expected_local_balance=100 * 100000000 + 1000,
         )
         amount = 1 * 100000000
-        # The graph's directional outbound liquidity may lag behind the channel
-        # balance even after the seed payment reports Success.
-        deadline = time.monotonic() + 60
-        while True:
-            graph_channel = next(
-                (
-                    channel
-                    for channel in self.fiber1.get_client().graph_channels({})[
-                        "channels"
-                    ]
-                    if {channel["node1"], channel["node2"]}
-                    == {self.fiber1.get_pubkey(), self.fiber2.get_pubkey()}
-                ),
-                None,
-            )
-            update = None
-            if graph_channel is not None:
-                direction = (
-                    "update_info_of_node1"
-                    if graph_channel["node1"] == self.fiber1.get_pubkey()
-                    else "update_info_of_node2"
-                )
-                update = graph_channel[direction]
-            liquidity = update.get("outbound_liquidity") if update else None
-            if liquidity is not None and int(liquidity, 16) >= amount:
-                break
-            if time.monotonic() >= deadline:
-                raise TimeoutError(
-                    f"Graph outbound liquidity did not reach {amount}: "
-                    f"channel={graph_channel}"
-                )
-            time.sleep(1)
+        # Graph outbound_liquidity is optional; the settled local balance above
+        # is the observable proof that this channel can fund the hold payments.
         for i in range(max_tlc_number_in_flight):
             print("current max_tlc_number_in_flight:", i)
             invoice, payment_hash, _preimage = self.new_hold_invoice(
