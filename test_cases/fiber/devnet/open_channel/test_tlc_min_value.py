@@ -129,12 +129,17 @@ class TlcMinValue(FiberTest):
             f"Expected substring '{expected_error_message}' "
             f"not found in actual string '{exc_info.value.args[0]}'"
         )
+        channel_id = before_channel["channels"][0]["channel_id"]
         self.send_payment(self.fiber1, self.fiber2, 100 * 100000000)
-        after_channel = self.fiber1.get_client().list_channels({})
-        assert (
-            int(before_channel["channels"][0]["local_balance"], 16)
-            - int(after_channel["channels"][0]["local_balance"], 16)
-            == 100 * 100000000
+        before_local_balance = int(before_channel["channels"][0]["local_balance"], 16)
+        after_channel = self.wait_channel_tlcs_settled(
+            self.fiber1,
+            channel_id,
+            timeout=60,
+            expected_local_balance=before_local_balance - 100 * 100000000,
+        )
+        assert before_local_balance - int(after_channel["local_balance"], 16) == (
+            100 * 100000000
         )
 
         # node2 send 2 ckb
@@ -159,10 +164,16 @@ class TlcMinValue(FiberTest):
         )
         self.wait_payment_state(self.fiber2, payment["payment_hash"], "Success")
 
-        after_channel = self.fiber2.get_client().list_channels({})
-        assert int(before_channel["channels"][0]["local_balance"], 16) - int(
-            after_channel["channels"][0]["local_balance"], 16
-        ) == int(invoice_balance, 16)
+        before_local_balance = int(before_channel["channels"][0]["local_balance"], 16)
+        after_channel = self.wait_channel_tlcs_settled(
+            self.fiber2,
+            channel_id,
+            timeout=60,
+            expected_local_balance=before_local_balance - int(invoice_balance, 16),
+        )
+        assert before_local_balance - int(after_channel["local_balance"], 16) == int(
+            invoice_balance, 16
+        )
 
         # node2 send 1 ckb
         channels = self.fiber1.get_client().list_channels({})

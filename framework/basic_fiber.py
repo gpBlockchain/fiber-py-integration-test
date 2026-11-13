@@ -1172,8 +1172,10 @@ class FiberTest(CkbTest):
             hash_str += hex(random.randint(0, 15))[2:]
         return hash_str
 
-    def wait_channel_tlcs_settled(self, fiber, channel_id, timeout=30):
-        """等待指定 CKB/UDT 通道在途金额清零，只查询、不发起或重试付款。"""
+    def wait_channel_tlcs_settled(
+        self, fiber, channel_id, timeout=30, expected_local_balance=None
+    ):
+        """等待通道 TLC 清零，并可选等待指定本地余额；仅查询。"""
         deadline = time.monotonic() + timeout
         while True:
             channels = fiber.get_client().list_channels({"include_closed": True})[
@@ -1192,13 +1194,17 @@ class FiberTest(CkbTest):
                 and channel["state"]["state_name"] == "ChannelReady"
                 and int(channel["offered_tlc_balance"], 16) == 0
                 and int(channel["received_tlc_balance"], 16) == 0
+                and (
+                    expected_local_balance is None
+                    or int(channel["local_balance"], 16) == expected_local_balance
+                )
             ):
                 return channel
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError(
-                    f"Channel {channel_id} TLCs did not settle within {timeout}s: "
-                    f"{channel}"
+                    f"Channel {channel_id} TLCs did not settle within {timeout}s "
+                    f"(expected local balance: {expected_local_balance}): {channel}"
                 )
             time.sleep(min(1, remaining))
 
