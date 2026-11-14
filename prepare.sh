@@ -2,7 +2,7 @@ set -ex
 
 # Build the selected Fiber release into the shared CI runtime path.
 # GitBranch may override the default tag for targeted regression runs.
-DEFAULT_FIBER_BRANCH="v0.10.0"
+DEFAULT_FIBER_BRANCH="v0.10.1"
 DEFAULT_FIBER_URL="https://github.com/nervosnetwork/fiber.git"
 
 GitFIBERBranch="${GitBranch:-$DEFAULT_FIBER_BRANCH}"
