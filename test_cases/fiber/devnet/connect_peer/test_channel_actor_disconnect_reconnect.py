@@ -143,7 +143,7 @@ class TestChannelActorDisconnectReconnect(FiberTest):
                 return
             time.sleep(0.5)
         assert False, (
-            "pending TLCs did not clear on every restarted channel; "
+            "pending TLCs did not clear on every selected channel; "
             f"last_snapshot={last_snapshot}"
         )
 
@@ -159,7 +159,9 @@ class TestChannelActorDisconnectReconnect(FiberTest):
         )
 
     def test_channel_remains_usable_after_disconnect_reconnect(self):
-        self.open_channel(self.fiber1, self.fiber2, 500 * 100000000, 100 * 100000000)
+        channel_id = self.open_channel(
+            self.fiber1, self.fiber2, 500 * 100000000, 100 * 100000000
+        )
 
         before = self.send_payment(self.fiber1, self.fiber2, 1 * 100000000)
         self.wait_payment_state(self.fiber1, before, "Success")
@@ -168,11 +170,15 @@ class TestChannelActorDisconnectReconnect(FiberTest):
 
         after = self.send_payment(self.fiber1, self.fiber2, 1 * 100000000)
         self.wait_payment_state(self.fiber1, after, "Success")
-        assert _pending_tlc_count(self.fiber1, self.fiber2.get_pubkey()) == 0
-        assert _pending_tlc_count(self.fiber2, self.fiber1.get_pubkey()) == 0
+        # Payment success can precede both peers committing the TLC removal.
+        self._wait_for_channels_without_pending_tlcs(
+            [channel_id], self.fiber1.get_pubkey(), self.fiber2.get_pubkey()
+        )
 
     def test_pending_hold_tlc_settles_after_disconnect_reconnect(self):
-        self.open_channel(self.fiber1, self.fiber2, 500 * 100000000, 100 * 100000000)
+        channel_id = self.open_channel(
+            self.fiber1, self.fiber2, 500 * 100000000, 100 * 100000000
+        )
 
         preimage = self.generate_random_preimage()
         payment_hash = _sha256_hex(preimage)
@@ -200,8 +206,9 @@ class TestChannelActorDisconnectReconnect(FiberTest):
         )
         self.wait_payment_state(self.fiber1, payment["payment_hash"], "Success", 120)
         self.wait_invoice_state(self.fiber2, payment_hash, "Paid", 120, 1)
-        assert _pending_tlc_count(self.fiber1, self.fiber2.get_pubkey()) == 0
-        assert _pending_tlc_count(self.fiber2, self.fiber1.get_pubkey()) == 0
+        self._wait_for_channels_without_pending_tlcs(
+            [channel_id], self.fiber1.get_pubkey(), self.fiber2.get_pubkey()
+        )
 
     def test_multiple_channels_with_pending_tlc_survive_both_nodes_restart(self):
         fiber1_pubkey = self.fiber1.get_pubkey()

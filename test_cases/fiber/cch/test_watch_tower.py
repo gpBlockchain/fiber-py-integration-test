@@ -132,7 +132,26 @@ class TestWatchTower(FiberCchTest):
         self.LNDs[1].ln_cli_with_cmd("listinvoices")
         self.LNDs[1].ln_cli_with_cmd("pendingchannels")
 
-        self.btcNode.miner(50)
-        self.wait_payment_state(self.fiber2, payment["payment_hash"])
-        # print("time out ")
-        # pass
+        # Keep confirming blocks while LND publishes/replaces its HTLC sweep.
+        # A single burst can finish before the sweep is ready for confirmation.
+        deadline = time.monotonic() + 360
+        last_payment = None
+        while time.monotonic() < deadline:
+            last_payment = self.fiber2.get_client().get_payment(
+                {"payment_hash": payment["payment_hash"]}
+            )
+            if last_payment["status"] == "Success":
+                break
+            assert last_payment["status"] != "Failed", last_payment
+            self.btcNode.miner(1)
+            time.sleep(1)
+        else:
+            order = self.fiber1.get_client().get_cch_order(
+                {"payment_hash": payment_hash}
+            )
+            pending_channels = self.LNDs[1].ln_cli_with_cmd("pendingchannels")
+            pytest.fail(
+                "payment did not settle within 360s while mining Bitcoin blocks; "
+                f"payment={last_payment}, order={order}, "
+                f"lnd_pending_channels={pending_channels}"
+            )
