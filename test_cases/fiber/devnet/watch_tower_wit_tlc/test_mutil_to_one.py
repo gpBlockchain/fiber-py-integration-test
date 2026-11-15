@@ -56,20 +56,35 @@ class TestMutilToOne(FiberTest):
         time.sleep(10)
         self.add_time_and_generate_block(1, 600)
         time.sleep(10)
+        previous_outpoints = None
+        last_change_tip = None
         for _ in range(CHAIN_DEPTH_WAIT_ATTEMPTS):
             tip_number = self.node.getClient().get_tip_block_number()
-            latest_commit_number = self.get_latest_commit_tx_number()
-            if tip_number - latest_commit_number >= 20:
+            indexer_tip = self.node.getClient().get_indexer_tip()
+            if indexer_tip is None or int(indexer_tip["block_number"], 16) < tip_number:
+                time.sleep(5)
+                continue
+            commit_cells = self.get_commit_cells()
+            current_outpoints = {
+                (cell["out_point"]["tx_hash"], cell["out_point"]["index"])
+                for cell in commit_cells
+            }
+            # Consumed cells disappear from get_commit_cells(), so the newest
+            # remaining cell can be old while other claims are still progressing.
+            # Observe an unchanged live set before advancing past TLC expiry.
+            if current_outpoints != previous_outpoints:
+                previous_outpoints = current_outpoints
+                last_change_tip = tip_number
+            if not current_outpoints or tip_number - last_change_tip >= 20:
                 break
             time.sleep(5)
         else:
-            tip_number = self.node.getClient().get_tip_block_number()
-            latest_commit_number = self.get_latest_commit_tx_number()
-            if tip_number - latest_commit_number < 20:
-                raise TimeoutError(
-                    "Timed out waiting for 20 blocks after the latest commit: "
-                    f"tip={tip_number}, latest_commit={latest_commit_number}"
-                )
+            raise TimeoutError(
+                "Timed out waiting for commitment cells to stop changing for 20 blocks: "
+                f"tip={tip_number}, indexer_tip={indexer_tip}, "
+                f"last_change_tip={last_change_tip}, "
+                f"remaining_commit_outpoints={previous_outpoints}"
+            )
 
         for _ in range(COMMIT_CELL_SWEEP_ROUNDS):
             commit_cells = self.get_commit_cells()
