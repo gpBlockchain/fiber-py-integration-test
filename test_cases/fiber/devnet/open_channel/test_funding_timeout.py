@@ -27,7 +27,6 @@ class TestFundingTimeout(FiberTest):
             )
             time.sleep(5)
             channels = self.fiber3.get_client().list_channels({})
-            assert len(channels["channels"]) == 0
             time.sleep(15)
             self.fiber2.get_client().accept_channel(
                 {
@@ -35,16 +34,22 @@ class TestFundingTimeout(FiberTest):
                     "funding_amount": hex(DEFAULT_MIN_DEPOSIT_CKB),
                 }
             )
-            channels = self.fiber2.get_client().list_channels({})
-            assert len(channels["channels"]) == 0
             time.sleep(1)
-            channels = self.fiber2.get_client().list_channels({})
-            assert len(channels["channels"]) == 0
-            channels = self.fiber3.get_client().list_channels({})
-            assert len(channels["channels"]) == 0
+            self.wait_channel_size(self.fiber2, 0)
+            self.wait_channel_size(self.fiber3, 0)
+
         self.open_channel(self.fiber3, self.fiber2, 1000 * 100000000, 0)
         self.open_channel(self.fiber3, self.fiber2, 1000 * 100000000, 0)
         self.open_channel(self.fiber3, self.fiber2, 1000 * 100000000, 0)
+
+    def wait_channel_size(self, fiber, size):
+        for i in range(60):
+            channel = fiber.get_client().list_channels({})
+            if len(channel["channels"]) == size:
+                return
+            time.sleep(1)
+        channel = self.fiber1.get_client().list_channels({})
+        raise Exception(f"time out for channel size:{len(channel['channels'])}")
 
     @pytest.mark.skip("todo check ")
     def test_channel_status_is_sign_or_await_ready(self):

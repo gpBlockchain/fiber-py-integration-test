@@ -1,4 +1,6 @@
 from framework.basic import CkbTest
+from pathlib import Path
+import shutil
 import socket
 
 from framework.config import DEFAULT_MIN_DEPOSIT_CKB
@@ -9,7 +11,7 @@ from framework.util import generate_account_privakey, get_project_root
 from framework.util import run_command
 import time
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 from framework.util import to_int_from_big_uint128_le, change_time
 import logging
 import os
@@ -323,6 +325,36 @@ class FiberTest(CkbTest):
         fiber.start(fnn_log_level=self.fnn_log_level)
         return fiber
 
+    def restore_fiber_from_backup(
+        self, fiber, backup_path, key_backup_dir, timeout=120
+    ):
+        """停机保留现有密钥，用节点 CLI 恢复备份并重新启动。"""
+        key_backup_dir = Path(key_backup_dir)
+        key_backup_dir.mkdir(parents=True)
+        fiber.stop()
+        for key in ("fiber/sk", "ckb/key"):
+            shutil.move(
+                Path(fiber.tmp_path) / key,
+                key_backup_dir / key.replace("/", "-"),
+            )
+        result = subprocess.run(
+            [
+                Path(get_project_root()) / fiber.fiber_config_enum.fiber_bin_path,
+                "-c",
+                fiber.fiber_config_path,
+                "-d",
+                fiber.tmp_path,
+                "--restore",
+                str(backup_path),
+            ],
+            env={**os.environ, "FIBER_SECRET_KEY_PASSWORD": "password0"},
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        fiber.start(timeout=timeout)
+
     def wait_for_node_info_counts(
         self, client, channel_count, pending_channel_count=None, timeout=120
     ):
@@ -514,6 +546,9 @@ class FiberTest(CkbTest):
         # )
         if fiber2_balance != 0:
             self.send_payment(fiber1, fiber2, fiber2_balance, True, udt, 10)
+            # 初始余额分配完成后再返回；Payment Success 可能早于通道账本更新。
+            for fiber in (fiber1, fiber2):
+                self.wait_channel_tlcs_settled(fiber, channel_id)
         if fiber2_fee != 1000:
             fiber2.get_client().update_channel(
                 {
@@ -1162,6 +1197,42 @@ class FiberTest(CkbTest):
             hash_str += hex(random.randint(0, 15))[2:]
         return hash_str
 
+    def wait_channel_tlcs_settled(
+        self, fiber, channel_id, timeout=30, expected_local_balance=None
+    ):
+        """等待通道 TLC 清零，并可选等待指定本地余额；仅查询。"""
+        deadline = time.monotonic() + timeout
+        while True:
+            channels = fiber.get_client().list_channels({"include_closed": True})[
+                "channels"
+            ]
+            channel = next(
+                (
+                    channel
+                    for channel in channels
+                    if channel["channel_id"] == channel_id
+                ),
+                None,
+            )
+            if (
+                channel is not None
+                and channel["state"]["state_name"] == "ChannelReady"
+                and int(channel["offered_tlc_balance"], 16) == 0
+                and int(channel["received_tlc_balance"], 16) == 0
+                and (
+                    expected_local_balance is None
+                    or int(channel["local_balance"], 16) == expected_local_balance
+                )
+            ):
+                return channel
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"Channel {channel_id} TLCs did not settle within {timeout}s "
+                    f"(expected local balance: {expected_local_balance}): {channel}"
+                )
+            time.sleep(min(1, remaining))
+
     def wait_fibers_pending_tlc_eq0(self, fiber, wait_times=30):
         for i in range(wait_times):
             fiber_balance = self.get_fiber_balance(fiber)
@@ -1192,6 +1263,9 @@ class FiberTest(CkbTest):
         )
 
     def add_time_and_generate_epoch(self, hour, epoch):
+        # Remember wall-clock origin so restore_time can jump back exactly when NTP is unavailable.
+        if getattr(self.__class__, "_clock_origin", None) is None:
+            self.__class__._clock_origin = (time.time(), time.monotonic())
         change_time(hour)
         client = self.node.getClient()
         header = client.get_tip_header()
@@ -1208,6 +1282,8 @@ class FiberTest(CkbTest):
         )
 
     def add_time_and_generate_block(self, hour, block_num):
+        if getattr(self.__class__, "_clock_origin", None) is None:
+            self.__class__._clock_origin = (time.time(), time.monotonic())
         change_time(hour)
         client = self.node.getClient()
         header = client.get_tip_header()
@@ -1293,54 +1369,79 @@ class FiberTest(CkbTest):
 
     @classmethod
     def restore_time(cls):
-        """恢复系统时间"""
+        """Restore system time to the pre-advance origin when possible.
+
+        GitHub runners often lack sntp/ntpdate. Falling back to "minus one hour"
+        leaves the clock days ahead after a multi-hour TLC expiry advance and
+        poisons later jobs in the same workflow. Prefer the saved origin.
+        """
         print("开始恢复系统时间...")
         print("current time:", time.time())
         print("current datetime:", datetime.now())
+        origin = getattr(cls, "_clock_origin", None)
+        if origin is not None:
+            from framework.util import restore_time as util_restore_time
+
+            wall, mono = origin
+            # Real time now = origin wall time + monotonic elapsed (immune to date jumps).
+            util_restore_time(wall + (time.monotonic() - mono))
+            cls._clock_origin = None
+            print("restored time:", time.time())
+            print("restored datetime:", datetime.now())
+            return
 
         try:
-            # 检测是否在Docker容器中运行
             is_docker = os.path.exists("/.dockerenv")
-
             if is_docker:
-                # 在Docker容器中，尝试从网络同步时间
                 cmd = "ntpdate -s time.nist.gov"
                 print(f"Docker环境 - 执行命令: {cmd}")
             else:
-                # 在宿主机上，使用sntp同步网络时间
-                cmd = f"echo hyperchain | sudo -S sntp -sS time.apple.com"
-                print(f"宿主机环境 - 执行命令: sudo sntp -sS time.apple.com")
-
-            # 执行系统命令
+                cmd = "echo hyperchain | sudo -S sntp -sS time.apple.com"
+                print("宿主机环境 - 执行命令: sudo sntp -sS time.apple.com")
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-
             if result.returncode == 0:
                 print("系统时间恢复成功")
             else:
                 print(f"系统时间恢复失败: {result.stderr}")
-                # 如果网络同步失败，尝试手动减去1小时
-                print("尝试手动恢复时间（减去1小时）...")
-                current_time = datetime.now()
-                restore_time_dt = current_time - timedelta(hours=1)
-                time_str = restore_time_dt.strftime("%m%d%H%M%Y")
-
-                if is_docker:
-                    cmd = f"date {time_str}"
-                else:
-                    # 原先引用未定义的 password：改成非交互 sudo，无法免密时干净失败。
-                    cmd = f"sudo -n date {time_str}"
-
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                if result.returncode == 0:
-                    print("手动时间恢复成功")
-                else:
-                    print(f"手动时间恢复失败: {result.stderr}")
-
+                print("没有保存的 _clock_origin，无法安全回拨；保持当前时间")
         except Exception as e:
             print(f"恢复系统时间时发生错误: {e}")
 
         print("restored time:", time.time())
         print("restored datetime:", datetime.now())
+
+    def wait_channel_peer_connect(self, timeout=120):
+        """Wait until every non-closed channel peer is connected on every node.
+
+        Only observe connections; do not initiate reconnects or wait for
+        CHANNEL_READY. RPC failures propagate to the caller.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            missing_peers = {}
+            for fiber in self.fibers:
+                client = fiber.get_client()
+                channel_pubkeys = {
+                    channel["pubkey"]
+                    for channel in client.list_channels({"include_closed": False})[
+                        "channels"
+                    ]
+                }
+                if not channel_pubkeys:
+                    continue
+                peer_pubkeys = {peer["pubkey"] for peer in client.list_peers()["peers"]}
+                missing = channel_pubkeys - peer_pubkeys
+                if missing:
+                    missing_peers[client.url] = sorted(missing)
+            if not missing_peers:
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"Timed out waiting for channel peers to connect after {timeout}s; "
+                    f"missing peers by RPC URL: {missing_peers}"
+                )
+            time.sleep(min(1, remaining))
 
 
 def check_port(port):

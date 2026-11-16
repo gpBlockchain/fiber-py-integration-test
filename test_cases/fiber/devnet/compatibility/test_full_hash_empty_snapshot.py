@@ -20,10 +20,9 @@ TEST-EVIDENCE notes (read before judging this row):
   the node store.
 - The counterparty is the instrumented full-payment-hash build (it owns the
   debug RPC ``submit_commitment_transaction`` used to publish the earlier
-  commitment). ``attacker_env`` is read by P2pFiberTest.setup_method when the
-  peer node is started, which happens before the test body, so the Legacy
-  method starts its own peer node with ``LEGACY_COUNTERPARTY_ENV`` instead of
-  mutating the class attribute too late.
+  commitment). For Legacy, two v0.9.1 nodes first open the channel, then the
+  counterparty restarts as the attack build with ``LEGACY_COUNTERPARTY_ENV``;
+  the attack build rejects new Legacy channel admission.
 - The negotiated layout is asserted from the real broadcast commitment lock
   args (57 vs 58 + trailing 0x01) and from the witness parser version, not
   assumed from the selected peers.
@@ -33,6 +32,7 @@ import hashlib
 import socket
 import time
 
+from framework.attack_commitment import cached_commitments
 from framework.attack_fnn import LEGACY_COUNTERPARTY_ENV, requires_attack_fnn
 from framework.basic_fiber import COMMIT_LOCK_CODE_HASH
 from framework.basic_p2p import P2pFiberTest
@@ -40,8 +40,8 @@ from framework.helper.settlement_witness import (
     SettlementWitness,
     assert_commitment_args,
 )
-from framework.p2p_peer import P2pPeer
 from framework.test_fiber import FiberConfigPath
+from test_cases.fiber.devnet.migration._helpers import start_with_confirm
 
 CKB = 100000000
 PAYMENT_AMOUNT = 1 * CKB
@@ -71,8 +71,7 @@ class TestFullHashEmptySnapshot(P2pFiberTest):
     channel_local_balance = 200 * CKB
     channel_remote_balance = 0
     attacker_fiber_version = FiberConfigPath.ATTACK_FULL_HASH_DEV
-    # Default build advertises the full payment hash, so the default run is V1.
-    # The Legacy method starts a separate peer with LEGACY_COUNTERPARTY_ENV.
+    # V1 starts current/attack directly; Legacy opens old-old before upgrading.
     attacker_env = None
 
     @classmethod
@@ -94,6 +93,36 @@ class TestFullHashEmptySnapshot(P2pFiberTest):
             with socket.socket() as sock:
                 sock.bind(("127.0.0.1", port))
         super().setup_class()
+
+    def setup_method(self, method):
+        try:
+            self._setup_method(method)
+        except Exception:
+            # A failed xunit setup has no teardown_method; release reused ports.
+            for fiber in reversed(getattr(self, "fibers", [])):
+                try:
+                    fiber.force_stop()
+                except Exception:
+                    self.logger.exception("could not stop node after setup failure")
+                try:
+                    fiber.clean()
+                except Exception:
+                    self.logger.exception("could not clean node after setup failure")
+            raise
+
+    def _setup_method(self, method):
+        legacy = (
+            method.__name__ == "test_legacy_empty_snapshot_withdrawn_before_pending_s1"
+        )
+        self.fiber_version = (
+            FiberConfigPath.V091_DEV if legacy else FiberConfigPath.CURRENT_DEV
+        )
+        self.attacker_fiber_version = (
+            FiberConfigPath.V091_DEV if legacy else FiberConfigPath.ATTACK_FULL_HASH_DEV
+        )
+        super().setup_method(method)
+        if legacy and not self.debug:
+            self._upgrade_legacy_channel()
 
     # ---- helpers (local copies; the assigned framework files stay untouched) ----
 
@@ -142,43 +171,34 @@ class TestFullHashEmptySnapshot(P2pFiberTest):
                 self.Miner.miner_with_version(self.node, "0x0")
             time.sleep(1)
 
-    def _submit_earlier_commitment(self, pre_local_cn, pre_remote_cn):
-        """Publish the earlier (empty) commitment, preferring the older number.
+    def _snapshot_s0(self, timeout=10):
+        """Newest signed commitment cached by the attacker before the TLC exists.
 
-        The dev RPC keys stored remote commitments by the lock-args commitment
-        number, so trying ``max(number - 1, 0)`` before the recorded number
-        mirrors SETTLE-01 and keeps S1 (which holds the TLC) out of the choice.
+        The attack fixture caches peer-signed commitments by the lock-args
+        commitment number (and seeds them from the store after an in-place
+        restart). Snapshotting the exact entry avoids guessing numbers from
+        ``get_channel_musig2_public``, which is V1-only and differs on V2.
         """
-        candidates = []
-        for number in (pre_local_cn, pre_remote_cn):
-            if number is None:
-                continue
-            candidates.append(max(number - 1, 0))
-            candidates.append(number)
-        errors = []
-        tried = set()
-        for number in candidates:
-            if number in tried:
-                continue
-            tried.add(number)
-            try:
-                submitted = self.attacker.get_client().call(
-                    "submit_commitment_transaction",
-                    [
-                        {
-                            "channel_id": self.channel_id,
-                            "commitment_number": hex(number),
-                        }
-                    ],
-                )
-                return number, submitted
-            except Exception as err:
-                errors.append(f"{number}: {err}")
-        self.fail(
-            "attacker could not submit the earlier empty commitment: "
-            f"pre_local_cn={pre_local_cn} pre_remote_cn={pre_remote_cn} "
-            f"errors={errors}"
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            txs = cached_commitments(self.attacker.get_client(), self.channel_id)
+            if txs:
+                return txs[-1]
+            time.sleep(0.2)
+        self.fail("attack fixture did not cache the signed empty S0 commitment")
+
+    def _submit_earlier_commitment(self, s0):
+        """Publish exactly the S0 snapshotted before the payment (never S1)."""
+        number = cn(s0["commitment_number"])
+        submitted = self.attacker.get_client().call(
+            "submit_commitment_transaction",
+            [{"channel_id": self.channel_id, "commitment_number": hex(number)}],
         )
+        assert submitted["tx_hash"] == s0["tx_hash"], {
+            "s0": s0,
+            "submitted": submitted,
+        }
+        return number, submitted
 
     def _assert_commitment_layout(self, close_tx, version):
         """The broadcast commitment lock args must keep the negotiated layout."""
@@ -200,21 +220,37 @@ class TestFullHashEmptySnapshot(P2pFiberTest):
             self._mine_watchtower_rounds(1)
         self.fail(f"commitment cell was never withdrawn: {close_tx}")
 
-    def _start_legacy_peer(self):
-        """Legacy counterparty: same build, feature disabled at node start.
+    def _upgrade_legacy_channel(self):
+        """Keep the old-old channel while upgrading both peers in place."""
+        before = self.channel_of(self.victim).copy()
+        peer_before = self.channel_of(self.attacker).copy()
+        assert before["channel_outpoint"] == peer_before["channel_outpoint"]
 
-        证明点 5 的 Legacy 侧前提：`attacker_env` 在节点启动时读取，所以只能另起节点，
-        不能在测试体里改类属性；该对端不宣告完整哈希，victim 与它开出的通道协商成 57 字节 Legacy。
-        """
-        peer = self.start_new_fiber(
-            self.generate_account(10000),
-            fiber_version=FiberConfigPath.ATTACK_FULL_HASH_DEV,
-            env=LEGACY_COUNTERPARTY_ENV,
-        )
-        self.attacker = peer
-        self.peer = P2pPeer(peer)
-        self.channel_id = self.open_ready_channel()
-        return peer
+        self.victim.stop()
+        self.attacker.stop()
+        self.attacker.fiber_config_enum = FiberConfigPath.ATTACK_FULL_HASH_DEV
+        self.attacker.extra_env = LEGACY_COUNTERPARTY_ENV
+        start_with_confirm(self.attacker, confirm="y")
+        self.victim.fiber_config_enum = FiberConfigPath.CURRENT_DEV
+        start_with_confirm(self.victim, confirm="y")
+        self.victim.connect_peer(self.attacker)
+        for fiber, snapshot in (
+            (self.victim, before),
+            (self.attacker, peer_before),
+        ):
+            self.wait_channel_state(fiber, "ChannelReady", timeout=120)
+            restored = self.channel_of(fiber)
+            for field in (
+                "channel_id",
+                "channel_outpoint",
+                "local_balance",
+                "remote_balance",
+                "latest_commitment_transaction_hash",
+            ):
+                assert restored[field] == snapshot[field], (
+                    f"Legacy channel changed {field} after restart: "
+                    f"{snapshot[field]} -> {restored[field]}"
+                )
 
     def _run_empty_snapshot_case(self, version):
         """One full Legacy or V1 run; fails loudly on any missed assertion."""
@@ -229,15 +265,20 @@ class TestFullHashEmptySnapshot(P2pFiberTest):
         # S0: commitment numbers before the offered TLC exists. S1 (with the
         # TLC) must never be exchanged because the attacker withholds RAA.
         # 证明点 1：记下 S0 的承诺号，后面据此选择“更早的那个承诺”来广播。
-        pre_musig = self.peer.musig2(self.channel_id)
-        pre_local_cn = cn(pre_musig.get("local_commitment_number"))
-        pre_remote_cn = cn(pre_musig.get("remote_commitment_number"))
+        s0 = self._snapshot_s0()
+        pre_local_cn = pre_remote_cn = cn(s0["commitment_number"])
 
         # 证明点 2：扣住 /RevokeAndAck —— S1 签了也换不到对旧承诺的撤销，
         # S0 因此仍是合法快照，这正是本行要覆盖的“首次 RAA 前”窗口。
         self.peer.intercept(
             self.channel_id,
-            drop_out=["RevokeAndAck", "CommitmentSigned", "RemoveTlc"],
+            drop_out=[
+                "RevokeAndAck",
+                "RevokeAndAckV2",
+                "CommitmentSigned",
+                "CommitmentSignedV2",
+                "RemoveTlc",
+            ],
             drop_raa=True,
         )
 
@@ -275,9 +316,7 @@ class TestFullHashEmptySnapshot(P2pFiberTest):
         # the TLC, using the SETTLE-01 selection rule.
         # 证明点 4 的前置：候选承诺号先取 max(number-1, 0) 再取 number，优先更早的那个，
         # 把含 TLC 的 S1 排除在选择之外。
-        selected_cn, submitted = self._submit_earlier_commitment(
-            pre_local_cn, pre_remote_cn
-        )
+        selected_cn, submitted = self._submit_earlier_commitment(s0)
         close_tx = submitted["tx_hash"]
 
         # The broadcast commitment is the pre-TLC one: it must still use the
@@ -381,7 +420,7 @@ class TestFullHashEmptySnapshot(P2pFiberTest):
     #   防止：正确空快照被当成不存在，双方本金卡住。
     # 术语与拓扑：RAA = RevokeAndAck（撤销旧承诺并确认新承诺的 P2P 消息；开通道首轮不发）。
     #   本类 victim --(Victim<->counterparty 通道)--> 对端；对端由 P2pFiberTest.setup_method 启动，
-    #   Legacy 方法另外用 LEGACY_COUNTERPARTY_ENV 起一个不宣告完整哈希的对端节点。
+    #   Legacy 方法先以旧版双方开通道，再用 LEGACY_COUNTERPARTY_ENV 升级对端。
     #   S0 = 首笔 TLC 之前的空承诺；S1 = 含该 TLC 的承诺。对端扣住 RAA，所以 S0 从未被撤销，
     #   仍是合法快照；对端用 dev RPC submit_commitment_transaction 广播 S0 而不是 S1。
     # 证明点与断言的对应关系（两个方法共用 _run_empty_snapshot_case）：
@@ -402,9 +441,7 @@ class TestFullHashEmptySnapshot(P2pFiberTest):
     #   证明而非读库（见模块 TEST-EVIDENCE 的 limitation）；两个方法都不覆盖 S0 为空以外的快照、
     #   远端强关、以及 S1 自身结算的分支。
     def test_legacy_empty_snapshot_withdrawn_before_pending_s1(self):
-        # Legacy 变体：类属性 attacker_env 在节点启动前读取，不能在本方法里改，所以另起一个
-        # 带 LEGACY_COUNTERPARTY_ENV 的对端并用它与 victim 开通道。
-        self._start_legacy_peer()
+        # setup_method opened the channel old-old, then upgraded both stores.
         self._run_empty_snapshot_case("legacy")
 
     # TEST-MAP: H32V2-24

@@ -18,7 +18,11 @@ import subprocess
 import time
 
 from framework.basic_fiber import COMMIT_LOCK_CODE_HASH
-from framework.helper.settlement_witness import SettlementWitness
+from framework.helper.settlement_witness import (
+    SettlementWitness,
+    assert_commitment_args,
+    assert_commitment_args_prefix,
+)
 from framework.onchain_tlc_query import onchain_tlc_query_enabled
 from framework.test_fiber import FiberConfigPath
 from framework.util import ckb_hash
@@ -74,6 +78,10 @@ class TestFullHashExpiry(FullHashChannelSupport):
 
     def setUp(self):
         cls = self.__class__
+        if not hasattr(cls, "legacy_sender"):
+            cls.legacy_sender = self.start_new_fiber(
+                self.generate_account(5000), fiber_version=FiberConfigPath.V091_DEV
+            )
         if not hasattr(cls, "legacy_peer"):
             cls.legacy_peer = self.start_new_fiber(
                 self.generate_account(5000), fiber_version=FiberConfigPath.V091_DEV
@@ -106,6 +114,14 @@ class TestFullHashExpiry(FullHashChannelSupport):
                 self.Miner.miner_with_version(self.node, "0x0")
             time.sleep(1)
 
+    def assert_chain_commitment_layout(self, tx, version, previous_args):
+        """首次承诺为 0；后续派生 cell 为 1，且保留前一格的前缀。"""
+        args = bytes.fromhex(tx["outputs"][0]["lock"]["args"][2:])
+        assert_commitment_args(args, version, derived=previous_args is not None)
+        if previous_args is not None:
+            assert_commitment_args_prefix(args, previous_args)
+        return args
+
     def consume_commitment_chain_timeout(self, commitment, code_tx, version):
         """跟随派生链消费每一格 commitment cell，返回 (spends, fees)（H32V2-10 原实现）。
 
@@ -115,6 +131,7 @@ class TestFullHashExpiry(FullHashChannelSupport):
         tx = commitment
         fees = self.get_tx_message(tx["hash"])["fee"]
         spends = []
+        previous_args = None
         for _ in range(6):
             locked = [
                 o
@@ -124,7 +141,9 @@ class TestFullHashExpiry(FullHashChannelSupport):
             if not locked:
                 return spends, fees
             assert locked == [tx["outputs"][0]], tx
-            self.assert_commitment_layout(tx)
+            previous_args = self.assert_chain_commitment_layout(
+                tx, version, previous_args
+            )
             self.ckb.generate_epochs("0x2")
             following = self.wait_for_spend(tx["hash"])
             fees += self.get_tx_message(following["hash"])["fee"]
@@ -190,6 +209,7 @@ class TestFullHashExpiry(FullHashChannelSupport):
         fees = self.get_tx_message(tx["hash"])["fee"]
         spends = []
         remaining = list(held)
+        previous_args = None
         for _ in range(6):
             locked = [
                 o
@@ -199,7 +219,9 @@ class TestFullHashExpiry(FullHashChannelSupport):
             if not locked:
                 return spends, fees, remaining
             assert locked == [tx["outputs"][0]], tx
-            self.assert_commitment_layout(tx)
+            previous_args = self.assert_chain_commitment_layout(
+                tx, version, previous_args
+            )
             self.ckb.generate_epochs("0x2")
             following = self.wait_for_spend(tx["hash"])
             fees += self.get_tx_message(following["hash"])["fee"]
@@ -238,11 +260,14 @@ class TestFullHashExpiry(FullHashChannelSupport):
     def test_legacy_and_v1_timeout_refund_without_preimage(self):
         # 默认快照已部署升级后的 commitment-lock，直接用当前代码 cell。
         code_tx = self.current_contract_code_tx()
-        for version, receiver in (("v1", self.new2), ("legacy", self.legacy_peer)):
+        for version, sender, receiver in (
+            ("v1", self.new1, self.new2),
+            ("legacy", self.legacy_sender, self.legacy_peer),
+        ):
             for close_at_sender in (True, False):
                 with self.subTest(version=version, close_at_sender=close_at_sender):
-                    # V1 = 双方新节点；Legacy = 新节点对固定旧节点 9a561b3。
-                    self.select_peers(self.new1, receiver, version)
+                    # V1 = 新新；Legacy = 旧旧。新节点不再与缺少特性的旧节点新开通道。
+                    self.select_peers(sender, receiver, version)
                     self.open_ready()
                     # 原像只留在测试进程里：节点没有登记，链上只能走无原像超时回收。
                     payment_hash, preimage = self.hold_one_payment()
@@ -350,10 +375,13 @@ class TestFullHashExpiry(FullHashChannelSupport):
     def test_legacy_and_v1_final_sweep_settles_remaining_tlcs_without_preimage(self):
         # 默认快照已部署升级后的 commitment-lock，直接用当前代码 cell。
         code_tx = self.current_contract_code_tx()
-        for version, receiver in (("v1", self.new2), ("legacy", self.legacy_peer)):
+        for version, sender, receiver in (
+            ("v1", self.new1, self.new2),
+            ("legacy", self.legacy_sender, self.legacy_peer),
+        ):
             with self.subTest(version=version):
-                # V1 = 双方新节点；Legacy = 新节点对固定旧节点 9a561b3。
-                self.select_peers(self.new1, receiver, version)
+                # V1 = 新新；Legacy = 旧旧。两种布局分别由各自双方协商产生。
+                self.select_peers(sender, receiver, version)
                 self.open_ready()
                 # 两笔金额不同、原像都不公布的已承诺 hold TLC。
                 first_hash, first_preimage = self.hold_payment(CKB, committed=1)

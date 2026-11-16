@@ -24,12 +24,10 @@ class TestGraphNodes(FiberTest):
         add nodes
         """
         # add nodes
-        new_fibers = []
         current_fiber = self.start_new_fiber(generate_account_privakey())
         for i in range(10):
             new_fiber = self.start_new_fiber(generate_account_privakey())
             current_fiber.connect_peer(new_fiber)
-            new_fibers.append(new_fiber)
             current_fiber = new_fiber
         time.sleep(1)
         current_fiber.connect_peer(self.fiber1)
@@ -38,13 +36,31 @@ class TestGraphNodes(FiberTest):
         current_fiber1.connect_peer(self.fiber2)
         current_fiber2 = self.start_new_fiber(generate_account_privakey())
         current_fiber2.connect_peer(current_fiber)
-        # wait fiber3 nodes == 15
-        self.wait_graph_nodes(self.fibers[3], 15)
-        assert len(current_fiber.get_client().graph_nodes()["nodes"]) == 15
-        assert len(current_fiber1.get_client().graph_nodes()["nodes"]) == 15
-        assert len(current_fiber2.get_client().graph_nodes()["nodes"]) == 15
-        assert len(self.fiber1.get_client().graph_nodes()["nodes"]) == 15
-        assert len(self.fiber2.get_client().graph_nodes()["nodes"]) == 15
+        # Wait for every node to learn the full topology before comparing pages.
+        expected_pubkeys = {fiber.get_pubkey() for fiber in self.fibers}
+        assert len(expected_pubkeys) == 15
+        deadline = time.monotonic() + 60
+        while True:
+            nodes_by_fiber = [
+                fiber.get_client().graph_nodes()["nodes"] for fiber in self.fibers
+            ]
+            if all(
+                len(nodes) == 15
+                and {node["pubkey"] for node in nodes} == expected_pubkeys
+                for nodes in nodes_by_fiber
+            ):
+                break
+            if time.monotonic() >= deadline:
+                counts = [len(nodes) for nodes in nodes_by_fiber]
+                missing = {
+                    index: sorted(expected_pubkeys - {node["pubkey"] for node in nodes})
+                    for index, nodes in enumerate(nodes_by_fiber)
+                    if {node["pubkey"] for node in nodes} != expected_pubkeys
+                }
+                pytest.fail(
+                    f"graph_nodes did not converge: counts={counts}, missing={missing}"
+                )
+            time.sleep(1)
         # 测试迭代
         idx = 0
 
@@ -171,16 +187,6 @@ class TestGraphNodes(FiberTest):
             )
             # udt_cfg_infos
             assert node["udt_cfg_infos"] == node_info["udt_cfg_infos"]
-
-    def wait_graph_nodes(self, fiber, number, time_out=30):
-        start_time = time.time()
-        while True:
-            graph_nodes = fiber.get_client().graph_nodes()
-            if len(graph_nodes["nodes"]) == number:
-                return
-            time.sleep(1)
-            if time.time() - start_time > time_out:
-                raise Exception("wait graph nodes timeout")
 
 
 def get_graph_nodes(fiber, page_size):

@@ -531,40 +531,57 @@ class TestFullHashChannels(ContractUpgradeSupport):
 
     # TEST-MAP: H32V2-01
     # TEST-EVIDENCE-BEGIN: H32V2-01
-    # Evidence | covered | Committed exact-outpoint spend; commitment 58/feature=1 and strict 97-byte V1
-    # parser; expected hash/preimage/amount, recipient net payout, conservation, payment Success and
-    # matching preimage.
+    # Evidence | covered | Both peers advertise CHANNEL_V2; normal/external funding reaches ready;
+    # committed spend has 58/feature=1 args and a strict 97-byte full-hash settlement entry,
+    # with expected payout, conservation, payment Success and matching preimage.
     # TEST-EVIDENCE-END: H32V2-01
-    # H32-01 证明链：双方支持完整哈希，分别经普通开通和外部注资开通，完成付款后由对端强关。
-    # 1) 双方使用 V1：本测试不配置节点版本，select_peers 只声明期望；实际版本由链上锁参数证明，
-    #    若协商回落 Legacy，settle_held_channel 的 58/57 字节断言会失败。
-    # 2) 普通与外部注资两条开通路径：open_ready(False) 走 open_channel，open_ready(True) 走
-    #    open_channel_with_external_funding + sign/submit_signed_funding_tx，两者都必须 ChannelReady。
-    # 3) 完成付款：send_payment 完成一笔链下正常付款，hold_one_payment 再保留一笔已承诺 TLC，
-    #    使强关时的承诺交易携带真实 TLC。
-    # 4) 对端强关与结算：settle_held_channel 默认 closer=fiber2，由对端强关；其中
-    #    - force_close 断言广播交易去掉 deps 后等于该端已签名承诺 → 链上承诺与节点存储一致；
-    #    - 承诺锁 args 必须 58 字节且末字节 0x01 → 实际承诺锁确为 V1 格式；
-    #    - settle_invoice 公布原像后 wait_for_spend 要求 tx_status == committed → 交易确认；
-    #    - assert_tlc_settlement 以 SettlementWitness(version="v1") 解析并往返重建 97 字节条目
-    #      (1+16+32+20+20+8)，核对金额与收款人到账 → 含 TLC 的结算使用 V1 布局；
-    #    - assert_settled 继续花费剩余承诺 cell，核对双方钱包净增与总矿工费 → 正确收尾。
-    def test_new_nodes_use_v1_normal_and_external_funding(self):
-        # 默认快照已部署升级后的 commitment-lock（无需再升级）；节点全程不重启，V1 才可能被协商选中。
+    def test_new_nodes_use_channel_v2_normal_and_external_funding(self):
+        """
+        1. 核对两端声明 CHANNEL_V2，分别通过普通和外部资金开通并达到 ChannelReady。
+        2. 完成一笔付款，再保留一笔已承诺 TLC 供链上结算。
+        3. 对端强关后公布原像，核对完整 hash 布局、交易确认、到账及付款结果。
+        """
+        # 1. 两端声明 CHANNEL_V2；两条开通路径各用一条新通道。
         code_tx = self.current_contract_code_tx()
         for external in (False, True):
             with self.subTest(external=external):
-                # 两端均为固定 head 的新节点，期望协商结果为 V1（由下方链上断言验证，而非假定）。
+                for fiber in (self.new1, self.new2):
+                    assert any(
+                        "CHANNEL_V2" in name
+                        for name in fiber.get_client().node_info()["features"]
+                    )
+                # V2 的链上完整 hash 布局仍由 v1 witness 解析器检查。
                 self.select_peers(self.new1, self.new2, "v1")
-                # external=False 普通开通；external=True 外部注资开通（由外部钱包私钥签 funding tx）。
                 self.open_ready(external)
-                # 先完成一笔普通链下付款，证明 V1 通道不只是能开通，还能正常付款。
+
+                # 2. 已完成付款证明通道可用；再留下已承诺 TLC。
+                sender_before = int(self.channel(self.fiber1)["local_balance"], 16)
+                receiver_before = int(self.channel(self.fiber2)["local_balance"], 16)
                 self.send_payment(self.fiber1, self.fiber2, CKB)
+                self.wait_channel_tlcs_settled(
+                    self.fiber1,
+                    self.channel_id,
+                    timeout=60,
+                    expected_local_balance=sender_before - CKB,
+                )
+                self.wait_channel_tlcs_settled(
+                    self.fiber2,
+                    self.channel_id,
+                    timeout=60,
+                    expected_local_balance=receiver_before + CKB,
+                )
                 self.record_channel()
-                # 再保留一笔已承诺 TLC，作为强关承诺中“含 TLC”的样本。
                 payment_hash, preimage = self.hold_one_payment()
-                # 对端强关 → 公布原像 → 派生 cell 结算 → 核对 58/0x01 锁与 97 字节条目及到账。
+
+                # 3. 强关并结算，检查 58/0x01 锁、97 字节完整 hash 条目和真实到账。
                 self.settle_held_channel(code_tx, payment_hash, preimage)
+                self.wait_payment_state(self.fiber1, payment_hash, "Success")
+                assert (
+                    self.fiber1.get_client().get_payment(
+                        {"payment_hash": payment_hash}
+                    )["payment_preimage"]
+                    == preimage
+                )
 
     def _channel_snapshot(self, fiber):
         client = fiber.get_client()
@@ -581,22 +598,26 @@ class TestFullHashChannels(ContractUpgradeSupport):
 
     # TEST-MAP: H32V2-02
     # TEST-EVIDENCE-BEGIN: H32V2-02
-    # Evidence | partial | New-node ordinary RPC to a Legacy-only peer is rejected and leaves no new
-    # local channel/open record. Local-new-node feature-disabled input needs a configurable fixture.
+    # Evidence | partial | New-node ordinary RPC to a peer without CHANNEL_V2 is rejected and
+    # leaves no new local channel/open record. Local-new-node feature-disabled input needs a fixture.
     # TEST-EVIDENCE-END: H32V2-02
     def test_new_node_rejects_legacy_peer_ordinary_open(self):
+        """1. 核对新节点有 CHANNEL_V2、旧对端没有；2. 发起普通开通并检查拒绝；3. 检查通道和资金无新增。"""
+        # 1. 建立可通信的新旧节点，并核对特性差异。
         self.select_peers(self.new1, self.old1, "legacy")
         self.fiber1.connect_peer(self.fiber2)
         assert any(
-            "ONCHAIN_FULL_PAYMENT_HASH" in name
+            "CHANNEL_V2" in name
             for name in self.fiber1.get_client().node_info()["features"]
         )
         assert not any(
-            "ONCHAIN_FULL_PAYMENT_HASH" in name
+            "CHANNEL_V2" in name
             for name in self.fiber2.get_client().node_info()["features"]
         )
         before = self._channel_snapshot(self.fiber1)
         wallet_before = self.wallet_balances()
+
+        # 2. 缺少 CHANNEL_V2 时，普通开通 RPC 应拒绝。
         with self.assertRaises(Exception):
             self.fiber1.get_client().open_channel(
                 {
@@ -605,7 +626,7 @@ class TestFullHashChannels(ContractUpgradeSupport):
                     "public": True,
                 }
             )
-        # The rejection happens before a channel-open record or funding transaction is built.
+        # 3. 拒绝后没有待开通记录、通道或 funding 资金消耗。
         for _ in range(3):
             assert self._channel_snapshot(self.fiber1) == before
             assert self.wallet_balances() == wallet_before
@@ -613,24 +634,28 @@ class TestFullHashChannels(ContractUpgradeSupport):
 
     # TEST-MAP: H32V2-33
     # TEST-EVIDENCE-BEGIN: H32V2-33
-    # Evidence | partial | New-node external-funding RPC rejects a Legacy-only peer without returning
-    # an unsigned transaction or leaving a local channel/open record. Local feature-off is untested.
+    # Evidence | partial | External-funding RPC rejects a peer without CHANNEL_V2 before returning
+    # an unsigned transaction or writing a local record. Local feature-off is untested.
     # TEST-EVIDENCE-END: H32V2-33
     def test_new_node_rejects_legacy_peer_external_funding_open(self):
+        """1. 核对新旧节点的 CHANNEL_V2 差异；2. 发起外部资金开通并检查拒绝；3. 检查通道和资金无新增。"""
+        # 1. 新节点声明 CHANNEL_V2，旧对端没有。
         self.select_peers(self.new1, self.old1, "legacy")
         self.fiber1.connect_peer(self.fiber2)
         assert any(
-            "ONCHAIN_FULL_PAYMENT_HASH" in name
+            "CHANNEL_V2" in name
             for name in self.fiber1.get_client().node_info()["features"]
         )
         assert not any(
-            "ONCHAIN_FULL_PAYMENT_HASH" in name
+            "CHANNEL_V2" in name
             for name in self.fiber2.get_client().node_info()["features"]
         )
         before = self._channel_snapshot(self.fiber1)
         wallet_before = self.wallet_balances()
         client = self.fiber1.get_client()
         funding_lock = client.node_info()["default_funding_lock_script"]
+
+        # 2. RPC 拒绝，不返回可签名交易。
         with self.assertRaises(Exception):
             client.call(
                 "open_channel_with_external_funding",
@@ -646,6 +671,7 @@ class TestFullHashChannels(ContractUpgradeSupport):
                     }
                 ],
             )
+        # 3. 本地记录和钱包资金都保持原样。
         for _ in range(3):
             assert self._channel_snapshot(self.fiber1) == before
             assert self.wallet_balances() == wallet_before
@@ -653,19 +679,22 @@ class TestFullHashChannels(ContractUpgradeSupport):
 
     # TEST-MAP: H32V2-34
     # TEST-EVIDENCE-BEGIN: H32V2-34
-    # Evidence | partial | A Legacy-only peer sends OpenChannel to the new node; the receiving node
-    # rejects it before adding a pending/open record. Local feature-off needs a configurable fixture.
+    # Evidence | partial | A peer without CHANNEL_V2 sends OpenChannel to the new node;
+    # receiver has no pending record or funding side effect; opener list_channels(
+    # only_pending) shows Closed with CHANNEL_V2 failure_detail after fiber#1736 TxAbort.
+    # The local feature-off inbound direction still needs a fixture.
     # TEST-EVIDENCE-END: H32V2-34
     def test_new_node_rejects_legacy_inbound_open(self):
-        # Keep the receiver's default auto-accept enabled: rejection must happen before it.
+        """1. 核对入站两端的 CHANNEL_V2 差异；2. 旧节点发起开通并等待失败终态；3. 检查接收方无通道及 funding 副作用。"""
+        # 1. 接收方保持默认自动接受，准入拒绝必须先于自动接受。
         self.select_peers(self.old1, self.new2, "legacy")
         self.fiber1.connect_peer(self.fiber2)
         assert not any(
-            "ONCHAIN_FULL_PAYMENT_HASH" in name
+            "CHANNEL_V2" in name
             for name in self.fiber1.get_client().node_info()["features"]
         )
         assert any(
-            "ONCHAIN_FULL_PAYMENT_HASH" in name
+            "CHANNEL_V2" in name
             for name in self.fiber2.get_client().node_info()["features"]
         )
         assert (
@@ -679,6 +708,8 @@ class TestFullHashChannels(ContractUpgradeSupport):
         )
         before = self._channel_snapshot(self.fiber2)
         wallet_before = self.wallet_balances()
+
+        # 2. 发起方须收到拒绝并离开 NegotiatingFunding。
         request = self.fiber1.get_client().open_channel(
             {
                 "pubkey": self.fiber2.get_pubkey(),
@@ -687,14 +718,12 @@ class TestFullHashChannels(ContractUpgradeSupport):
             }
         )
         temporary_id = request["temporary_channel_id"]
-        # Wait for the sender to observe rejection, so an empty receiver snapshot cannot pass
-        # merely because the OpenChannel message has not yet arrived.
         started = time.monotonic()
         deadline = started + 60
         sender_record = None
         while time.monotonic() < deadline:
             records = self.fiber1.get_client().list_channels(
-                {"include_closed": True, "pubkey": self.fiber2.get_pubkey()}
+                {"only_pending": True, "pubkey": self.fiber2.get_pubkey()}
             )["channels"]
             sender_record = next(
                 (c for c in records if c["channel_id"] == temporary_id), None
@@ -704,25 +733,33 @@ class TestFullHashChannels(ContractUpgradeSupport):
                 and sender_record["state"]["state_name"] == "Closed"
             ):
                 break
-            # The old sender can remove a rejected record before the first poll.
-            # Require a short stable interval rather than accepting the first empty read.
-            if sender_record is None and time.monotonic() - started >= 3:
-                break
             time.sleep(1)
         else:
             self.fail(f"Legacy inbound request was not rejected: {sender_record}")
+        assert sender_record is not None
+        assert sender_record["channel_outpoint"] is None
+        assert "CHANNEL_V2" in sender_record["failure_detail"]
+
+        # 3. 接收方没有待接受记录、通道或资金支出。
         assert self._channel_snapshot(self.fiber2) == before
         assert temporary_id not in self._channel_snapshot(self.fiber2)["pending"]
         assert self.wallet_balances() == wallet_before
 
     # TEST-MAP: H32V2-36
     # TEST-EVIDENCE-BEGIN: H32V2-36
-    # Evidence | covered | Full-hash inbound request stays pending until manual accept, becomes V1
-    # ChannelReady, and settles a committed TLC with the 58-byte args and 97-byte witness.
+    # Evidence | covered | CHANNEL_V2 inbound request stays pending until manual accept, becomes
+    # ChannelReady, and settles a committed TLC with 58-byte args and a 97-byte witness.
     # TEST-EVIDENCE-END: H32V2-36
-    def test_new_node_manual_accept_v1_and_settle_tlc(self):
+    def test_new_node_manual_accept_channel_v2_and_settle_tlc(self):
+        """1. 核对 V2 双方与人工接受配置；2. 入站请求待接受后手动接受；3. 保留 TLC、强关并核对链上结算及付款。"""
+        # 1. 两端声明 CHANNEL_V2，接收方关闭自动接受。
         self.select_peers(self.new1, self.manual, "v1")
         self.fiber1.connect_peer(self.fiber2)
+        for fiber in self.fibers:
+            assert any(
+                "CHANNEL_V2" in name
+                for name in fiber.get_client().node_info()["features"]
+            )
         assert (
             int(
                 self.fiber2.get_client().node_info()[
@@ -733,6 +770,8 @@ class TestFullHashChannels(ContractUpgradeSupport):
             == 0
         )
         existing = self._channel_snapshot(self.fiber1)["all"]
+
+        # 2. 原请求先进入待接受，再由接收方显式接受。
         request = self.fiber1.get_client().open_channel(
             {
                 "pubkey": self.fiber2.get_pubkey(),
@@ -750,7 +789,9 @@ class TestFullHashChannels(ContractUpgradeSupport):
                 break
             time.sleep(1)
         else:
-            self.fail(f"V1 request missing from manual accept pending list: {pending}")
+            self.fail(
+                f"CHANNEL_V2 request missing from manual accept pending list: {pending}"
+            )
         assert entry["channel_outpoint"] is None, entry
         assert entry["state"]["state_name"] != "ChannelReady", entry
         self.fiber2.get_client().accept_channel(
@@ -765,27 +806,36 @@ class TestFullHashChannels(ContractUpgradeSupport):
             time.sleep(1)
         else:
             self.fail(
-                "Manual-accepted V1 channel did not reach ChannelReady on receiver"
+                "Manual-accepted CHANNEL_V2 channel did not reach ChannelReady on receiver"
             )
+
+        # 3. 已承诺 TLC 在强关后按完整 hash 布局结算，付款最终 Success。
         self.record_channel()
         payment_hash, preimage = self.hold_one_payment()
         self.settle_held_channel(
             self.current_contract_code_tx(), payment_hash, preimage
         )
+        self.wait_payment_state(self.fiber1, payment_hash, "Success")
+        assert (
+            self.fiber1.get_client().get_payment({"payment_hash": payment_hash})[
+                "payment_preimage"
+            ]
+            == preimage
+        )
 
     # TEST-MAP: H32V2-20
     # TEST-EVIDENCE-BEGIN: H32V2-20
-    # Evidence | covered | node_info default 100 CKB/explicit zero, actual funding capacity+fee spending,
-    # receiver contribution bound; pending zero lacks outpoint/Ready, manual acceptance followed by
-    # version-checked committed close and payouts.
+    # Evidence | covered | V1 node_info default 100 CKB/explicit zero, actual funding capacity+fee
+    # spending and receiver contribution bound; pending zero lacks outpoint/Ready, manual acceptance
+    # followed by V1-checked committed close and payouts.
     # TEST-EVIDENCE-END: H32V2-20
-    # H32-19 证明链：新节点默认自动接受、短 shutdown lock、充足 CKB；同一新接收方分别收到 V1 与
-    # Legacy 的自动接受请求，再以显式配置 0 作人工接受对照。
+    # H32-19 证明链：新节点默认自动接受、短 shutdown lock、充足 CKB；接收方收到 V1
+    # 自动接受请求，再以显式配置 0 作人工接受对照。
     # 1) 默认值：接收方 node_info 的 auto_accept_channel_ckb_funding_amount 必须是 100 CKB
     #    （V1 预留值；仍是 99 CKB 会让 V1 开通失败）。
-    # 2) 两种版本都走自动接受：new1→new2 为 V1、old1→new2 为 Legacy，都要到达 ChannelReady；
-    #    版本由链上证据确认——record_channel 按版本取 100/99 CKB 预留，assert_settled 核对承诺锁
-    #    58 字节 + 末位 0x01（V1）或 57 字节（Legacy）以及双方到账。
+    # 2) new1→new2 自动接受并达到 ChannelReady；链上证据核对 V1 的 100 CKB 预留、
+    #    承诺锁 58 字节 + 末位 0x01 及双方到账。旧节点→新节点缺少完整 hash 特性，
+    #    按 H32V2-34 拒绝，不在本用例中当作 Legacy 成功路径。
     # 3) 出资与费用核对：比较开通前后的钱包余额，接收方（account2）实际支出必须落在
     #    [100 CKB, 100 CKB + 实际矿工费]，且双方支出合计等于 funding 输出容量加矿工费。
     # 4) 显式 0 的对照：另起一个 fiber_auto_accept_channel_ckb_funding_amount=0 的节点，其
@@ -796,26 +846,19 @@ class TestFullHashChannels(ContractUpgradeSupport):
     def test_default_auto_accept_and_explicit_zero(self):
         # 默认快照已部署升级后的 commitment-lock，直接用当前代码 cell。
         code_tx = self.current_contract_code_tx()
-        # 两种协商版本共用同一个新接收方 new2（自动接受开启）：new1→v1、old1→legacy。
-        for sender, version in ((self.new1, "v1"), (self.old1, "legacy")):
-            with self.subTest(version=version):
-                self.select_peers(sender, self.new2, version)
-                info = self.fiber2.get_client().node_info()
-                # 默认自动出资必须是 100 CKB；仍是 99 CKB 会让 V1 开通失败。
-                assert (
-                    int(info["auto_accept_channel_ckb_funding_amount"], 16) == 100 * CKB
-                )
-                before = self.wallet_balances()
-                self.open_ready()
-                after = self.wallet_balances()
-                spent = [a - b for a, b in zip(before, after)]
-                funding = self.ckb.get_transaction(self.funding_tx)["transaction"]
-                fee = self.get_tx_message(self.funding_tx)["fee"]
-                # 链上支出按实际出资与矿工费核对：接收方应支出默认出资 100 CKB + 实际矿工费。
-                assert sum(spent) == int(funding["outputs"][0]["capacity"], 16) + fee
-                assert 100 * CKB <= spent[1] <= 100 * CKB + fee
-                # 自动接受出来的通道仍按版本核对承诺锁布局与到账，确认版本各自保持。
-                self.assert_settled(self.force_close(self.fiber1), code_tx)
+        # 自动接受只验证双方均支持完整 hash 特性的新新 V1 通道。
+        self.select_peers(self.new1, self.new2, "v1")
+        info = self.fiber2.get_client().node_info()
+        assert int(info["auto_accept_channel_ckb_funding_amount"], 16) == 100 * CKB
+        before = self.wallet_balances()
+        self.open_ready()
+        after = self.wallet_balances()
+        spent = [a - b for a, b in zip(before, after)]
+        funding = self.ckb.get_transaction(self.funding_tx)["transaction"]
+        fee = self.get_tx_message(self.funding_tx)["fee"]
+        assert sum(spent) == int(funding["outputs"][0]["capacity"], 16) + fee
+        assert 100 * CKB <= spent[1] <= 100 * CKB + fee
+        self.assert_settled(self.force_close(self.fiber1), code_tx)
 
         # 对照：显式配置 auto_accept_channel_ckb_funding_amount=0 的节点必须关闭自动接受。
         self.select_peers(self.new1, self.manual, "v1")

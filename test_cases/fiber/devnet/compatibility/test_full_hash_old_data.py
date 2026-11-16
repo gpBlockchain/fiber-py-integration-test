@@ -15,7 +15,7 @@ import socket
 import subprocess
 import time
 
-from framework.config import DEFAULT_MIN_LEDGER_DEPOSIT_CKB, get_tmp_path
+from framework.config import DEFAULT_MIN_LEDGER_DEPOSIT_CKB
 from framework.onchain_tlc_query import onchain_tlc_query_enabled
 from framework.test_fiber import FiberConfigPath
 from framework.util import ckb_hash
@@ -65,6 +65,7 @@ class TestFullHashOldData(ContractUpgradeSupport):
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 2}
     shared_fiber1_extra_config = {"fiber_auto_accept_channel_ckb_funding_amount": 0}
     commitment_version = "legacy"
+    rpc_modules = "channel,payment,graph,info,invoice,peer,pubsub,dev,watchtower,admin"
 
     @classmethod
     def setup_class(cls):
@@ -78,9 +79,7 @@ class TestFullHashOldData(ContractUpgradeSupport):
         # 本用例靠 backup(admin) 生成一致 checkpoint；显式打开所需 RPC 模块，
         # 避免默认模块集缺失时把“取不到旧库快照”误判成升级失败。
         previous = os.environ.get("RPC_ENABLED_MODULES")
-        os.environ["RPC_ENABLED_MODULES"] = (
-            "channel,payment,graph,info,invoice,peer,pubsub,dev,watchtower,admin"
-        )
+        os.environ["RPC_ENABLED_MODULES"] = cls.rpc_modules
         try:
             super().setup_class()
         finally:
@@ -94,33 +93,32 @@ class TestFullHashOldData(ContractUpgradeSupport):
     # TEST-MAP: H32V2-05
     # TEST-EVIDENCE-BEGIN: H32V2-05
     # Evidence | partial | Real PR-base store read by the head binary: the used Legacy channel, the
-    # pending-open request and the watch data all originate from the old node. The pending-open record is
-    # now independently re-checked after reload (same temporary id, channel_outpoint still null) and every
-    # pre/post-upgrade payment asserts Success instead of being fire-and-forget. Still missing: the
-    # watch-channel record has no read RPC, so its Legacy semantics are proven only behaviourally by the
-    # built-in watchtower settling the restored channel; migration-vs-direct-read stays a product decision.
+    # pending-open request and the watch data all originate from the old node. The receiver's
+    # pending request is observed after reload; an empty only_pending result is accepted because
+    # that stale request need not remain actionable. Every pre/post-upgrade payment asserts Success.
+    # The watch-channel record has no read RPC; its Legacy semantics are proven behaviourally.
     # TEST-EVIDENCE-END: H32V2-05
     # H32-04 证明链：用升级前真实数据库启动新节点，库内同时含“缺少版本字段”的已用通道、
-    # 待开通记录和 Watchtower 记录；两种升级策略（原库直接读取 / 必须迁移）都不得改写旧语义。
+    # 待开通记录和 Watchtower 记录；旧库须迁移，原通道与监控记录不得改写旧语义。
     # 1) 输入真实性：通道与待开通请求都由固定旧二进制真实产生（有双向付款），不是空库、也不是
     #    用新结构序列化出的假数据；backup 后立刻记录旧库目录 SHA-256，结尾再校验一次，
     #    证明被测过程没有回头改写这份旧库。
     # 2) 旧库自证：同一 checkpoint 交给旧二进制 `--check-validate` 必须 exit 0 → 它是旧版本自身
     #    认可的真实存储，而不只是新代码能读的构造物。
-    # 3) 旧记录可读且不静默切 V1：三类记录（通道状态、待开通记录、Watchtower 数据）能否被新节点
-    #    解码，由“真实旧库启动 → 恢复原通道 → 强关结算”这条链路本身证明；恢复后承诺锁仍是
-    #    57 字节、结算仍走 Legacy 85 字节条目。
-    # 4) 新节点真实启动：新二进制既跑 `--check-validate`，也以 `start_with_confirm(confirm="y")`
-    #    走真实启动/迁移路径；不调用历史 0.8.1 迁移器、不手改 DB 版本键。本行“待确认”的策略
-    #    （直接读还是迁移）不做假定，只要求两条路径都保留 Legacy 语义且启动成功。
+    # 3) 旧通道与 Watchtower 记录不静默切 V1，由“真实旧库迁移 → 恢复原通道 → 强关结算”证明；
+    #    待开通请求保留为旧库输入，但重启后接收方 only_pending 为空可接受。
+    #    恢复后承诺锁仍是 57 字节、结算仍走 Legacy 85 字节条目。
+    # 4) 新节点真实启动：以 `start_with_confirm(confirm="y")` 走真实启动/迁移路径，
+    #    再对迁移后的数据库 checkpoint 跑新二进制 `--check-validate`；该命令自身不执行迁移，
+    #    不能要求它在旧库副本上成功。不调用历史 0.8.1 迁移器、不手改 DB 版本键。
     # 5) 不重开替代通道：恢复后 channel_id / outpoint / 双方余额 / 最新承诺哈希与关停前逐字段
     #    相等 → 是同一条原通道被恢复，而不是升级后另开一条新通道。
     # 6) 恢复后可用：继续双向付款，并对该原通道强关；承诺锁仍为 57 字节、结算仍走 Legacy
     #    85 字节条目，最终付款 Success 且节点正常收尾 → 旧数据可继续付款与结算。
     def test_real_old_stores_start_and_settle_original_legacy_channel(self):
-        # 证据写到本类自己的 report/<tmp_path_name> 下，与节点数据同一目录树统一清理，
-        # 不再使用 .codex-artifacts，避免跑完留下没人回收的输出。
-        evidence = Path(get_tmp_path()) / "evidence"
+        # 证据放在本节点临时目录内；失败时随节点数据复制到 report，清理时一并回收。
+        # 避免跨运行复用 tmp/evidence，造成旧 checkpoint 路径冲突。
+        evidence = Path(self.fiber1.tmp_path) / "evidence"
         evidence.mkdir(parents=True, exist_ok=True)
         records = []
         original_hashes = {}
@@ -194,20 +192,9 @@ class TestFullHashOldData(ContractUpgradeSupport):
                 fiber.stop()
             self.processes = None
             failures = []
-            # 旧库能否被新节点读取，由下面的离线校验 + 真实启动 + 原通道恢复共同证明；
+            # 旧库能否被新节点读取，由真实启动/迁移、迁移后离线校验和原通道恢复共同证明；
             # 不把“CLI 通过”或“RPC 端口能监听”单独当成通道已经恢复。
             for index, (fiber, checkpoint) in enumerate(zip(self.fibers, checkpoints)):
-                # 新二进制离线校验：无论实现是直接读还是迁移，这一步都必须通过。
-                validation = validate_store_copy(
-                    FiberConfigPath.CURRENT_DEV.fiber_bin_path,
-                    checkpoint,
-                    evidence / f"validate-new-{index}",
-                )
-                records.append(validation)
-                if validation["exit_code"] != 0:
-                    failures.append(
-                        f"node{index} offline validation: {validation['output']}"
-                    )
                 # 用不可变的旧 checkpoint 覆盖 live store，并把版本切到新二进制：
                 # 这是真实的“旧库 → 新节点”升级，而不是新库在新旧版本间往返。
                 live_store = Path(fiber.tmp_path) / "fiber/store"
@@ -218,7 +205,16 @@ class TestFullHashOldData(ContractUpgradeSupport):
                 try:
                     # Same confirm behavior as test_data.py, but no 0.8.1 tool
                     # or hand-edited version key is inserted to rescue this upgrade.
-                    start_with_confirm(fiber, confirm="y", timeout=90)
+                    # 新进程也需启用 admin，才能给迁移后的热库取一致 checkpoint。
+                    previous_modules = os.environ.get("RPC_ENABLED_MODULES")
+                    os.environ["RPC_ENABLED_MODULES"] = self.rpc_modules
+                    try:
+                        start_with_confirm(fiber, confirm="y", timeout=90)
+                    finally:
+                        if previous_modules is None:
+                            os.environ.pop("RPC_ENABLED_MODULES", None)
+                        else:
+                            os.environ["RPC_ENABLED_MODULES"] = previous_modules
                     records.append(
                         dict(
                             stage=f"node{index} startup",
@@ -236,6 +232,30 @@ class TestFullHashOldData(ContractUpgradeSupport):
                         )
                     )
                     failures.append(str(error))
+                    continue
+                # 对运行中新库再次取一致 checkpoint，再用新二进制离线校验。
+                # 原始旧 checkpoint 保持只读，末尾仍会逐文件核对哈希。
+                backups = Path(fiber.tmp_path) / "fiber/backups"
+                before = set(backups.glob("*/db"))
+                fiber.get_client().call("backup", [])
+                created = set(backups.glob("*/db")) - before
+                assert (
+                    created
+                ), "New backup RPC must produce a consistent RocksDB checkpoint"
+                migrated = evidence / f"new-node{index}/store"
+                shutil.copytree(
+                    max(created, key=lambda p: int(p.parent.name)), migrated
+                )
+                validation = validate_store_copy(
+                    FiberConfigPath.CURRENT_DEV.fiber_bin_path,
+                    migrated,
+                    evidence / f"validate-new-{index}",
+                )
+                records.append(validation)
+                if validation["exit_code"] != 0:
+                    failures.append(
+                        f"node{index} migrated-store validation: {validation['output']}"
+                    )
             assert not failures, "Old-data upgrade failed:\n" + "\n".join(failures)
             self.__class__.processes = self.node_processes()
             self.processes = self.__class__.processes
@@ -268,18 +288,22 @@ class TestFullHashOldData(ContractUpgradeSupport):
                         after[field],
                     )
             assert self.channel_id == original_id
-            # 三类旧记录里的“待开通记录”在 reload 后仍必须存在且语义不变：同一 temporary id 仍在
-            # pending 列表、channel_outpoint 仍为空（不是被静默丢弃或升级成新通道）。
+            # 旧待开通请求重启后可被清理；仅在它仍出现在 pending 列表时核对没有变成已出资通道。
             pending_after = self.fiber1.get_client().list_channels(
                 {"only_pending": True}
             )["channels"]
             restored_pending = [
                 c for c in pending_after if c["channel_id"] == pending_id
             ]
-            assert (
-                restored_pending
-            ), f"pending-open record lost after old-store reload: {pending_after}"
-            assert restored_pending[0]["channel_outpoint"] is None, restored_pending[0]
+            records.append(
+                dict(
+                    stage="receiver pending after migration",
+                    present=bool(restored_pending),
+                )
+            )
+            assert all(
+                c["channel_outpoint"] is None for c in restored_pending
+            ), restored_pending
             # 恢复后仍可继续双向付款，证明旧数据不只是“能启动”。
             self.send_invoice_payment(self.fiber1, self.fiber2, CKB, True)
             self.send_invoice_payment(self.fiber2, self.fiber1, CKB, True)

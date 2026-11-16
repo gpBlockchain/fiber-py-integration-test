@@ -1,28 +1,27 @@
 """H32V2-11: 已撤销承诺的撤销证据在升级后的合约下被链上惩罚。
 
-原文件只有一个 ``TestFullHashRevokedCommitment`` 类，却把共享节点固定成 PR base 二进制
-（``fiber_version = V091_DEV``），于是两端都只宣告 V1 之前的特性、协商出 Legacy，而它同时
-又断言 57 字节 Legacy args。缺陷在于承诺版本来自开通时的 P2P 特性宣告
-（``negotiated_commitment_contract_version``），而不是链上部署的合约：head 节点之间互相宣告
-``ONCHAIN_FULL_PAYMENT_HASH`` → V1；PR base 节点不宣告，与 head 节点之间才协商出 Legacy。
-安装 ``OLD_CONTRACT`` 只制造真实的升级窗口，绝不选择布局。本文件按评审行 H32V2-11 要求的
+承诺版本来自开通时的 P2P 特性宣告（``negotiated_commitment_contract_version``），
+而不是链上部署的合约。当前 head 节点要求新通道双方宣告 ``ONCHAIN_FULL_PAYMENT_HASH``，
+所以 Legacy 必须由两个 PR base 节点先开通，再把惩罚方的旧库迁移到 head 节点；
+head 节点之间新开通的通道则协商为 V1。安装 ``OLD_CONTRACT`` 只制造真实的升级窗口，
+绝不选择布局。本文件按评审行 H32V2-11 要求的
 两个方向拆成两个类：
 
 1. ``TestFullHashRevokedLegacyByOldPeer`` —— 旧节点发送旧证据，新节点执行惩罚。
-   - 共享 ``fiber1`` 保持默认 head（``CURRENT_DEV``），它是惩罚方/被测监控，全程不重启；
-     Legacy 对端在 ``setUp`` 里按类级 guard 惰性启动一次，固定
-     ``FiberConfigPath.V091_DEV``（PR base 9a561b3）。旧对端不宣告完整哈希特性，与 head
-     对端之间协商出 57 字节 Legacy 布局。
-   - 升级窗口：先断言 live 代码 cell 是 ``NEW_CONTRACT``，装 ``OLD_CONTRACT`` 并断言
-     OLD 字节，开 Legacy 通道、完成一次付款（旧状态被 RAA 撤销），再把同一 Type ID 原地
-     升级回 ``NEW_CONTRACT``，共享 head 节点 PID/启动时间不变。
-   - 在旧对端上做 store 回滚 + 强关；head 节点的内置 watchtower 用升级后的代码惩罚 57 字节
+   - 共享 ``fiber1``/``fiber2`` 先运行固定的 ``FiberConfigPath.V091_DEV``
+     （PR base 9a561b3），开通 57 字节 Legacy 通道并完成付款；随后只把惩罚方
+     ``fiber1`` 的旧库迁移到 head 二进制，原通道身份保持不变。
+   - 升级窗口：显式安装 ``OLD_CONTRACT`` 并断言 OLD 字节，开 Legacy 通道、完成一次
+     付款（旧状态被 RAA 撤销），再把同一 Type ID 原地
+     升级回 ``NEW_CONTRACT``，合约升级期间节点 PID/启动时间不变。
+   - 惩罚方升级后，在旧对端上做 store 回滚 + 强关；head 节点的内置 watchtower
+     用升级后的代码惩罚 57 字节
      Legacy 承诺。
 
 2. ``TestFullHashRevokedV1`` —— 新节点发送 V1 旧证据，新节点执行惩罚。
    - 两端都是默认 head，通道协商为 V1：被撤销承诺 lock args 是 58 字节且最后一字节
      feature = ``0x01``。
-   - 全程不安装 ``OLD_CONTRACT``（V1 从不在旧代码下执行）：先断言 live 代码 cell 是
+   - 全程不安装 ``OLD_CONTRACT``（V1 从不在旧代码下执行）：开通前确保 live 代码 cell 是
      ``NEW_CONTRACT``，惩罚结束后再断言仍是 NEW 且两个节点都没重启。
    - 回滚 ``self.fiber2`` 的 store 并强关，由 ``self.fiber1`` 的 watchtower 惩罚。
 
@@ -52,10 +51,11 @@
   追平回滚掉的旧状态，那格旧承诺就不会上链（实测偶发）。
 - 惩罚方通道的 WAITING_ONCHAIN_SETTLEMENT 由每 300 秒一次的 CheckChannelsShutdown 清除，
   所以收尾等待覆盖两轮（660 秒），等待期间持续出块。
-- 两个方法都已在本机 devnet 实际执行通过（2 passed in 1250.82s）；证据见
-  ``report/h32v2-runs/revoked-commitment-11.log``。
+- 旧路径的历史执行记录见 ``report/h32v2-runs/revoked-commitment-11.log``；
+  当前快照与节点版本的运行结果须单独核对。
 """
 
+import hashlib
 import shutil
 import socket
 import subprocess
@@ -64,6 +64,7 @@ from pathlib import Path
 
 from framework.test_fiber import FiberConfigPath
 from framework.util import ckb_hasher
+from test_cases.fiber.devnet.migration._helpers import start_with_confirm
 from test_cases.fiber.devnet.compatibility.contract_upgrade_support import (
     CKB,
     NEW_CONTRACT,
@@ -97,7 +98,7 @@ PUNISHER_BALANCE_INDEX = 0
 class RevokedCommitmentSupportMixin:
     """H32V2-11 两个方向共用的链上证据与 store 回滚夹具；不含测试方法。"""
 
-    # 默认只监控本文件使用的共享节点；Legacy 类把惰性启动的旧对端端口也纳入基线。
+    # 默认监控本文件使用的共享节点；有额外对端的子类可追加端口。
     extra_monitored_ports = ()
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 2}
 
@@ -126,7 +127,14 @@ class RevokedCommitmentSupportMixin:
     def _assert_contract_bytes(self, path):
         """live commitment-lock 代码 cell 必须正好是 ``path`` 的字节。"""
         cell = self.contract_code_cell()
-        assert cell["output_data"] == "0x" + path.read_bytes().hex(), cell
+        live = bytes.fromhex(cell["output_data"][2:])
+        expected = path.read_bytes()
+        assert live == expected, (
+            f"live commitment-lock 与 {path} 不一致: "
+            f"live={len(live)} bytes sha256={hashlib.sha256(live).hexdigest()}, "
+            f"expected={len(expected)} bytes "
+            f"sha256={hashlib.sha256(expected).hexdigest()}"
+        )
         return cell
 
     def _lock_args(self, transaction):
@@ -441,12 +449,11 @@ class TestFullHashRevokedLegacyByOldPeer(
 ):
     """H32V2-11（旧证据）: 旧节点广播 57 字节 Legacy 已撤销承诺，head 节点惩罚。"""
 
+    fiber_version = FiberConfigPath.V091_DEV
     ckb_rpc_port, ckb_p2p_port = 24614, 24615
     fiber1_rpc_port, fiber1_p2p_port = 24628, 24627
     fiber2_rpc_port, fiber2_p2p_port = 24629, 24630
     extra_fiber_rpc_port, extra_fiber_p2p_port = 24700, 24800
-    # 旧对端是本类的惩罚对象，必须纳入“没有多余重启”的进程基线。
-    extra_monitored_ports = (extra_fiber_rpc_port,)
 
     @classmethod
     def setup_class(cls):
@@ -464,7 +471,7 @@ class TestFullHashRevokedLegacyByOldPeer(
         ):
             with socket.socket() as sock:
                 sock.bind(("127.0.0.1", port))
-        # Legacy 样本必须来自固定的 PR base 二进制 9a561b3；共享节点保持框架默认 head。
+        # Legacy 样本必须来自固定的 PR base 二进制 9a561b3。
         version = subprocess.check_output(
             [ROOT / FiberConfigPath.V091_DEV.fiber_bin_path, "--version"], text=True
         )
@@ -473,22 +480,15 @@ class TestFullHashRevokedLegacyByOldPeer(
         cls.ckb = cls.node.getClient()
 
     def setUp(self):
-        cls = self.__class__
-        if not hasattr(cls, "legacy_peer"):
-            # generate_account / start_new_fiber 都是实例方法：旧对端只能在 setUp 里按类级
-            # guard 惰性启动一次，端口是 extra_fiber_rpc_port/extra_fiber_p2p_port。
-            cls.legacy_peer = self.start_new_fiber(
-                self.generate_account(5000), fiber_version=FiberConfigPath.V091_DEV
-            )
-        # 基线在旧对端起来之后采集：之后任何节点多余重启都会被 assert_nodes_running 发现。
         self.processes = self.node_processes()
 
     # TEST-MAP: H32V2-11
     # TEST-EVIDENCE-BEGIN: H32V2-11
-    # Evidence | covered | 旧节点（V091_DEV，9a561b3）与 head 节点开通 57 字节 Legacy 通道：
-    # 版本来自开通时 P2P 特性宣告（旧节点不宣告 ONCHAIN_FULL_PAYMENT_HASH），不是链上合约。
-    # 先装 OLD_CONTRACT 制造真实升级窗口，付款撤销旧状态后把同一 Type ID 原地升级到
-    # NEW_CONTRACT（head 与旧对端 PID/启动时间不变），再回滚旧对端 store 并强关。旧对端广播
+    # Evidence | covered | 两个旧节点（V091_DEV，9a561b3）开通 57 字节 Legacy 通道；
+    # 付款撤销旧状态后，只把惩罚方旧库迁移到 head，保持原 channel_id/outpoint。
+    # 版本来自开通时 P2P 特性宣告，不是链上合约。
+    # 显式安装 OLD_CONTRACT 制造真实升级窗口，付款撤销旧状态后把同一 Type ID 原地升级到
+    # NEW_CONTRACT（合约升级期间 PID/启动时间不变），再回滚旧对端 store 并强关。旧对端广播
     # 的正是付款 RAA 已撤销的那格承诺；head 的 watchtower 用升级后的代码惩罚：retribution
     # 只消费该承诺 outpoint（恰好 1 个 input 指向它且是首个 input），重建 RAA 时记录的撤销
     # 输出（惩罚方 shutdown script 所有，capacity/type 与被撤销承诺 output[0] 一致），被撤销
@@ -501,36 +501,46 @@ class TestFullHashRevokedLegacyByOldPeer(
     # 回滚刻意只回退一格（见模块 docstring）。
     # Evidence | limitation | 撤销 witness 形状与承诺版本无关（见模块 docstring），Legacy 与 V1
     # 共用同一 121 字节常量；本方法单独断言 Legacy 的 57 字节 args。
-    # Evidence | run | 已在本机 devnet 执行通过（report/h32v2-runs/revoked-commitment-11.log；
-    # 该文件两条方法合计 2 passed in 1250.82s）。实测：付款 0x752fb560… →
-    # 旧对端强关广播 0x82c3712a…（57 字节 args）→ 惩罚交易 0x07591214… 消费该 outpoint。
-    # 惩罚方通道状态按 ChannelReady -> Closed|UNCOOPERATIVE_REMOTE|WAITING_ONCHAIN_SETTLEMENT
-    # -> Closed|UNCOOPERATIVE_REMOTE 收尾：节点每 300 秒才跑 CheckChannelsShutdown，
-    # 本轮标志清除发生在这条 300 秒周期检查之后（等待上限 660 秒覆盖两轮）。
+    # Evidence | historical | 旧运行记录 report/h32v2-runs/revoked-commitment-11.log
+    # 使用先前二进制与快照；当前显式旧旧开通、单端迁移路径须以本轮运行结果为准。
     # TEST-EVIDENCE-END: H32V2-11
     def test_legacy_revoked_commitment_is_punished_by_head_watchtower(self):
-        # --- 1. 升级窗口：先装 PR base 合约，只让后面的原地升级成为真实字节变化 ---
-        self._assert_contract_bytes(NEW_CONTRACT)
+        # --- 1. 显式安装 PR base 合约；快照的初始字节不作为本用例前提 ---
+        assert OLD_CONTRACT.read_bytes() != NEW_CONTRACT.read_bytes()
         self.upgrade_contract(OLD_CONTRACT)
         self._assert_contract_bytes(OLD_CONTRACT)
 
-        # --- 2. 旧对端 + head 协商出 Legacy（57 字节）通道 ---
-        self.select_peers(self.fiber1, self.legacy_peer, "legacy")
+        # --- 2. 两个旧节点开 Legacy（57 字节）通道，避免 head 拒绝新建 Legacy ---
+        self.select_peers(self.fiber1, self.fiber2, "legacy")
         self.open_ready()
         ready = [self.channel(f) for f in self.fibers]
         assert all(c["state"]["state_name"] == "ChannelReady" for c in ready), ready
-        victim, punisher = self.legacy_peer, self.fiber1
+        victim, punisher = self.fiber2, self.fiber1
 
         # --- 3. 付款撤销 victim 的前一格承诺 ---
         one_state_ago, payment_hash = self._revoke_previous_commitment(victim, punisher)
 
-        # --- 4. 同一 Type ID 原地升级到 head 合约；两边进程身份不变 ---
-        # upgrade_contract 内部会 assert_nodes_running，基线含旧对端端口。
+        # --- 4. 同一 Type ID 原地升级到 head 合约；合约升级期间进程不重启 ---
         self.upgrade_contract(NEW_CONTRACT)
         self._assert_contract_bytes(NEW_CONTRACT)
         self.assert_nodes_running()
 
-        # --- 5. 回滚旧对端 store 并强关，让 head 的 watchtower 惩罚 Legacy 承诺 ---
+        # --- 5. 原地迁移惩罚方旧库；同一通道由 head 的 watchtower 接管 ---
+        old_processes = self.processes
+        self.processes = None  # 只允许惩罚方在此处升级重启
+        punisher.stop()
+        punisher.fiber_config_enum = FiberConfigPath.CURRENT_DEV
+        start_with_confirm(punisher, confirm="y", timeout=90)
+        self._wait_channel_loaded(punisher)
+        upgraded = self.channel(punisher)
+        assert upgraded["channel_id"] == ready[0]["channel_id"]
+        assert upgraded["channel_outpoint"] == ready[0]["channel_outpoint"]
+        self.processes = self.node_processes()
+        assert self.processes[0] == old_processes[0]  # CKB 没重启
+        assert self.processes[1] != old_processes[1]  # 惩罚方切到 head
+        assert self.processes[2] == old_processes[2]  # 旧对端没重启
+
+        # --- 6. 回滚旧对端 store 并强关，让 head 的 watchtower 惩罚 Legacy 承诺 ---
         wallet_before = self.wallet_balances()
         self.processes = None  # 允许 victim 唯一一次 store 回滚重启
         self._restore_store_and_force_close(victim, punisher, one_state_ago)
@@ -542,7 +552,7 @@ class TestFullHashRevokedLegacyByOldPeer(
         # Legacy 布局没有 feature 字节：57 字节 args 已在 helper 里断言（V1 才会多出 0x01）。
         assert len(self._lock_args(revoked)) == LEGACY_ARGS_LENGTH
 
-        # --- 6. 惩罚方通道收尾 Closed，不带 WAITING_ONCHAIN_SETTLEMENT ---
+        # --- 7. 惩罚方通道收尾 Closed，不带 WAITING_ONCHAIN_SETTLEMENT ---
         closed = self._wait_closed(punisher)
         assert closed["state"]["state_name"] == "Closed", closed
         assert SETTLEMENT_FLAG not in str(
@@ -596,7 +606,7 @@ class TestFullHashRevokedV1(RevokedCommitmentSupportMixin, FullHashChannelSuppor
     # TEST-EVIDENCE-BEGIN: H32V2-11
     # Evidence | covered | 两个 head 节点（CURRENT_DEV）开通 V1 通道：双方都宣告
     # ONCHAIN_FULL_PAYMENT_HASH，被撤销承诺 lock args 为 58 字节且最后一字节 feature = 0x01。
-    # 全程不安装 OLD_CONTRACT：本方法先断言 live 代码 cell 就是 NEW_CONTRACT，惩罚结束后再断言
+    # 全程不安装 OLD_CONTRACT：开通前确保 live 代码 cell 是 NEW_CONTRACT，惩罚结束后再断言
     # 仍是 NEW_CONTRACT 且两个节点没有重启，因此 V1 只在新合约下执行。付款撤销旧状态后回滚
     # self.fiber2 的 store 并强关，self.fiber1 的 watchtower 惩罚：断言集合与 Legacy 方向一致
     # （只消费被撤销 outpoint、重建惩罚方所有的撤销输出、容量/type 与被撤销 output[0] 一致、
@@ -610,13 +620,19 @@ class TestFullHashRevokedV1(RevokedCommitmentSupportMixin, FullHashChannelSuppor
     # witness 绑定到 58 字节 V1 承诺。
     # Evidence | limitation | 没有 RPC 暴露 revocation_data，"惩罚而不是普通逐笔结算" 由链上
     # witness 形状与 outpoint 消费关系证明，不读 store、不看日志；store 回滚只回退一格。
-    # Evidence | run | 已在本机 devnet 执行通过（report/h32v2-runs/revoked-commitment-11.log）。
+    # Evidence | historical | 先前版本的运行记录见
+    # report/h32v2-runs/revoked-commitment-11.log；当前快照的结果单独记录。
     # 实测：付款 0xf5e8a46a… → 被撤销的 V1 承诺 0x67257fb0…（58 字节 args + feature 0x01）→
     # 惩罚交易 0x73c1f57b… 消费该 outpoint；通道状态与 Legacy 方向相同，WAITING 标志同样在
     # 300 秒周期检查后清除。
     # TEST-EVIDENCE-END: H32V2-11
     def test_v1_revoked_commitment_is_punished_by_head_watchtower(self):
-        # --- 1. V1 只在 head 合约下执行：先断言 live 代码 cell 是 NEW_CONTRACT ---
+        # --- 1. V1 只在 head 合约下执行：开通前确保 live 代码 cell 是 NEW_CONTRACT ---
+        if (
+            self.contract_code_cell()["output_data"]
+            != "0x" + NEW_CONTRACT.read_bytes().hex()
+        ):
+            self.upgrade_contract(NEW_CONTRACT)
         self._assert_contract_bytes(NEW_CONTRACT)
 
         # --- 2. 两个 head 节点协商出 V1（58 字节 + feature 0x01）通道 ---

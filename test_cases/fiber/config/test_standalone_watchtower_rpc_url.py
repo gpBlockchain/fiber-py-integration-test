@@ -8,8 +8,10 @@ import time
 
 import pytest
 
-from framework.basic_fiber import FiberTest
+from framework.basic_fiber import COMMIT_LOCK_CODE_HASH, FiberTest
 from framework.config import DEFAULT_MIN_DEPOSIT_CKB
+from framework.helper.channel_settlement import ChannelSettlement
+from framework.helper.fiber_ops import get_channel, wait_for_result
 
 
 class TestWatchTower(FiberTest):
@@ -18,24 +20,30 @@ class TestWatchTower(FiberTest):
 
     def test_old_force_shutdown_channel(self):
         """
-        之前有channel，然后监听
-            channel ready 的channel，瞭望塔无法工作
-        Returns:
-
+        强制关闭并确认后再配置独立瞭望塔；原通道仍可由瞭望塔结算。
         """
         self.fiber3 = self.start_new_fiber(self.generate_account(1000))
-        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 1)
+        channel_id = self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 1)
         self.send_payment(self.fiber1, self.fiber2, 1)
+        for fiber in (self.fiber1, self.fiber2):
+            self.wait_fibers_pending_tlc_eq0(fiber)
+        channel = get_channel(self.fiber1, channel_id)
+        raw_outpoint = bytes.fromhex(channel["channel_outpoint"][2:])
+        assert len(raw_outpoint) == 36
+        funding_outpoint = {
+            "tx_hash": "0x" + raw_outpoint[:32].hex(),
+            "index": hex(int.from_bytes(raw_outpoint[32:], "little")),
+        }
+        observer = ChannelSettlement(self.node.getClient(), COMMIT_LOCK_CODE_HASH)
         self.fiber1.get_client().shutdown_channel(
-            {
-                "channel_id": self.fiber1.get_client().list_channels({})["channels"][0][
-                    "channel_id"
-                ],
-                "force": True,
-            }
+            {"channel_id": channel_id, "force": True}
         )
-        tx = self.wait_and_check_tx_pool_fee(1000, False)
-        self.Miner.miner_until_tx_committed(self.node, tx)
+        # 后台矿工可能已打包交易；等待指定 funding 的已确认消费，而非全局 pending。
+        commitment = wait_for_result(
+            f"Channel {channel_id} funding spent by confirmed force-close",
+            lambda: observer.find_spending_transaction(funding_outpoint),
+        )
+        commitment_tx = commitment["hash"]
         self.fiber1.stop()
         self.fiber2.stop()
         self.fiber2.prepare(
@@ -47,25 +55,30 @@ class TestWatchTower(FiberTest):
         self.fiber2.start()
         time.sleep(5)
         self.node.getClient().generate_epochs("0x1", 0)
-        with pytest.raises(Exception) as exc_info:
-            tx = self.wait_and_check_tx_pool_fee(1000, False, 20 * 5)
-        expected_error_message = "tx pool pending size did not reach"
-        assert expected_error_message in exc_info.value.args[0], (
-            f"Expected substring '{expected_error_message}' "
-            f"not found in actual string '{exc_info.value.args[0]}'"
+        settlement = wait_for_result(
+            f"Commitment {commitment_tx}:0 settled by standalone watchtower",
+            lambda: observer.find_spending_transaction(
+                {"tx_hash": commitment_tx, "index": "0x0"}
+            ),
         )
-        self.fiber1.start()
-        tx = self.wait_and_check_tx_pool_fee(1000, False, 20 * 5)
+        settlement_tx = settlement["hash"]
+        assert any(
+            tx_input["previous_output"]["tx_hash"] == commitment_tx
+            for tx_input in settlement["inputs"]
+        )
+        tx_message = self.get_tx_message(settlement_tx)
+        assert any(
+            cell["args"] == self.fiber3.get_account()["lock_arg"]
+            for cell in tx_message["input_cells"]
+        )
+        self.Miner.miner_until_tx_committed(self.node, settlement_tx)
 
     def test_old_channel(self):
         """
-        之前有channel，然后监听
-        channel ready 的channel，瞭望塔无法工作
-        Returns:
-
+        通道进入 ChannelReady 后再配置独立瞭望塔；更新通道状态后，瞭望塔可以结算。
         """
         self.fiber3 = self.start_new_fiber(self.generate_account(1000))
-        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 1)
+        channel_id = self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 1)
         self.fiber2.stop()
         self.fiber2.prepare(
             {
@@ -77,26 +90,24 @@ class TestWatchTower(FiberTest):
         time.sleep(5)
         self.send_payment(self.fiber1, self.fiber2, 1)
         self.fiber1.get_client().shutdown_channel(
-            {
-                "channel_id": self.fiber1.get_client().list_channels({})["channels"][0][
-                    "channel_id"
-                ],
-                "force": True,
-            }
+            {"channel_id": channel_id, "force": True}
         )
-        tx = self.wait_and_check_tx_pool_fee(1000, False)
-        self.Miner.miner_until_tx_committed(self.node, tx)
+        commitment_tx = self.wait_and_check_tx_pool_fee(1000, False)
+        self.Miner.miner_until_tx_committed(self.node, commitment_tx)
         self.fiber1.stop()
         self.node.getClient().generate_epochs("0x1", 0)
-        with pytest.raises(Exception) as exc_info:
-            tx = self.wait_and_check_tx_pool_fee(1000, False, 20 * 5)
-        expected_error_message = "tx pool pending size did not reach"
-        assert expected_error_message in exc_info.value.args[0], (
-            f"Expected substring '{expected_error_message}' "
-            f"not found in actual string '{exc_info.value.args[0]}'"
+        settlement_tx = self.wait_and_check_tx_pool_fee(1000, False, 20 * 5)
+        settlement = self.node.getClient().get_transaction(settlement_tx)["transaction"]
+        assert any(
+            tx_input["previous_output"]["tx_hash"] == commitment_tx
+            for tx_input in settlement["inputs"]
         )
-        self.fiber1.start()
-        tx = self.wait_and_check_tx_pool_fee(1000, False, 20 * 5)
+        tx_message = self.get_tx_message(settlement_tx)
+        assert any(
+            cell["args"] == self.fiber3.get_account()["lock_arg"]
+            for cell in tx_message["input_cells"]
+        )
+        self.Miner.miner_until_tx_committed(self.node, settlement_tx)
 
     def test_no_balance(self):
         """
@@ -166,10 +177,35 @@ class TestWatchTower(FiberTest):
             }
         )
         tx = self.wait_and_check_tx_pool_fee(1000, False)
-        self.Miner.miner_until_tx_committed(self.node, tx)
-        while len(self.get_commit_cells()) > 0:
+        tx_response = self.Miner.miner_until_tx_committed(self.node, tx)
+        commitment_lock = tx_response["transaction"]["outputs"][0]["lock"]
+        # Follow confirmed spends: an empty live-cell query can precede settlement.
+        # Even without TLCs, the two parties can receive funds in separate spends.
+        for _ in range(3):
+            if not any(
+                output["lock"]["code_hash"] == commitment_lock["code_hash"]
+                and output["lock"]["hash_type"] == commitment_lock["hash_type"]
+                for output in tx_response["transaction"]["outputs"]
+            ):
+                break
             self.node.getClient().generate_epochs("0x1", 0)
-            time.sleep(10)
+            for _ in range(60):
+                settlement_tx, _ = self.get_ln_cell_death_hash(tx)
+                if settlement_tx is not None:
+                    break
+                time.sleep(1)
+            else:
+                raise TimeoutError(f"Commitment output {tx}:0 was not settled")
+            tx_response = self.Miner.miner_until_tx_committed(self.node, settlement_tx)
+            assert any(
+                tx_input["previous_output"] == {"tx_hash": tx, "index": "0x0"}
+                for tx_input in tx_response["transaction"]["inputs"]
+            )
+            tx = settlement_tx
+        else:
+            raise TimeoutError(f"Commitment outputs remain after settlement: {tx}")
+        # Balance queries use the indexer, which can lag behind transaction confirmation.
+        self.Miner.miner_with_version(self.node, "0x0")
         after_balance = self.get_fibers_balance()
         result = self.get_balance_change(before_balance, after_balance)
         assert result[0]["ckb"] < 2000

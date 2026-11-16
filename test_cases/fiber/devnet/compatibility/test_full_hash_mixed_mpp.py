@@ -1,4 +1,4 @@
-"""H32V2-28..31: mixed V1/Legacy commitment versions in MPP and long paths.
+"""H32V2-28..32: mixed V1/Legacy commitment versions in MPP and long paths.
 
 Layout facts used throughout (SPEC-01/04): the negotiated commitment version only
 changes the ON-CHAIN layout.
@@ -19,7 +19,9 @@ never assumed:
   ``LEGACY_COUNTERPARTY_ENV`` -> announces nothing -> Legacy
 
     head <-> head            = V1
-    head <-> legacy/adversary = Legacy
+    old  <-> old             = Legacy
+    head <-> old             = rejected for new opens
+    old-old Legacy channels survive the in-place old-to-head upgrade
 
 The negotiated version is not exposed by any RPC. It is proven after a force
 close by the commitment lock args length (58 + ``0x01`` vs 57) and, for a settled
@@ -35,19 +37,20 @@ amount that landed on each channel is asserted from that observation, never
 assumed; a router that does not produce the intended split fails loudly with the
 observed per-channel state.
 
-Two classes share this file: the same-hash MPP cases H32V2-28/29 need only head +
-``V091_DEV`` nodes, while H32V2-30/31 need the instrumented full-payment-hash
-counterparty and are therefore isolated in a second class carrying
-``@requires_attack_fnn`` and its own ports. A single class cannot mix
-those markers without starting the adversary for the plain methods too.
+The H32V2-28/29 classes each start with three v0.9.1 nodes, preserve their
+Legacy channels across an in-place upgrade, then open a V1 channel. Separate
+classes give each test its own old-node topology. H32V2-30/31/32 likewise
+start their Legacy hops before upgrading the ordinary v0.9.1 nodes, then
+add V1 hops. Each case has a fresh class/port set. H32V2-30/31 start the
+instrumented counterparty in Legacy mode on its own fresh store (its older
+build does not migrate V091 channel data); only ordinary nodes are upgraded.
+H32V2-32 uses ordinary binaries throughout.
 """
 
 import hashlib
 import socket
 import subprocess
 import time
-
-import pytest
 
 from framework.attack_fnn import LEGACY_COUNTERPARTY_ENV, requires_attack_fnn
 from framework.helper.settlement_witness import (
@@ -59,6 +62,7 @@ from framework.helper.settlement_witness import (
 from framework.onchain_tlc_query import onchain_tlc_query_enabled
 from framework.test_fiber import FiberConfigPath
 from framework.util import ckb_hash
+from test_cases.fiber.devnet.migration._helpers import start_with_confirm
 from test_cases.fiber.devnet.compatibility.contract_upgrade_support import (
     CKB,
     ROOT,
@@ -110,18 +114,59 @@ class _MixedVersionMppSupport(FullHashChannelSupport):
         return fiber
 
     def _open_mixed_topology(self, payer, payee, legacy_bridge):
-        """payer --(V1)--> payee plus payer --(Legacy)--> legacy_bridge --(Legacy)--> payee."""
-        direct_id = self.open_channel(payer, payee, MPP_DIRECT_CAPACITY, 0)
+        """Preserve old-old Legacy hops across an in-place node upgrade.
+
+        New nodes reject new channels to feature-less peers. Build the Legacy
+        branch while all three nodes run the fixed v0.9.1 binary, upgrade the
+        same stores to CURRENT_DEV, then open the direct V1 channel. The IDs and
+        funding outpoints must survive the upgrade unchanged.
+        """
+        assert all(
+            fiber.fiber_config_enum is FiberConfigPath.V091_DEV
+            for fiber in (payer, payee, legacy_bridge)
+        )
         payer_bridge_id = self.open_channel(
             payer, legacy_bridge, MPP_BRIDGE_CAPACITY, 0
         )
         bridge_payee_id = self.open_channel(
             legacy_bridge, payee, MPP_BRIDGE_CAPACITY, 0
         )
+        legacy_channels = (
+            (payer, legacy_bridge, payer_bridge_id),
+            (legacy_bridge, payee, bridge_payee_id),
+        )
+        old_outpoints = {
+            channel_id: self._channel(sender, channel_id)["channel_outpoint"]
+            for sender, _, channel_id in legacy_channels
+        }
+        assert all(old_outpoints.values()), old_outpoints
+
+        for fiber in (payer, payee, legacy_bridge):
+            fiber.stop()
+        for fiber in (payer, payee, legacy_bridge):
+            fiber.fiber_config_enum = FiberConfigPath.CURRENT_DEV
+            start_with_confirm(fiber, timeout=90)
+        for sender, receiver, _ in legacy_channels:
+            sender.connect_peer(receiver)
+        for sender, receiver, channel_id in legacy_channels:
+            for fiber, peer in ((sender, receiver), (receiver, sender)):
+                self.wait_for_channel_state(
+                    fiber.get_client(),
+                    peer.get_pubkey(),
+                    "ChannelReady",
+                    channel_id=channel_id,
+                    timeout=180,
+                )
+                assert (
+                    self._channel(fiber, channel_id)["channel_outpoint"]
+                    == old_outpoints[channel_id]
+                ), f"Legacy channel {channel_id} changed on {fiber.tmp_path}"
+
+        direct_id = self.open_channel(payer, payee, MPP_DIRECT_CAPACITY, 0)
         outpoints = [
             self._channel(payer, direct_id)["channel_outpoint"],
-            self._channel(payer, payer_bridge_id)["channel_outpoint"],
-            self._channel(legacy_bridge, bridge_payee_id)["channel_outpoint"],
+            old_outpoints[payer_bridge_id],
+            old_outpoints[bridge_payee_id],
         ]
         for fiber in (payer, payee, legacy_bridge):
             self._wait_graph_outpoints(fiber, outpoints)
@@ -403,8 +448,10 @@ class _MixedVersionMppSupport(FullHashChannelSupport):
         )
 
 
-class TestMixedVersionMpp(_MixedVersionMppSupport):
-    """H32V2-28/29: mixed-version MPP over head + V091_DEV nodes only."""
+class _MixedVersionMppCase(_MixedVersionMppSupport):
+    """Old-node setup shared by the two independent MPP case classes."""
+
+    fiber_version = FiberConfigPath.V091_DEV
 
     ckb_rpc_port, ckb_p2p_port = 25814, 25815
     fiber1_rpc_port, fiber1_p2p_port = 25828, 25827
@@ -447,6 +494,10 @@ class TestMixedVersionMpp(_MixedVersionMppSupport):
         # is started lazily here, once per class.
         self._start_extra("legacy_bridge", FiberConfigPath.V091_DEV)
 
+
+class TestMixedVersionMpp(_MixedVersionMppCase):
+    """H32V2-28: both versions are live on the same upgraded nodes."""
+
     # ------------------------------------------------------------------ H32V2-28
 
     # TEST-MAP: H32V2-28
@@ -457,7 +508,7 @@ class TestMixedVersionMpp(_MixedVersionMppSupport):
     #   防止：混合版本破坏 MPP 聚合或提前公开原像。
     # 拓扑（payee 同时是两条路径的收款方）：
     #   payer(head) --V1--> payee(head)                        直连分片
-    #   payer(head) --Legacy--> legacy_bridge(9a561b3) --Legacy--> payee   桥接分片
+    #   payer(head) --Legacy--> legacy_bridge(head) --Legacy--> payee     升级前建立的桥接分片
     #   发票金额 MPP_AMOUNT 大于任一条路径的单通道容量，所以路由必须拆成恰好两片。
     # 证明点与断言的对应关系：
     #   证明点 1（混合版本共存）：先建好三条通道且图同步可见；分片路径确实落在 V1 与 Legacy 两种
@@ -489,7 +540,7 @@ class TestMixedVersionMpp(_MixedVersionMppSupport):
         invoice = self._hold_mpp_invoice(
             payee, payment_hash, MPP_AMOUNT, "ckb_hash", "H32V2-28 mixed-version MPP"
         )
-        # 证明点 5 的基线：先记下收款端两条通道、付款端两条通道的余额。
+        # 证明点 5 的基线：记下收款端、付款端及桥节点两侧的余额。
         payee_before = {
             channel_id: int(self._channel(payee, channel_id)["local_balance"], 16)
             for channel_id in (direct_id, bridge_payee_id)
@@ -497,6 +548,10 @@ class TestMixedVersionMpp(_MixedVersionMppSupport):
         payer_before = {
             channel_id: int(self._channel(payer, channel_id)["local_balance"], 16)
             for channel_id in (direct_id, payer_bridge_id)
+        }
+        bridge_before = {
+            channel_id: int(self._channel(bridge, channel_id)["local_balance"], 16)
+            for channel_id in (payer_bridge_id, bridge_payee_id)
         }
 
         # max_parts=2 限定最多两片；金额大于单通道容量，所以必须同时用这两条路径。
@@ -586,6 +641,21 @@ class TestMixedVersionMpp(_MixedVersionMppSupport):
             - int(self._channel(payer, direct_id)["local_balance"], 16)
             == outbound[direct_id]
         ), (payer_before, outbound)
+        assert (
+            payer_before[payer_bridge_id]
+            - int(self._channel(payer, payer_bridge_id)["local_balance"], 16)
+            == outbound[payer_bridge_id]
+        ), (payer_before, outbound)
+        assert (
+            int(self._channel(bridge, payer_bridge_id)["local_balance"], 16)
+            - bridge_before[payer_bridge_id]
+            == outbound[payer_bridge_id]
+        ), (bridge_before, outbound)
+        assert (
+            bridge_before[bridge_payee_id]
+            - int(self._channel(bridge, bridge_payee_id)["local_balance"], 16)
+            == inbound[bridge_payee_id]
+        ), (bridge_before, inbound)
 
         # The negotiated versions are unchanged: force-closing each of the two
         # channels at the end proves V1 for the direct one and Legacy for the
@@ -596,28 +666,14 @@ class TestMixedVersionMpp(_MixedVersionMppSupport):
         _, bridged_commitment = self._force_close_commitment(bridge, bridge_payee_id)
         self._assert_commitment_layout(bridged_commitment, "legacy")
 
-    # TEST-EVIDENCE-BEGIN H32V2-28
-    # covered: payer(head) --V1--> payee(head) plus payer --Legacy--> V091 bridge
-    #   --Legacy--> payee; invoice larger than the direct channel, so the MPP
-    #   router must split. Both parts were Committed on both payee channels and the
-    #   invoice was still Received before settle_invoice; no preimage was reported
-    #   on the payer side before that call; the payment then reached Success with
-    #   the exact preimage and the invoice Paid. The part amounts were read from
-    #   the per-channel inbound TLCs (never assumed), they sum to the invoice
-    #   amount, the payee local balance on each channel moved by exactly its part,
-    #   the payer offered-TLC balances cleared, and the payer outbound on the
-    #   direct channel equals the payee inbound (no fee) while the bridged
-    #   outbound is >= the bridged inbound (bridge fee). Versions were proven by
-    #   force-closing both channels after settlement: 58-byte args ending 0x01 for
-    #   the direct channel and 57-byte args for the bridged one.
-    # partial: the split *amounts* are not deterministic -- the router decides
-    #   which path takes how much. Only the channel assignment is forced (each
-    #   single path is smaller than the invoice and only these two paths exist).
-    #   A router that does not split over both channels fails with the observed
-    #   per-channel state instead of silently passing.
-    # not covered: UDT (xUDT); more than two parts; retries; the MPP partial
-    #   failure/rebalance branches.
-    # TEST-EVIDENCE-END H32V2-28
+
+class TestMixedVersionMppSinglePart(_MixedVersionMppCase):
+    """H32V2-29: own old-node state, independent of H32V2-28 close."""
+
+    ckb_rpc_port, ckb_p2p_port = 26414, 26415
+    fiber1_rpc_port, fiber1_p2p_port = 26428, 26427
+    fiber2_rpc_port, fiber2_p2p_port = 26429, 26430
+    extra_fiber_rpc_port, extra_fiber_p2p_port = 26500, 26600
 
     # ------------------------------------------------------------------ H32V2-29
 
@@ -628,7 +684,7 @@ class TestMixedVersionMpp(_MixedVersionMppSupport):
     #   预期：未收齐全部分片前不公开原像、不标记成功；已结算分片按自身版本核对（V1 全哈希 /
     #         Legacy 20 字节前缀）；其余分片继续按自身版本等待兑现或超时，付款终态与各分片证据一致。
     #   防止：用单个分片的链上结算提前完成 MPP 或泄露原像。
-    # 拓扑与 H32V2-28 相同（payer --V1--> payee，payer --Legacy--> bridge(9a561b3) --Legacy--> payee），
+    # 拓扑与 H32V2-28 相同（先以旧节点建立 Legacy 桥，再保留原库升级并新建 V1 直连），
     # 但收款方（payee）持有原像，因此由它强关、它结算；桥梁节点被临时停掉，
     # 让 Legacy 那一片无法在链下被兑现。
     # 证明点与断言的对应关系：
@@ -766,50 +822,14 @@ class TestMixedVersionMpp(_MixedVersionMppSupport):
             partial_invoice = payee.get_client().get_invoice(
                 {"payment_hash": payment_hash}
             )
-            assert partial_invoice["status"] != "Paid", partial_invoice
+            assert partial_invoice["status"] == "Received", partial_invoice
         finally:
             # 证明点 7：恢复桥梁与连接，避免污染同类后续用例。
             self._restart(bridge, [payer, payee])
 
-    # TEST-EVIDENCE-BEGIN H32V2-29
-    # covered: same mixed-version topology as H32V2-28. Before settling, the payer
-    #   payment was Inflight with payment_preimage null. The payee (the counterparty
-    #   of the payer on the V1 channel) force-closed that channel; the force-close
-    #   commitment had the 58-byte/0x01 V1 layout, and after settle_invoice the
-    #   committed V1 settlement was parsed with the strict 97-byte entry width and
-    #   the exact 32-byte hash and real preimage. The Legacy part stayed Committed
-    #   on both ends (the bridge was taken offline so it could not be fulfilled),
-    #   the payer payment was not Success while that part was unsecured, the settled
-    #   V1 split reached a terminal state on the payer side (the on-chain claim
-    #   confirms first and the payer node reconciles its offered TLC only minutes
-    #   later, so the wait is bounded but generous), and the payee invoice was never
-    #   marked Paid: a hold invoice leaves Received only by fulfillment (->Paid) or
-    #   an explicit cancel_invoice (->Cancelled), and the force-closed V1 channel
-    #   plus the still-locked Legacy part with the bridge offline can produce
-    #   neither. The payer payment stayed Inflight and carried no terminal status
-    #   even after that reconcile -- the whole MPP session has no settled outcome
-    #   while one part is unsettled, which is recorded, not asserted as a contract.
-    # partial: the V1 part is the one the payee can settle (it knows the preimage)
-    #   and the Legacy part is kept locked by stopping the bridge -- that is a
-    #   harness technique, not a protocol guarantee. 待确认: what the whole MPP
-    #   payment must end as when one part is settled on chain and another is still
-    #   locked; this row asserts only "not Success while a part is unsecured" and
-    #   leaves the terminal status of the session open.
-    # not covered: a Legacy part settled on chain while a V1 part stays locked (the
-    #   force-closing side needs the preimage, i.e. it is always the payee side);
-    #   UDT (xUDT); a second still-pending part.
-    # TEST-EVIDENCE-END H32V2-29
 
-
-@requires_attack_fnn
-class TestMixedVersionMppAdversarial(_MixedVersionMppSupport):
-    """H32V2-30/31: long mixed-version paths and per-part version reconciliation.
-
-    These two cases need the instrumented ``ATTACK_FULL_HASH_DEV`` counterparty
-    started with ``LEGACY_COUNTERPARTY_ENV`` (a Legacy channel whose watchtower can
-    emit a prefix-only claim). They live in a second class with fresh ports so the
-    marker does not drag the adversary into H32V2-28/29.
-    """
+class _MixedVersionAdversarialSupport(_MixedVersionMppSupport):
+    """Fresh per-case environments for retained Legacy channels and new V1 hops."""
 
     ckb_rpc_port, ckb_p2p_port = 26114, 26115
     fiber1_rpc_port, fiber1_p2p_port = 26128, 26127
@@ -845,6 +865,129 @@ class TestMixedVersionMppAdversarial(_MixedVersionMppSupport):
         super().setup_class()
         cls.ckb = cls.node.getClient()
 
+    def _upgrade_legacy_channels(self, channels, upgrades):
+        """Upgrade old-node stores without replacing their negotiated channels.
+
+        ``channels`` contains (sender, receiver, channel_id) triples. Ordinary
+        endpoints start on V091_DEV; the instrumented Legacy peer, if any,
+        already runs its final binary on a fresh store and is not migrated.
+        ``upgrades`` selects only the ordinary nodes that move to CURRENT_DEV.
+        """
+        assert all(
+            fiber.fiber_config_enum is FiberConfigPath.V091_DEV for fiber, _ in upgrades
+        )
+        outpoints = {
+            channel_id: self._channel(sender, channel_id)["channel_outpoint"]
+            for sender, _, channel_id in channels
+        }
+        assert all(outpoints.values()), outpoints
+        for fiber, _ in upgrades:
+            fiber.stop()
+        for fiber, version in upgrades:
+            fiber.fiber_config_enum = version
+            start_with_confirm(fiber, timeout=90)
+        for sender, receiver, _ in channels:
+            sender.connect_peer(receiver)
+        for sender, receiver, channel_id in channels:
+            for fiber, peer in ((sender, receiver), (receiver, sender)):
+                self.wait_for_channel_state(
+                    fiber.get_client(),
+                    peer.get_pubkey(),
+                    "ChannelReady",
+                    channel_id=channel_id,
+                    timeout=180,
+                )
+                assert self._channel(fiber, channel_id)["channel_outpoint"] == (
+                    outpoints[channel_id]
+                ), f"Legacy channel {channel_id} changed on {fiber.tmp_path}"
+
+    def _open_mixed_long_path(self, payer, relay1, relay2, payee):
+        # Both downstream peers lack the full-hash announcement at channel open.
+        # Keep the instrumented peer on its own store; only migrate V091 nodes.
+        hop3 = self.open_channel(relay2, payee, LONG_PATH_CAPACITY, 0)
+        upgrades = [(relay2, FiberConfigPath.CURRENT_DEV)]
+        if payee.fiber_config_enum is FiberConfigPath.V091_DEV:
+            upgrades.append((payee, FiberConfigPath.CURRENT_DEV))
+        self._upgrade_legacy_channels([(relay2, payee, hop3)], upgrades)
+        hop1 = self.open_channel(payer, relay1, LONG_PATH_CAPACITY, 0)
+        hop2 = self.open_channel(relay1, relay2, LONG_PATH_CAPACITY, 0)
+        return hop1, hop2, hop3
+
+    # ------------------------------------------------------------- H32V2-30 helpers
+
+    def _sha256_hex(self, preimage):
+        """完整 32 字节 hash：与 _craft_prefix_hash 的坏 hash 相对照，用于 H32V2-32。"""
+        return (
+            "0x"
+            + hashlib.sha256(bytes.fromhex(preimage.removeprefix("0x"))).hexdigest()
+        )
+
+    def _chain_ckb(self, fiber):
+        """某节点账户在链上的 CKB 总量。
+
+        通道强关并链上结算后，钱是**链上到账**到收款人锁脚本，而不是留在通道的
+        local_balance 里；因此核对“对端按该笔金额到账”必须看链上 capacity。
+        """
+        return int(
+            self.ckb.get_cells_capacity(
+                {
+                    "script": self.get_account_script(fiber.account_private),
+                    "script_type": "lock",
+                    "script_search_mode": "exact",
+                }
+            )["capacity"],
+            16,
+        )
+
+    def _send_explicit_route(self, payer, hops, invoice, amount, mine_first=False):
+        """Explicit route disables retries; an on-chain loss is not a refund.
+
+        ``mine_first=True`` 在发款前先挖一个块：H32V2-32 随后要停掉自动矿工并注入真实原像，
+        先挖块保证“发款已提交”与后续操作之间没有待确认交易竞争。H32V2-30 沿用默认行为。
+        """
+        if mine_first:
+            self.Miner.miner_with_version(self.node, "0x0")
+        route = None
+        last_error = None
+        for _ in range(90):
+            try:
+                route = payer.get_client().build_router(
+                    {
+                        "amount": hex(amount),
+                        "hops_info": hops,
+                        "final_tlc_expiry_delta": hex(FINAL_EXPIRY_DELTA),
+                    }
+                )
+                break
+            except Exception as err:  # gossip for the exact outpoint may lag
+                last_error = err
+                time.sleep(1)
+        assert route is not None, f"explicit route not available: {last_error}"
+        return payer.get_client().send_payment_with_router(
+            {
+                "router": route["router_hops"],
+                "invoice": invoice["invoice_address"],
+            }
+        )
+
+    def _wait_tlc_committed(self, fiber, channel_id, payment_hash, timeout=150):
+        def committed():
+            tlcs = self._tlc_in(fiber, channel_id, payment_hash)
+            if len(tlcs) == 1 and "Committed" in tlcs[0]["status"].values():
+                return tlcs[0]
+            return None
+
+        return self._wait_until(
+            committed,
+            f"TLC {payment_hash} to be Committed in {channel_id} on {fiber.tmp_path}",
+            timeout=timeout,
+            interval=0.5,
+        )
+
+
+class TestMixedVersionMppAdversarial(_MixedVersionAdversarialSupport):
+    """H32V2-30: one isolated three-hop path with a prefix-only Legacy claim."""
+
     # ------------------------------------------------------------------ H32V2-30
 
     # TEST-MAP: H32V2-30
@@ -854,8 +997,8 @@ class TestMixedVersionMppAdversarial(_MixedVersionMppSupport):
     #   预期：中继按下游通道版本识别精确身份，在到期前跨版本向上游传播失败；各跳通道保持可用、
     #         余额不被错误扣减；发起端最终 Failed 且不获得成功原像。
     #   防止：跨版本长链路中继悬挂或把错误原像当成功传播。
-    # 拓扑：payer --V1--> relay1 --V1--> relay2 --Legacy--> adversary(9a561b3 旧节点，
-    #   以 LEGACY_COUNTERPARTY_ENV 启动，不宣告完整哈希)，即上游 V1、下游 Legacy。
+    # 拓扑：payer --V1--> relay1 --V1--> relay2 --Legacy--> adversary（对抗节点以 LEGACY_COUNTERPARTY_ENV 启动；
+    #   relay2 先用 V091_DEV 建 Legacy 通道，再原地升级，保留该通道），即上游 V1、下游 Legacy。
     #   显式单路由（_send_explicit_route）= 无重试机会。
     # 证明点与断言的对应关系：
     #   证明点 1（混合版本三跳拓扑）：三条通道都建好且在图里可见；路由按 payer 命名的 hop 列表
@@ -875,10 +1018,11 @@ class TestMixedVersionMppAdversarial(_MixedVersionMppSupport):
     # 未覆盖/观测限制（与既有 TEST-EVIDENCE 一致）：“中继不缓存或转发错误原像”只能由
     #   Failed + payment_preimage 为空 + RemoveAckConfirmed 推断，中继持久化的原像库没有 RPC 可读；
     #   未覆盖 xUDT、超过三跳、启用重试的路由（本行前提已排除重试）。
+    @requires_attack_fnn
     def test_mixed_version_long_path_fails_upstream(self):
         payer, relay1 = self.fiber1, self.fiber2
-        relay2 = self._start_extra("relay2_30", FiberConfigPath.CURRENT_DEV)
-        # 证明点 1：下游对端固定为旧版 9a561b3 且关闭完整哈希宣告，因此最后一跳必是 Legacy。
+        relay2 = self._start_extra("relay2_30", FiberConfigPath.V091_DEV)
+        # 证明点 1：旧版 relay2 与 Legacy 模式的对抗节点先建通道，再只升级 relay2。
         adversary = self._start_extra(
             "adversary_30",
             FiberConfigPath.ATTACK_FULL_HASH_DEV,
@@ -886,16 +1030,14 @@ class TestMixedVersionMppAdversarial(_MixedVersionMppSupport):
         )
 
         # Route: payer --V1--> relay1 --V1--> relay2 --Legacy--> adversary.
-        # 证明点 1：三跳链路，前两跳由新节点组成（V1），最后一跳通向旧节点（Legacy）。
-        hop1 = self.open_channel(payer, relay1, LONG_PATH_CAPACITY, 0)
-        hop2 = self.open_channel(relay1, relay2, LONG_PATH_CAPACITY, 0)
-        hop3 = self.open_channel(relay2, adversary, LONG_PATH_CAPACITY, 0)
+        # 证明点 1：升级后才建立上游两条 V1 通道；最后一跳保留旧 Legacy 布局。
+        hop1, hop2, hop3 = self._open_mixed_long_path(payer, relay1, relay2, adversary)
         outpoints = [
             self._channel(payer, hop1)["channel_outpoint"],
             self._channel(relay1, hop2)["channel_outpoint"],
             self._channel(relay2, hop3)["channel_outpoint"],
         ]
-        # 证明点 1：四条通道的图都同步到这些 outpoint 后才发款，避免把“gossip 未同步”当成失败。
+        # 证明点 1：四个节点的图都同步到这些 outpoint 后才发款，避免把“gossip 未同步”当成失败。
         for fiber in (payer, relay1, relay2, adversary):
             self._wait_graph_outpoints(fiber, outpoints)
 
@@ -1058,9 +1200,20 @@ class TestMixedVersionMppAdversarial(_MixedVersionMppSupport):
     #   excludes retries, so an explicit single route is used).
     # TEST-EVIDENCE-END H32V2-30
 
+
+class TestMixedVersionMppReconciliation(_MixedVersionAdversarialSupport):
+    """H32V2-31: fresh old-node stores for the two retained Legacy branches."""
+
+    fiber_version = FiberConfigPath.V091_DEV
+    ckb_rpc_port, ckb_p2p_port = 26714, 26715
+    fiber1_rpc_port, fiber1_p2p_port = 26728, 26727
+    fiber2_rpc_port, fiber2_p2p_port = 26729, 26730
+    extra_fiber_rpc_port, extra_fiber_p2p_port = 26800, 26900
+
     # ------------------------------------------------------------------ H32V2-31
 
     # TEST-MAP: H32V2-31
+    @requires_attack_fnn
     def test_mixed_version_parts_reconcile_by_own_version(self):
         payer, payee = self.fiber1, self.fiber2
         adversary = self._start_extra(
@@ -1070,15 +1223,31 @@ class TestMixedVersionMppAdversarial(_MixedVersionMppSupport):
         )
         bridge = self._start_extra("legacy_bridge_31", FiberConfigPath.V091_DEV)
 
-        # Three intended branches out of the payer: direct V1, adversary Legacy,
-        # honest V091 Legacy. Each branch is smaller than the invoice.
-        direct_id = self.open_channel(payer, payee, MIXED_DIRECT_CAPACITY, 0)
+        # Ordinary peers start on V091 and the instrumented peer announces no
+        # full-hash feature. Build both Legacy branches before ordinary upgrades;
+        # each branch remains smaller than the invoice.
         adversary_up_id = self.open_channel(payer, adversary, MIXED_BRANCH_CAPACITY, 0)
         adversary_down_id = self.open_channel(
             adversary, payee, MIXED_BRANCH_CAPACITY, 0
         )
         bridge_up_id = self.open_channel(payer, bridge, MIXED_BRANCH_CAPACITY, 0)
         bridge_down_id = self.open_channel(bridge, payee, MIXED_BRANCH_CAPACITY, 0)
+        self._upgrade_legacy_channels(
+            [
+                (payer, adversary, adversary_up_id),
+                (adversary, payee, adversary_down_id),
+                (payer, bridge, bridge_up_id),
+                (bridge, payee, bridge_down_id),
+            ],
+            [
+                (payer, FiberConfigPath.CURRENT_DEV),
+                (payee, FiberConfigPath.CURRENT_DEV),
+                (bridge, FiberConfigPath.CURRENT_DEV),
+            ],
+        )
+        # Only this new direct channel negotiates V1; the four old hops retain
+        # their IDs/outpoints and Legacy versions despite the runtime upgrades.
+        direct_id = self.open_channel(payer, payee, MIXED_DIRECT_CAPACITY, 0)
         # The payer's router needs every branch channel, including the two
         # downstream hops it does not own, before it can split the invoice.
         outpoints = [
@@ -1154,7 +1323,7 @@ class TestMixedVersionMppAdversarial(_MixedVersionMppSupport):
                 )
             ),
             "the Legacy part to become terminal on the payer",
-            timeout=300,
+            timeout=350,
         )
         observed = payer.get_client().get_payment({"payment_hash": bad_hash})
         assert observed["payment_preimage"] is None, observed
@@ -1229,6 +1398,15 @@ class TestMixedVersionMppAdversarial(_MixedVersionMppSupport):
     #   settlement (that is H32V2-07's contract-level negative case).
     # TEST-EVIDENCE-END H32V2-31
 
+
+class TestMixedVersionLongPathSuccess(_MixedVersionAdversarialSupport):
+    """H32V2-32: ordinary nodes only, independent of the failing-path fixture."""
+
+    ckb_rpc_port, ckb_p2p_port = 27014, 27015
+    fiber1_rpc_port, fiber1_p2p_port = 27028, 27027
+    fiber2_rpc_port, fiber2_p2p_port = 27029, 27030
+    extra_fiber_rpc_port, extra_fiber_p2p_port = 27100, 27200
+
     # ------------------------------------------------------------------ H32V2-32
 
     # TEST-MAP: H32V2-32
@@ -1286,15 +1464,13 @@ class TestMixedVersionMppAdversarial(_MixedVersionMppSupport):
 
     def test_mixed_version_long_path_full_preimage_success(self):
         payer, relay1 = self.fiber1, self.fiber2
-        relay2 = self._start_extra("relay2_32", FiberConfigPath.CURRENT_DEV)
-        # 证明点 1：下游对端用普通旧版节点 V091_DEV（不宣告完整哈希 → 协商 Legacy），
-        # 不是对抗/故障注入夹具：本行要的是“真实原像的正常消费”，不需要 p2p 注入能力。
+        relay2 = self._start_extra("relay2_32", FiberConfigPath.V091_DEV)
+        # 证明点 1：下游两端用普通 V091 节点建立 Legacy 通道，再原地升级为 CURRENT_DEV。
+        # 不用对抗/故障注入夹具：本行验证真实原像的正常消费。
         adversary = self._start_extra("adversary_32", FiberConfigPath.V091_DEV)
 
         # 证明点 1：同 H32V2-30 的三跳拓扑：payer --V1--> relay1 --V1--> relay2 --Legacy--> adversary。
-        hop1 = self.open_channel(payer, relay1, LONG_PATH_CAPACITY, 0)
-        hop2 = self.open_channel(relay1, relay2, LONG_PATH_CAPACITY, 0)
-        hop3 = self.open_channel(relay2, adversary, LONG_PATH_CAPACITY, 0)
+        hop1, hop2, hop3 = self._open_mixed_long_path(payer, relay1, relay2, adversary)
         outpoints = [
             self._channel(payer, hop1)["channel_outpoint"],
             self._channel(relay1, hop2)["channel_outpoint"],
@@ -1537,78 +1713,8 @@ class TestMixedVersionMppAdversarial(_MixedVersionMppSupport):
             payer.get_client().get_payment({"payment_hash": payment_hash})["status"]
             == "Success"
         ), settled
-        adversary_invoice = adversary.get_client().get_invoice(
-            {"payment_hash": payment_hash}
-        )
-        assert adversary_invoice["status"] == "Paid", adversary_invoice
-
-    # ------------------------------------------------------------- H32V2-30 helpers
-
-    def _sha256_hex(self, preimage):
-        """完整 32 字节 hash：与 _craft_prefix_hash 的坏 hash 相对照，用于 H32V2-32。"""
-        return (
-            "0x"
-            + hashlib.sha256(bytes.fromhex(preimage.removeprefix("0x"))).hexdigest()
-        )
-
-    def _chain_ckb(self, fiber):
-        """某节点账户在链上的 CKB 总量。
-
-        通道强关并链上结算后，钱是**链上到账**到收款人锁脚本，而不是留在通道的
-        local_balance 里；因此核对“对端按该笔金额到账”必须看链上 capacity。
-        """
-        return int(
-            self.ckb.get_cells_capacity(
-                {
-                    "script": self.get_account_script(fiber.account_private),
-                    "script_type": "lock",
-                    "script_search_mode": "exact",
-                }
-            )["capacity"],
-            16,
-        )
-
-    def _send_explicit_route(self, payer, hops, invoice, amount, mine_first=False):
-        """Explicit route disables retries; an on-chain loss is not a refund.
-
-        ``mine_first=True`` 在发款前先挖一个块：H32V2-32 随后要停掉自动矿工并注入真实原像，
-        先挖块保证“发款已提交”与后续操作之间没有待确认交易竞争。H32V2-30 沿用默认行为。
-        """
-        if mine_first:
-            self.Miner.miner_with_version(self.node, "0x0")
-        route = None
-        last_error = None
-        for _ in range(90):
-            try:
-                route = payer.get_client().build_router(
-                    {
-                        "amount": hex(amount),
-                        "hops_info": hops,
-                        "final_tlc_expiry_delta": hex(FINAL_EXPIRY_DELTA),
-                    }
-                )
-                break
-            except Exception as err:  # gossip for the exact outpoint may lag
-                last_error = err
-                time.sleep(1)
-        assert route is not None, f"explicit route not available: {last_error}"
-        return payer.get_client().send_payment_with_router(
-            {
-                "router": route["router_hops"],
-                "invoice": invoice["invoice_address"],
-            }
-        )
-
-    def _wait_tlc_committed(self, fiber, channel_id, payment_hash, timeout=150):
-        def committed():
-            tlcs = self._tlc_in(fiber, channel_id, payment_hash)
-            if len(tlcs) == 1 and "Committed" in tlcs[0]["status"].values():
-                return tlcs[0]
-            return None
-
-        return self._wait_until(
-            committed,
-            f"TLC {payment_hash} to be Committed in {channel_id} on {fiber.tmp_path}",
-            timeout=timeout,
-            interval=0.5,
-        )
+        # adversary_invoice = adversary.get_client().get_invoice(
+        #     {"payment_hash": payment_hash}
+        # )
+        # assert adversary_invoice["status"] == "Paid", adversary_invoice
+        self.wait_invoice_state(adversary, payment_hash, "Paid")

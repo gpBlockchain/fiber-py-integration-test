@@ -83,6 +83,9 @@ class TestFeeRate(SharedFiberTest):
 
     def test_trampoline_1_path_2(self):
         self.send_payment(self.fiber2, self.fiber4, 1 * 100000000)
+        # Sender success can precede TLC cleanup on intermediate nodes.
+        for fiber in self.fibers:
+            self.wait_fibers_pending_tlc_eq0(fiber)
         before_balance = self.get_fibers_balance()
         payment = self.fiber1.get_client().send_payment(
             {
@@ -96,6 +99,8 @@ class TestFeeRate(SharedFiberTest):
             }
         )
         self.wait_payment_state(self.fiber1, payment["payment_hash"], "Success")
+        for fiber in self.fibers:
+            self.wait_fibers_pending_tlc_eq0(fiber)
         payment = self.fiber1.get_client().get_payment(
             {"payment_hash": payment["payment_hash"]}
         )

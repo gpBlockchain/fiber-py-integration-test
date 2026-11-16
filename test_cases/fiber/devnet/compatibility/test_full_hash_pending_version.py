@@ -1,9 +1,9 @@
-"""H32V2-03: a disconnected V1 pending request is invalidated.
+"""H32V2-03: a disconnected CHANNEL_V2 pending request is invalidated.
 
 The valid-pending feature-change branch remains unobservable through the public RPC:
 normal disconnect clears the original request before the peer can reconnect with
-changed features. One p2p-tap FNN advertises V1 initially, then restarts with
-its test-only feature switch off. This proves invalidation, not feature pinning.
+changed features. A current peer advertises CHANNEL_V2 initially, then the same
+identity restarts as v0.9.1. This proves invalidation, not feature pinning.
 """
 
 import os
@@ -13,7 +13,6 @@ import subprocess
 import time
 
 from framework.config import DEFAULT_MIN_LEDGER_DEPOSIT_CKB
-from framework.attack_fnn import LEGACY_COUNTERPARTY_ENV, requires_attack_fnn
 from framework.test_fiber import FiberConfigPath
 from test_cases.fiber.devnet.compatibility.contract_upgrade_support import (
     CKB,
@@ -29,11 +28,10 @@ IN_PROGRESS_STATES = (
     "AwaitingTxSignatures",
     "AwaitingChannelReady",
 )
-# Fiber feature bit 7 的完整哈希特性名（fiber-types `feature_bits`）。
-FULL_HASH_FEATURE = "ONCHAIN_FULL_PAYMENT_HASH"
+# 新通道准入要求的特性名；V2 也包含完整 32 字节链上 hash。
+CHANNEL_V2_FEATURE = "CHANNEL_V2"
 
 
-@requires_attack_fnn
 class TestFullHashPendingVersion(ContractUpgradeSupport):
     """对端断连后，原待接受请求必须失效；重连后的请求是全新请求。"""
 
@@ -71,7 +69,7 @@ class TestFullHashPendingVersion(ContractUpgradeSupport):
             # generate_account / start_new_fiber 是实例方法，extra 节点只能在 setUp 里惰性启动。
             cls.peer = self.start_new_fiber(
                 self.generate_account(5000),
-                fiber_version=FiberConfigPath.ATTACK_FULL_HASH_DEV,
+                fiber_version=FiberConfigPath.CURRENT_DEV,
             )
 
     # ---------------------------------------------------------------- helpers
@@ -93,8 +91,8 @@ class TestFullHashPendingVersion(ContractUpgradeSupport):
     def features_of(self, fiber):
         return fiber.get_client().node_info()["features"]
 
-    def announces_full_hash(self, fiber):
-        return any(FULL_HASH_FEATURE in name for name in self.features_of(fiber))
+    def announces_channel_v2(self, fiber):
+        return any(CHANNEL_V2_FEATURE in name for name in self.features_of(fiber))
 
     def wait_peer_visible(self, fiber, pubkey, timeout=60):
         """等 fiber 的 peer session 真的看到 pubkey，避免 open_channel 反复撞
@@ -163,16 +161,16 @@ class TestFullHashPendingVersion(ContractUpgradeSupport):
             f"原请求 {temporary_id} 已在断连时失效，但 accept_channel 仍然接受了它"
         )
 
-    def restart_peer_without_full_hash(self, peer, pubkey):
-        """已停止的同一节点用测试开关重启：身份来自 <data_dir>/fiber/sk。
+    def restart_peer_without_channel_v2(self, peer, pubkey):
+        """已停止的同一身份用 v0.9.1 重启：身份来自 <data_dir>/fiber/sk。
 
         `start_new_fiber` 会给下一个节点分配新的端口与新的 tmp_path（新的随机 sk），
         pubkey 就变了，所以“同一个对端重连”只能用同一 data dir / 同一端口重启。
-        重启时仅对这个对端设置 p2p-tap 测试开关，不切换二进制。
-        清理尚未接受的请求记录，保留 sk 与 ckb/key，避免重启恢复旧 outgoing 请求。
+        清理尚未接受的请求记录，保留 sk 与 ckb/key，再切换到不声明 CHANNEL_V2 的
+        官方旧二进制，避免旧库格式差异或旧 outgoing 请求干扰重连观察。
         """
         shutil.rmtree(os.path.join(peer.tmp_path, "fiber", "store"), ignore_errors=True)
-        peer.extra_env = dict(LEGACY_COUNTERPARTY_ENV)
+        peer.fiber_config_enum = FiberConfigPath.V091_DEV
         peer.start(fnn_log_level=self.fnn_log_level)
         restarted_pubkey = peer.get_pubkey()
         assert (
@@ -192,30 +190,32 @@ class TestFullHashPendingVersion(ContractUpgradeSupport):
 
     # TEST-MAP: H32V2-03
     # TEST-EVIDENCE-BEGIN: H32V2-03
-    # Evidence | partial | V1 request is pending before disconnect; after the peer's identity
-    # reconnects without the feature, the original temporary id remains absent and accept rejects
-    # it. Feature pinning of a still-live request is not observable via public RPC.
+    # Evidence | partial | CHANNEL_V2 request is pending before disconnect; after the same identity
+    # reconnects as v0.9.1, the original id remains absent and accept rejects it. Feature pinning
+    # of a still-live request is not observable via public RPC.
     # TEST-EVIDENCE-END: H32V2-03
     def test_pending_request_invalidated_when_peer_reconnects_with_changed_features(
         self,
     ):
+        """1. 收到双方支持 CHANNEL_V2 的原请求并确认待接受；2. 断连后确认原请求失效；3. 同身份旧版重连后拒绝接受原 ID。"""
         victim, peer = self.victim, self.peer
 
+        # 1. 原请求必须进入新节点的待接受集合。
         # 前提：受害端确实关闭了自动接受，收到请求只会停在待接受。
         auto_accept = victim.get_client().node_info()[
             "auto_accept_channel_ckb_funding_amount"
         ]
         assert int(auto_accept, 16) == 0, auto_accept
-        # 受害端支持完整哈希；第一版对端也宣告该特性（否则本用例的“改变特性”不成立）。
-        assert self.announces_full_hash(victim), self.features_of(victim)
+        # 双方最初都声明 CHANNEL_V2。
+        assert self.announces_channel_v2(victim), self.features_of(victim)
         peer1_features = self.features_of(peer)
-        assert self.announces_full_hash(peer), peer1_features
+        assert self.announces_channel_v2(peer), peer1_features
 
         peer_pubkey = peer.get_pubkey()
         peer.connect_peer(victim)
         self.wait_peer_visible(victim, peer_pubkey)
 
-        # 步骤 1：第一版对端发出开通请求；受害端只应把它列为待接受，没有任何通道就绪。
+        # 第一版对端发出开通请求；受害端只应把它列为待接受，没有任何通道就绪。
         request_1 = self.open_request(peer, victim)
         temporary_id_1 = request_1["temporary_channel_id"]
         pending_1 = self.wait_live_pending(victim, peer_pubkey)
@@ -229,7 +229,7 @@ class TestFullHashPendingVersion(ContractUpgradeSupport):
         ]
         assert ready == [], ready
 
-        # 步骤 2：停止对端。先等受害端真的处理完断连再重连：on_peer_disconnected 的
+        # 2. 停止对端。先等受害端真的处理完断连再重连：on_peer_disconnected 的
         # on_peer_disconnected 带 session_id，如果新 session 先建立，旧的断连事件会被当成
         # stale 忽略，原待接受记录就会残留，所以顺序不能反。
         peer.stop()
@@ -244,10 +244,10 @@ class TestFullHashPendingVersion(ContractUpgradeSupport):
             if c["state"]["state_name"] == "ChannelReady"
         ], invalidated_before
 
-        # 同一个 p2p-tap 二进制用测试开关关闭完整哈希特性后重连：pubkey 不变、features 变了。
-        self.restart_peer_without_full_hash(peer, peer_pubkey)
+        # 3. 同一身份用 v0.9.1 重连：pubkey 不变，CHANNEL_V2 消失。
+        self.restart_peer_without_channel_v2(peer, peer_pubkey)
         peer2_features = self.features_of(peer)
-        assert not self.announces_full_hash(peer), peer2_features
+        assert not self.announces_channel_v2(peer), peer2_features
 
         peer.connect_peer(victim)
         self.wait_peer_visible(victim, peer_pubkey)

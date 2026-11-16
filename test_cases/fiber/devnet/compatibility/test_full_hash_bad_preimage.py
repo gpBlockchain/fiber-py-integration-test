@@ -6,10 +6,10 @@ Merged from ``test_full_hash_invalid_preimage.py``,
 
 Topology
 --------
-For ordinary Legacy cases, two official v0.9.1 nodes open a channel; the victim
-then restarts as ``CURRENT_DEV`` on the same store. Prefix-only claim cases need
-``ATTACK_FULL_HASH_DEV`` to bypass the normal preimage check: the v0.9.1 victim
-opens to this feature-disabled test counterparty before upgrading. Both paths
+For all Legacy cases, two official v0.9.1 nodes open a channel. The victim
+then restarts as ``CURRENT_DEV`` on the same store. Prefix-only claim cases also
+restart the counterparty as ``ATTACK_FULL_HASH_DEV`` with its Legacy feature
+switch; that build rejects new Legacy channel admission. Both paths
 check the original channel ID, outpoint, balances, commitment hash and ready
 state; neither asks a current node to open a fresh Legacy channel. The attack
 path does not prove a stock old-old counterparty can later make a bad claim.
@@ -56,13 +56,13 @@ Rows
 
 Counterparty wiring
 -------------------
-``P2pFiberTest`` starts the counterparty from the class attribute ``attacker_env``
-before the test body runs, so the per-method environment is selected in
-``setup_method`` from the running method name:
+``setup_method`` selects the counterparty environment from the running method
+name. Legacy methods apply it when restarting the old peer as the attack build;
+V1 methods apply it on the initial attack-build startup:
 
-* H32V2-17 uses two stock v0.9.1 nodes. Prefix-only claim methods disable the
-  attack node's full-hash feature while the victim is still v0.9.1. Both restore
-  the same channel under the new victim binary;
+* H32V2-17 keeps the counterparty on stock v0.9.1. Prefix-only claim methods
+  upgrade it after the old-old channel is ready, then disable its full-hash
+  feature on startup. Both restore the same channel under the new victim binary;
 * V1 methods additionally let the counterparty build a V1 settlement whose
   preimage does not match the full 32-byte hash (``V1_PREFIX_CLAIM_ENV``), which
   is the only way the contract's rejection can actually be exercised.
@@ -169,13 +169,12 @@ def same_twenty_byte_prefix_hash(payment_hash):
     return "0x" + changed.hex()
 
 
-@requires_attack_fnn
-class TestFullHashBadPreimage(P2pFiberTest):
+class FullHashBadPreimageFixture(P2pFiberTest):
     """Prefix-only preimage claims: Legacy vs V1, relay, restart and expiry."""
 
     attacker_fiber_version = FiberConfigPath.ATTACK_FULL_HASH_DEV
-    # Default counterparty build hides the full-hash feature; setup_method selects
-    # the per-method environment before the node starts.
+    # Legacy cases begin with the official old binary, then select the attack
+    # node's feature switch when restarting that peer on its existing store.
     attacker_env = LEGACY_COUNTERPARTY_ENV
     start_fiber_config = {
         "fiber_watchtower_check_interval_seconds": WATCHTOWER_INTERVAL
@@ -190,8 +189,7 @@ class TestFullHashBadPreimage(P2pFiberTest):
     channel_local_balance = CHANNEL_FUND
     channel_remote_balance = 0
 
-    # The counterparty environment is read once, before the node starts, so the
-    # class attribute cannot vary per method. Select it from the method name.
+    # Select the environment before either the initial V1 start or Legacy restart.
     # H32V2-07 拆成 4+4 个单组合方法后，每个方法都要在这里登记，否则
     # setup_method 拿不到 env，对端会按默认角色启动。
     _COUNTERPARTY_ENV = {
@@ -253,20 +251,35 @@ class TestFullHashBadPreimage(P2pFiberTest):
 
     def teardown_method(self, method):
         super().teardown_method(method)
-        # 时间跳跃只在设置它的方法内生效：方法结束即恢复，避免同类其他方法在跑偏的时钟上执行。
+        # 恢复宿主机时钟；跳到未来的链由独立测试类的 teardown_class 清理。
         if getattr(self.__class__, "_clock_advanced", False):
             self.restore_time()
             self.__class__._clock_advanced = False
 
     def setup_method(self, method):
+        try:
+            self._setup_method(method)
+        except Exception:
+            # pytest does not call teardown_method after a failed setup. Stop
+            # nodes here so the next case does not inherit their port/store locks.
+            for fiber in reversed(getattr(self, "fibers", [])):
+                try:
+                    fiber.force_stop()
+                except Exception:
+                    self.logger.exception("could not stop node after setup failure")
+                try:
+                    fiber.clean()
+                except Exception:
+                    self.logger.exception("could not clean node after setup failure")
+            raise
+
+    def _setup_method(self, method):
         old_old = method.__name__ in self._OLD_OLD_LEGACY_METHODS
         configured_env = self._COUNTERPARTY_ENV.get(method.__name__)
         legacy = configured_env == LEGACY_COUNTERPARTY_ENV
-        self.attacker_env = None if old_old else configured_env
+        self.attacker_env = None if legacy else configured_env
         self.attacker_fiber_version = (
-            FiberConfigPath.V091_DEV
-            if old_old
-            else FiberConfigPath.ATTACK_FULL_HASH_DEV
+            FiberConfigPath.V091_DEV if legacy else FiberConfigPath.ATTACK_FULL_HASH_DEV
         )
         self.fiber_version = (
             FiberConfigPath.V091_DEV if legacy else FiberConfigPath.CURRENT_DEV
@@ -277,13 +290,16 @@ class TestFullHashBadPreimage(P2pFiberTest):
         self.fiber2 = self.attacker
         if legacy and not self.debug:
             before = self._channel(self.victim).copy()
-            assert (
-                self._channel(self.attacker)["channel_outpoint"]
-                == before["channel_outpoint"]
-            )
+            peer_before = self._channel(self.attacker).copy()
+            assert peer_before["channel_outpoint"] == before["channel_outpoint"]
             self.victim.stop()
+            if not old_old:
+                self.attacker.stop()
+                self.attacker.fiber_config_enum = FiberConfigPath.ATTACK_FULL_HASH_DEV
+                self.attacker.extra_env = configured_env
+                start_with_confirm(self.attacker, confirm="y")
             self.victim.fiber_config_enum = FiberConfigPath.CURRENT_DEV
-            start_with_confirm(self.victim, confirm="y", timeout=60)
+            start_with_confirm(self.victim, confirm="y")
             self.victim.connect_peer(self.attacker)
             self._channel_ready(self.channel_id)
             after = self._channel(self.victim)
@@ -297,6 +313,18 @@ class TestFullHashBadPreimage(P2pFiberTest):
                 assert (
                     after[field] == before[field]
                 ), f"Legacy 通道恢复后 {field} 改变: {before[field]} -> {after[field]}"
+            peer_after = self._channel(self.attacker)
+            for field in (
+                "channel_id",
+                "channel_outpoint",
+                "local_balance",
+                "remote_balance",
+                "latest_commitment_transaction_hash",
+            ):
+                assert peer_after[field] == peer_before[field], (
+                    f"Legacy 对端恢复后 {field} 改变: "
+                    f"{peer_before[field]} -> {peer_after[field]}"
+                )
 
     # ------------------------------------------------------------------ chain
 
@@ -1191,6 +1219,11 @@ class TestFullHashBadPreimage(P2pFiberTest):
         )
         self._assert_no_success_record(bad_hash)
 
+
+@requires_attack_fnn
+class TestFullHashBadPreimage(FullHashBadPreimageFixture):
+    """Legacy/V1 claim regressions sharing one class-level CKB chain."""
+
     # TEST-EVIDENCE-BEGIN: H32V2-07
     # Evidence | partial | Existing v0.9.1/attack Legacy channel is restored under CURRENT_DEV;
     # x entry directions {received = the closing side's commitment holds a Received entry,
@@ -1746,7 +1779,7 @@ class TestFullHashBadPreimage(P2pFiberTest):
     #     其付款仍 Inflight、无原像，对端发票仍 Received。
     # 未覆盖：模块 docstring 已说明——只有空前缀记录／坏原像／仅本地已知原像、身份或算法不符
     # 等分支需要读取 watchtower 持久化的原像库，当前 RPC 没有该观测点；Exact 无原像的到期
-    # 对照见下一个方法（test_exact_no_preimage_offered_tlc_waits_for_expiry）。
+    # 到期对照见独立测试类 TestFullHashBadPreimageExpiry。
     # TEST-MAP: H32V2-17
     def test_same_prefix_sibling_survives_confirmed_claim(self):
         self._wait_channel_ready(self.victim, self.channel_id)
@@ -1826,91 +1859,6 @@ class TestFullHashBadPreimage(P2pFiberTest):
         # 仍存在、非终态、状态不在 REMOVED_STATUSES，其付款仍 Inflight 且无原像，发票仍
         # Received —— 即没有被错误 fulfill，也没有被错误 fail。
         self._assert_sibling_survives(hash_b)
-
-    # TEST-EVIDENCE-BEGIN: H32V2-17
-    # Evidence | mapped | Two stock v0.9.1 peers prebuild one restored Legacy channel;
-    # one exact offered TLC whose full 32-byte hash is known
-    # but for which no preimage exists. The victim force-closes its own commitment (on-chain close
-    # reconciliation). Before the expiry: chain median time is still below the TLC expiry, the
-    # payment stays Inflight and the TLC stays present through bounded watchtower rounds (no
-    # immediate failure from the missing preimage). After advancing the chain clock past the
-    # expiry: the payment becomes Failed with no preimage and the offered TLC is closed (SETTLE-04
-    # timeout control). Prefix-store/algorithm-mismatch branches are unobservable, see docstring.
-    # TEST-EVIDENCE-END: H32V2-17
-    # H32V2-17 评审行（reviews/full-payment-hash-settlement-v2.md，SPEC-11）在本方法对应
-    # “普通无原像超时保留到期条件”这一项，作为上一个方法的对照：
-    #   场景：只有一笔 Exact 身份、完整 hash 已知但没有任何原像的普通 TLC。
-    #   预期：无原像不得触发本次新增的立即失败，必须继续遵守 TLC 到期条件，到期后才失败。
-    #   防止：把“没有原像”当成“坏原像精确消费”，把未被消费的 TLC 误杀。
-    # 证明点与断言的对应关系：
-    #   证明点 1（前提）：TLC 已 Committed 且本端按 57 字节 Legacy 承诺强关，进入链上关闭核对。
-    #   证明点 2（到期前不得提前失败）：链中位时间与本地时钟都在到期之前，连续多轮有界
-    #     watchtower 扫描中付款保持 Inflight、无原像、TLC 记录仍在 —— 缺失原像本身不是失败证据。
-    #   证明点 3（到期后按超时路径收尾）：把链上时钟推过到期后，付款才 Failed 且无原像，
-    #     offered TLC 才被移除；说明收尾由到期条件而非原像库状态驱动。
-    # 未覆盖：同上前一个方法——空前缀记录／坏原像／仅本地已知原像、身份或算法不符等分支缺少
-    # watchtower 原像库的 RPC 观测点，见模块 docstring。
-    # TEST-MAP: H32V2-17
-    def test_exact_no_preimage_offered_tlc_waits_for_expiry(self):
-        self._wait_channel_ready(self.victim, self.channel_id)
-        self._wait_channel_ready(self.attacker, self.channel_id)
-
-        # 证明点 1 的素材：完整 32 字节 hash 由已知原像算出，但本端从不公开/注入该原像。
-        preimage = "0x" + secrets.token_hex(32)
-        payment_hash = ckb_hash(preimage)
-        invoice = self._hold_invoice_with_algorithm(
-            payment_hash,
-            "ckb_hash",
-            "H32V2-17 exact no-preimage offered timeout control",
-        )
-        self._pay_hold_invoice(invoice, payment_hash)
-        offered = self._wait_committed_tlc(self.victim, payment_hash)
-        expiry_ms = int(offered["expiry"], 16)
-
-        commitment = self._force_close(self.victim)
-        args = bytes.fromhex(
-            commitment["outputs"][0]["lock"]["args"].removeprefix("0x")
-        )
-        # 证明点 1：Legacy 承诺布局确认后，进入链上关闭核对。
-        assert_commitment_args(args, "legacy")
-        self._mine_watchtower_rounds(2)
-
-        # 证明点 2：Before expiry: the exact TLC is on chain but has no preimage evidence, so the
-        # payment must keep waiting instead of failing early.
-        tip = self.node.getClient().get_tip_header()
-        assert (
-            int(self.node.getClient().get_block_median_time(tip["hash"]), 16)
-            < expiry_ms
-        ), "对照必须在 TLC 到期前观察"
-        for _ in range(6):
-            self._mine_watchtower_rounds(1)
-            payment = self.victim.get_client().get_payment(
-                {"payment_hash": payment_hash}
-            )
-            assert payment["status"] == "Inflight", f"到期前不得提前失败: {payment}"
-            assert payment.get("payment_preimage") is None, payment
-            assert self._tlcs(self.victim, payment_hash), "到期前 TLC 不得被移除"
-        assert int(time.time() * 1000) < expiry_ms, "对照必须在 TLC 到期前完成"
-
-        # 证明点 3：Past the expiry: only the normal timeout path may resolve it.
-        # _clock_advanced 让 teardown_method 在方法结束后恢复系统时间，避免污染同类其他方法。
-        self.__class__._clock_advanced = True
-        self.add_time_and_generate_epoch(self._hours_past_expiry(offered), 1)
-        self._mine_watchtower_rounds(4)
-        # 上链超时路径产出的付款/TLC 终态查询由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控；关时只
-        # 核对没有因此拿到成功原像。
-        if onchain_tlc_query_enabled():
-            self.wait_payment_state(self.victim, payment_hash, "Failed", timeout=300)
-            after = self.victim.get_client().get_payment({"payment_hash": payment_hash})
-            assert after["status"] == "Failed", after
-            assert after.get("payment_preimage") is None, after
-            # _wait_tlc_removed_after_expiry 接受终态或 REMOVED_STATUSES，专门覆盖超时收尾路径。
-            self._wait_tlc_removed_after_expiry(
-                self.victim, payment_hash, "Outbound", self.channel_id, timeout=180
-            )
-        else:
-            after = self.victim.get_client().get_payment({"payment_hash": payment_hash})
-            assert after.get("payment_preimage") is None, after
 
     # --------------------------------------------------------------- H32V2-18
 
@@ -2054,3 +2002,93 @@ class TestFullHashBadPreimage(P2pFiberTest):
     # not covered: multiple unrelated TLCs; V1 commitment layout; UDT (xUDT); restart
     #   after the channel has already reached fully Closed.
     # TEST-EVIDENCE-END H32V2-18
+
+
+@requires_attack_fnn
+class TestFullHashBadPreimageExpiry(FullHashBadPreimageFixture):
+    """Isolate the expiry clock jump from all other class-level CKB tests."""
+
+    # TEST-EVIDENCE-BEGIN: H32V2-17
+    # Evidence | mapped | Two stock v0.9.1 peers prebuild one restored Legacy channel;
+    # one exact offered TLC whose full 32-byte hash is known
+    # but for which no preimage exists. The victim force-closes its own commitment (on-chain close
+    # reconciliation). Before the expiry: chain median time is still below the TLC expiry, the
+    # payment stays Inflight and the TLC stays present through bounded watchtower rounds (no
+    # immediate failure from the missing preimage). After advancing the chain clock past the
+    # expiry: the payment becomes Failed with no preimage and the offered TLC is closed (SETTLE-04
+    # timeout control). Prefix-store/algorithm-mismatch branches are unobservable, see docstring.
+    # TEST-EVIDENCE-END: H32V2-17
+    # H32V2-17 评审行（reviews/full-payment-hash-settlement-v2.md，SPEC-11）在本方法对应
+    # “普通无原像超时保留到期条件”这一项，作为上一个方法的对照：
+    #   场景：只有一笔 Exact 身份、完整 hash 已知但没有任何原像的普通 TLC。
+    #   预期：无原像不得触发本次新增的立即失败，必须继续遵守 TLC 到期条件，到期后才失败。
+    #   防止：把“没有原像”当成“坏原像精确消费”，把未被消费的 TLC 误杀。
+    # 证明点与断言的对应关系：
+    #   证明点 1（前提）：TLC 已 Committed 且本端按 57 字节 Legacy 承诺强关，进入链上关闭核对。
+    #   证明点 2（到期前不得提前失败）：链中位时间与本地时钟都在到期之前，连续多轮有界
+    #     watchtower 扫描中付款保持 Inflight、无原像、TLC 记录仍在 —— 缺失原像本身不是失败证据。
+    #   证明点 3（到期后按超时路径收尾）：把链上时钟推过到期后，付款才 Failed 且无原像，
+    #     offered TLC 才被移除；说明收尾由到期条件而非原像库状态驱动。
+    # 未覆盖：同上前一个方法——空前缀记录／坏原像／仅本地已知原像、身份或算法不符等分支缺少
+    # watchtower 原像库的 RPC 观测点，见模块 docstring。
+    # TEST-MAP: H32V2-17
+    def test_exact_no_preimage_offered_tlc_waits_for_expiry(self):
+        self._wait_channel_ready(self.victim, self.channel_id)
+        self._wait_channel_ready(self.attacker, self.channel_id)
+
+        # 证明点 1 的素材：完整 32 字节 hash 由已知原像算出，但本端从不公开/注入该原像。
+        preimage = "0x" + secrets.token_hex(32)
+        payment_hash = ckb_hash(preimage)
+        invoice = self._hold_invoice_with_algorithm(
+            payment_hash,
+            "ckb_hash",
+            "H32V2-17 exact no-preimage offered timeout control",
+        )
+        self._pay_hold_invoice(invoice, payment_hash)
+        offered = self._wait_committed_tlc(self.victim, payment_hash)
+        expiry_ms = int(offered["expiry"], 16)
+
+        commitment = self._force_close(self.victim)
+        args = bytes.fromhex(
+            commitment["outputs"][0]["lock"]["args"].removeprefix("0x")
+        )
+        # 证明点 1：Legacy 承诺布局确认后，进入链上关闭核对。
+        assert_commitment_args(args, "legacy")
+        self._mine_watchtower_rounds(2)
+
+        # 证明点 2：Before expiry: the exact TLC is on chain but has no preimage evidence, so the
+        # payment must keep waiting instead of failing early.
+        tip = self.node.getClient().get_tip_header()
+        assert (
+            int(self.node.getClient().get_block_median_time(tip["hash"]), 16)
+            < expiry_ms
+        ), "对照必须在 TLC 到期前观察"
+        for _ in range(6):
+            self._mine_watchtower_rounds(1)
+            payment = self.victim.get_client().get_payment(
+                {"payment_hash": payment_hash}
+            )
+            assert payment["status"] == "Inflight", f"到期前不得提前失败: {payment}"
+            assert payment.get("payment_preimage") is None, payment
+            assert self._tlcs(self.victim, payment_hash), "到期前 TLC 不得被移除"
+        assert int(time.time() * 1000) < expiry_ms, "对照必须在 TLC 到期前完成"
+
+        # 证明点 3：Past the expiry: only the normal timeout path may resolve it.
+        # teardown_method 恢复宿主机时间；独立测试类随后清理未来时间的 CKB 链。
+        self.__class__._clock_advanced = True
+        self.add_time_and_generate_epoch(self._hours_past_expiry(offered), 1)
+        self._mine_watchtower_rounds(4)
+        # 上链超时路径产出的付款/TLC 终态查询由 FIBER_ASSERT_ONCHAIN_TLC_QUERY 门控；关时只
+        # 核对没有因此拿到成功原像。
+        if onchain_tlc_query_enabled():
+            self.wait_payment_state(self.victim, payment_hash, "Failed", timeout=300)
+            after = self.victim.get_client().get_payment({"payment_hash": payment_hash})
+            assert after["status"] == "Failed", after
+            assert after.get("payment_preimage") is None, after
+            # _wait_tlc_removed_after_expiry 接受终态或 REMOVED_STATUSES，专门覆盖超时收尾路径。
+            self._wait_tlc_removed_after_expiry(
+                self.victim, payment_hash, "Outbound", self.channel_id, timeout=180
+            )
+        else:
+            after = self.victim.get_client().get_payment({"payment_hash": payment_hash})
+            assert after.get("payment_preimage") is None, after

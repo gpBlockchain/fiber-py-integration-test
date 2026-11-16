@@ -85,7 +85,15 @@ class TestMaxTlcNumberInFlight(FiberTest):
             {"pubkey": self.fiber2.get_pubkey()}
         )["channels"][0]["channel_id"]
         self.send_payment(self.fiber2, self.fiber1, 100 * 100000000)
+        self.wait_channel_tlcs_settled(
+            self.fiber1,
+            channel_id,
+            timeout=60,
+            expected_local_balance=100 * 100000000 + 1000,
+        )
         amount = 1 * 100000000
+        # Graph outbound_liquidity is optional; the settled local balance above
+        # is the observable proof that this channel can fund the hold payments.
         for i in range(max_tlc_number_in_flight):
             print("current max_tlc_number_in_flight:", i)
             invoice, payment_hash, _preimage = self.new_hold_invoice(

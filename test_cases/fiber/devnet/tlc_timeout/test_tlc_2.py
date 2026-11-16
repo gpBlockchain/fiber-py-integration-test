@@ -13,6 +13,7 @@ import math
 import time
 
 from framework.basic_fiber import COMMIT_LOCK_CODE_HASH, FiberTest
+from framework.helper.settlement_witness import SettlementWitness
 from framework.util import change_time
 
 CKB = 100000000
@@ -84,14 +85,15 @@ class TestPR1618OnchainTlcReconcile(FiberTest):
         hours, minutes = divmod(minutes, 60)
         change_time(hours, minutes)
 
-    def _advance_to_receiver_remove(self, receiver_tlc):
+    def _advance_to_receiver_remove(self, receiver_tlc, minutes_before=0):
         # HoldTlcTimeout fires before absolute expiry.  This is the same
         # threshold used by the existing tlc_timeout integration coverage.
         remove_lead_seconds = 60 + 2 * COMMITMENT_DELAY_SECONDS / 3
         remove_time_ms = int(receiver_tlc["expiry"], 16) - int(
             remove_lead_seconds * 1000
         )
-        self._advance_clock_to(remove_time_ms)
+        self._advance_clock_to(remove_time_ms - minutes_before * 60 * 1000)
+        return remove_time_ms
 
     def _advance_past_tlc_expiry_and_delay(self, tlc):
         # Cross the exact B-C TLC expiry, then advance one CKB epoch so the
@@ -114,36 +116,23 @@ class TestPR1618OnchainTlcReconcile(FiberTest):
 
     @staticmethod
     def _decode_settlement_unlock_types(witness_hex, tx_hash="fixture"):
-        witness = bytes.fromhex(witness_hex.removeprefix("0x"))
-        assert witness.startswith(XUDT_COMPATIBLE_WITNESS), (
+        # Channels opened by current nodes use the V1 commitment lock.
+        # SettlementWitness.from_hex consumes the 16-byte prefix itself and
+        # rejects truncated or trailing bytes.
+        witness = SettlementWitness.from_hex(witness_hex, version="v1")
+        assert witness.prefix == XUDT_COMPATIBLE_WITNESS, (
             f"settlement witness in {tx_hash} is missing the 16-byte "
             "xUDT-compatible prefix"
         )
-        settlement = witness[len(XUDT_COMPATIBLE_WITNESS) :]
-        assert settlement and settlement[0] == 1, (
-            f"unexpected settlement witness type in {tx_hash}: "
-            f"{settlement[0] if settlement else None}"
+        return [unlock.unlock_type for unlock in witness.unlocks]
+
+    def _setup_held_payment(self, tlc_expiry_limit_ms=None):
+        fiber3 = self.start_new_fiber(
+            self.generate_account(10000), fiber_version=self.fiber_version
         )
-
-        pending_tlc_count = settlement[1]
-        cursor = 74 + 85 * pending_tlc_count
-        unlock_types = []
-        while cursor < len(settlement):
-            assert cursor + 67 <= len(
-                settlement
-            ), f"truncated settlement unlock in {tx_hash} at byte {cursor}"
-            unlock_types.append(settlement[cursor])
-            with_preimage = settlement[cursor + 1] == 1
-            cursor += 99 if with_preimage else 67
-
-        assert cursor == len(
-            settlement
-        ), f"invalid settlement witness length in {tx_hash}"
-        return unlock_types
-
-    def _setup_held_payment(self):
-        fiber3 = self.start_new_fiber(self.generate_account(10000))
-        fiber4 = self.start_new_fiber(self.generate_account(10000))
+        fiber4 = self.start_new_fiber(
+            self.generate_account(10000), fiber_version=self.fiber_version
+        )
 
         a_b_channel_id = self.open_channel(self.fiber1, self.fiber2, CHANNEL_BALANCE, 0)
         b_c_channel_id = self.open_channel(self.fiber2, fiber3, CHANNEL_BALANCE, 0)
@@ -158,12 +147,13 @@ class TestPR1618OnchainTlcReconcile(FiberTest):
                 "payment_hash": self.generate_random_preimage(),
             }
         )
-        payment = self.fiber1.get_client().send_payment(
-            {
-                "invoice": invoice["invoice_address"],
-                "max_fee_rate": hex(1000000000000000),
-            }
-        )
+        payment_params = {
+            "invoice": invoice["invoice_address"],
+            "max_fee_rate": hex(1000000000000000),
+        }
+        if tlc_expiry_limit_ms is not None:
+            payment_params["tlc_expiry_limit"] = hex(tlc_expiry_limit_ms)
+        payment = self.fiber1.get_client().send_payment(payment_params)
         payment_hash = payment["payment_hash"]
         self.wait_invoice_state(fiber4, payment_hash, "Received", timeout=120)
 
@@ -274,32 +264,61 @@ class TestPR1618OnchainTlcReconcile(FiberTest):
 
     def test_uncommitted_remote_removed_reconciles_upstream_tlc(self):
         """#1612: RemoteRemoved without remove confirmation must reconcile on-chain."""
-        case = self._setup_held_payment()
-        close_tx = self._force_close_b_c(case)
-
-        # Keep the close unconfirmed while D times out.  B receives C's
-        # RemoveTlc and marks the TLC RemoteRemoved, but ShuttingDown rejects
-        # the following commitment handshake, so A-B is still unresolved.
-        self._advance_to_receiver_remove(case["receiver_tlc"])
-        remote_removed = self._wait_for_tlc_status(
-            self.fiber2,
-            case["b_c_channel_id"],
-            case["payment_hash"],
-            {"Outbound": "RemoteRemoved"},
+        # Bound the random expiry padding; the close is confirmed before any
+        # clock advance, so the transaction never sits in the pool for days.
+        case = self._setup_held_payment(tlc_expiry_limit_ms=48 * 60 * 60 * 1000)
+        receiver_tlc = self._payment_tlc(
+            case["fiber4"], case["c_d_channel_id"], case["payment_hash"]
         )
-        time.sleep(2)
-        b_c_channel = self._channel(self.fiber2, case["b_c_channel_id"])
-        assert b_c_channel["state"]["state_name"] == "ShuttingDown", b_c_channel
-        assert self._payment_tlc(
-            self.fiber1, case["a_b_channel_id"], case["payment_hash"]
-        ), "upstream TLC disappeared before the B-C remove handshake was rejected"
-        close_status = self.node.getClient().get_transaction(close_tx)["tx_status"][
-            "status"
-        ]
-        assert close_status in ("pending", "proposed"), close_status
-        assert remote_removed["status"] == {"Outbound": "RemoteRemoved"}
+        assert receiver_tlc is not None, "D removed its TLC before B-C force-close"
+        assert receiver_tlc["status"] == {"Inbound": "Committed"}, receiver_tlc
+        b_c_tlc = self._payment_tlc(
+            self.fiber2, case["b_c_channel_id"], case["payment_hash"]
+        )
+        assert b_c_tlc is not None, "B-C TLC disappeared before force-close"
+        assert b_c_tlc["status"] == {"Outbound": "Committed"}, b_c_tlc
 
-        self.Miner.miner_until_tx_committed(self.node, close_tx)
+        self.node.stop_miner()
+        try:
+            close_tx = self._force_close_b_c(case)
+            # close_tx_transaction = self.node.getClient().get_transaction(close_tx)['transaction']
+            # Cancel D's held invoice while the close is unconfirmed.  This
+            # makes C send RemoveTlc without racing C-D's own expiry handling.
+            # B records RemoteRemoved, but ShuttingDown prevents the remove
+            # handshake from completing, so A-B is still unresolved.
+            case["fiber4"].get_client().cancel_invoice(
+                {"payment_hash": case["payment_hash"]}
+            )
+            self.wait_invoice_state(
+                case["fiber4"], case["payment_hash"], "Cancelled", timeout=30
+            )
+            remote_removed = self._wait_for_tlc_status(
+                self.fiber2,
+                case["b_c_channel_id"],
+                case["payment_hash"],
+                {"Outbound": "RemoteRemoved"},
+            )
+            time.sleep(2)
+            b_c_channel = self._channel(self.fiber2, case["b_c_channel_id"])
+            assert b_c_channel["state"]["state_name"] == "ShuttingDown", b_c_channel
+            assert self._payment_tlc(
+                self.fiber1, case["a_b_channel_id"], case["payment_hash"]
+            ), "upstream TLC disappeared before the B-C remove handshake was rejected"
+            close_status = self.node.getClient().get_transaction(close_tx)["tx_status"][
+                "status"
+            ]
+            # if close_status == 'rejected':
+            #     del close_tx_transaction['hash']
+            #     self.node.getClient().send_transaction(close_tx_transaction)
+            # close_status = self.node.getClient().get_transaction(close_tx)["tx_status"][
+            #     "status"
+            # ]
+            assert close_status in ("pending", "proposed"), close_status
+            assert remote_removed["status"] == {"Outbound": "RemoteRemoved"}
+
+            self.Miner.miner_until_tx_committed(self.node, close_tx)
+        finally:
+            self.node.start_miner()
         self._advance_past_tlc_expiry_and_delay(case["b_c_tlc"])
         self._wait_for_spending_tx(close_tx)
         self._assert_upstream_failed(case)
