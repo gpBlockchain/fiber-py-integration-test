@@ -10,8 +10,12 @@ LOGGER = logging.getLogger(__name__)
 
 
 class RPCClient:
-    def __init__(self, url):
+    def __init__(self, url, timeout=None, try_count=15):
         self.url = url
+        self.timeout = timeout
+        self.try_count = try_count
+        # Optional monotonic deadline; existing clients retain their old defaults.
+        self.deadline = None
 
     def get_tip_block_number(self):
         return int(self.call("get_tip_block_number", []), 16)
@@ -245,16 +249,26 @@ class RPCClient:
     def test_tx_pool_accept(self, tx, outputs_validator):
         return self.call("test_tx_pool_accept", [tx, outputs_validator])
 
-    def call(self, method, params, try_count=15):
+    def call(self, method, params, try_count=None):
 
+        try_count = self.try_count if try_count is None else try_count
         headers = {"content-type": "application/json"}
         data = {"id": 42, "jsonrpc": "2.0", "method": method, "params": params}
         LOGGER.debug(f"request:url:{self.url},data:\n{json.dumps(data)}")
         for i in range(try_count):
+            timeout = self.timeout
+            if self.deadline is not None:
+                remaining = self.deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f"RPC deadline exceeded: {method}")
+                timeout = min(timeout, remaining) if timeout is not None else remaining
+            options = {} if timeout is None else {"timeout": timeout}
             try:
                 response = requests.post(
-                    self.url, data=json.dumps(data), headers=headers
+                    self.url, data=json.dumps(data), headers=headers, **options
                 ).json()
+                if self.deadline is not None and time.monotonic() > self.deadline:
+                    raise TimeoutError(f"RPC deadline exceeded: {method}")
                 LOGGER.debug(f"response:\n{json.dumps(response)}")
                 if "error" in response.keys():
                     error_message = response["error"].get("message", "Unknown error")
@@ -262,12 +276,20 @@ class RPCClient:
 
                 return response.get("result", None)
             except requests.exceptions.ConnectionError as e:
+                if try_count == 1:
+                    raise
                 LOGGER.debug(e)
                 LOGGER.debug("request too quickly, wait 2s")
-                time.sleep(2)
+                if self.deadline is not None:
+                    remaining = self.deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError(f"RPC deadline exceeded: {method}") from e
+                    time.sleep(min(2, remaining))
+                else:
+                    time.sleep(2)
                 continue
             except Exception as e:
-                LOGGER.error("Exception:", e)
+                LOGGER.error("Exception: %s", e)
                 raise e
         raise Exception("request time out")
 

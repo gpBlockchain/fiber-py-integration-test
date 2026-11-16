@@ -7,6 +7,9 @@ from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 
 
 class TestShutdownScript(FiberTest):
+    start_fiber_config = {
+        "fiber_open_channel_auto_accept_min_ckb_funding_amount": 10100000000
+    }
 
     @pytest.mark.skip("repeat")
     def test_shutdown_script_none(self):
@@ -121,7 +124,7 @@ class TestShutdownScript(FiberTest):
         print("after_balance2:", after_balance2)
         print("after_new_balance:", after_new_balance)
         assert after_balance2 - before_balance2 == 0
-        assert after_new_balance == 99.1
+        assert after_new_balance == 100.1
 
     def test_udt_shutdown_script(self):
         """
@@ -274,7 +277,7 @@ class TestShutdownScript(FiberTest):
                     },
                 }
             )
-        expected_error_message = "The funding amount (9900000000) should be greater than or equal to 147200000000"
+        expected_error_message = "The funding amount (10000000000) should be greater than or equal to 147200000000"
         assert expected_error_message in exc_info.value.args[0], (
             f"Expected substring '{expected_error_message}' "
             f"not found in actual string '{exc_info.value.args[0]}'"

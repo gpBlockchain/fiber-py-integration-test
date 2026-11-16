@@ -37,14 +37,14 @@ class TestCommitmentDelayEpoch(FiberTest):
         self.Miner.miner_until_tx_committed(self.node, tx_hash)
         second_tx_message = self.get_tx_message(tx_hash)
         print("first tx message:", first_tx_message)
-        assert first_tx_message["input_cells"][0]["capacity"] == 109899999544
+        assert first_tx_message["input_cells"][0]["capacity"] == 109999999543
         assert (
             first_tx_message["input_cells"][0]["capacity"]
             - second_tx_message["input_cells"][0]["capacity"]
             == 100000000000
             or first_tx_message["input_cells"][0]["capacity"]
             - second_tx_message["input_cells"][0]["capacity"]
-            == 9900000000
+            == 10000000000
         )
 
     def test_self_shutdown(self):

@@ -20,7 +20,7 @@ class TestTlcFeeProportionalMillionths(FiberTest):
         temporary_channel_id = self.fiber1.get_client().open_channel(
             {
                 "pubkey": self.fiber2.get_pubkey(),
-                "funding_amount": hex(200 * 100000000),
+                "funding_amount": hex(201 * 100000000),
                 "public": True,
                 # "funding_fee_rate": "0xffff",
                 # "tlc_fee_proportional_millionths": "0x4B0",
@@ -306,6 +306,9 @@ class TestTlcFeeProportionalMillionths(FiberTest):
             self.fibers[2].get_client().get_payment({"payment_hash": payment_hash})
         )
         assert payment["fee"] == hex(int(1 * 100000000 * 1000 / 1000000))
+        # Payment Success 可能早于通道完成结算；等待在途 TLC 清空后再核对余额。
+        for fiber in self.fibers:
+            self.wait_fibers_pending_tlc_eq0(fiber)
         channels1 = self.fiber1.get_client().list_channels({})
         channels2 = self.fibers[2].get_client().list_channels({})
         assert channels1["channels"][0]["local_balance"] == hex(98100000000)

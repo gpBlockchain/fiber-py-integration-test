@@ -1,47 +1,42 @@
-import time
-
 import pytest
 
 from framework.basic_fiber import FiberTest
-from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 from framework.test_fiber import FiberConfigPath
 
 
 class TestP2p(FiberTest):
-
-    @pytest.mark.skip("todo")
+    # debug = True
+    # @pytest.mark.skip("todo")
     def test_old_fiber(self):
-        """
-        Returns:
+        """New nodes require CHANNEL_V2; new<->V091 opens are rejected.
+
+        With current feature admission, CURRENT_DEV cannot open or accept a Legacy
+        channel with a V091 peer. Assert that rejection, then still exercise a
+        new-new channel path so the suite keeps a positive p2p payment check.
         """
         old_fiber = self.start_new_fiber(
-            self.generate_account(10000), fiber_version=FiberConfigPath.V061_DEV
+            self.generate_account(10000), fiber_version=FiberConfigPath.V091_DEV
         )
-        old_fiber.connect_peer(self.fiber1)
-        time.sleep(1)
-        with pytest.raises(Exception) as exc_info:
-            self.fiber1.get_client().open_channel(
-                {
-                    "pubkey": old_fiber.get_pubkey(),
-                    "funding_amount": hex(1000 + DEFAULT_MIN_DEPOSIT_CKB),
-                    "tlc_fee_proportional_millionths": hex(1000),
-                    "public": True,
-                }
+        with pytest.raises(Exception) as raised:
+            self.open_channel(
+                self.fiber1, old_fiber, 1000 * 100000000, 1000 * 100000000
             )
-        expected_error_message = "feature not found"
-        assert expected_error_message in exc_info.value.args[0], (
-            f"Expected substring '{expected_error_message}' "
-            f"not found in actual string '{exc_info.value.args[0]}'"
-        )
+        message = str(raised.value)
+        assert "CHANNEL_V2 is required" in message, message
 
-        old_fiber.get_client().open_channel(
-            {
-                "pubkey": self.fiber1.get_pubkey(),
-                "funding_amount": hex(2000 * 100000000),
-                "tlc_fee_proportional_millionths": hex(1000),
-                "public": True,
-            }
+        # Positive control: same-version V2 channels still pay end-to-end.
+        self.open_channel(self.fiber1, self.fiber2, 1000 * 100000000, 1000 * 100000000)
+        self.send_payment(self.fiber1, self.fiber2, 1)
+        self.send_payment(self.fiber2, self.fiber1, 1)
+
+        channel_id = self.fiber1.get_client().list_channels(
+            {"pubkey": self.fiber2.get_pubkey()}
+        )["channels"][0]["channel_id"]
+        self.fiber1.get_client().shutdown_channel({"channel_id": channel_id})
+        self.wait_for_channel_state(
+            self.fiber1.get_client(),
+            self.fiber2.get_pubkey(),
+            "Closed",
+            include_closed=True,
+            channel_id=channel_id,
         )
-        time.sleep(1)
-        channel = old_fiber.get_client().list_channels({})
-        assert len(channel["channels"]) == 0

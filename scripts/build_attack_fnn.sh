@@ -2,13 +2,17 @@
 set -euo pipefail
 
 # Keep the honest node and the instrumented peer on one protocol baseline.
-# Defaults follow branches; workflow_dispatch may override either ref.
+# Pin the stock release; workflow_dispatch may override either ref.
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 STOCK_FIBER_REPOSITORY="${STOCK_FIBER_REPOSITORY:-https://github.com/nervosnetwork/fiber.git}"
-STOCK_FIBER_REF="${STOCK_FIBER_REF:-develop}"
+STOCK_FIBER_REF="${STOCK_FIBER_REF:-v0.10.0}"
 ATTACK_FIBER_REPOSITORY="${ATTACK_FIBER_REPOSITORY:-https://github.com/gpBlockchain/fiber.git}"
-ATTACK_FIBER_REF="${ATTACK_FIBER_REF:-p2p-tap}"
+ATTACK_FIBER_REF="${ATTACK_FIBER_REF:-p2p-tap-v0.10.0-rc3}"
+# Destination may be overridden so one workflow can build both the legacy
+# attacker (download/fiber/attack/fnn) and the full-payment-hash attacker
+# (download/fiber/attack-full-payment-hash/fnn) from different ref pairs.
+ATTACK_DESTINATION="${ATTACK_DESTINATION:-$ROOT_DIR/download/fiber/attack/fnn}"
 FIBER_BUILD_DIR="${FIBER_BUILD_DIR:-$ROOT_DIR/.build/fiber-attack-fnn}"
 PROVENANCE_FILE="${PROVENANCE_FILE:-$ROOT_DIR/download/fiber/provenance.env}"
 
@@ -56,21 +60,17 @@ fi
 
 mkdir -p \
     "$ROOT_DIR/download/fiber/current" \
-    "$ROOT_DIR/download/fiber/attack" \
+    "$(dirname "$ATTACK_DESTINATION")" \
     "$(dirname "$PROVENANCE_FILE")"
 
 stock_sha="$(checkout_ref origin "$STOCK_FIBER_REF")"
 build_fnn "$ROOT_DIR/download/fiber/current/fnn"
 
 attack_sha="$(checkout_ref attack "$ATTACK_FIBER_REF")"
-if ! git -C "$FIBER_BUILD_DIR" merge-base --is-ancestor "$stock_sha" "$attack_sha"; then
-    echo "attack FNN commit must descend from stock FNN commit" >&2
-    exit 1
-fi
-build_fnn "$ROOT_DIR/download/fiber/attack/fnn"
+build_fnn "$ATTACK_DESTINATION"
 
 stock_hash="$(sha256_file "$ROOT_DIR/download/fiber/current/fnn")"
-attack_hash="$(sha256_file "$ROOT_DIR/download/fiber/attack/fnn")"
+attack_hash="$(sha256_file "$ATTACK_DESTINATION")"
 
 cat >"$PROVENANCE_FILE" <<PROVENANCE
 stock_fiber_repository=$STOCK_FIBER_REPOSITORY
@@ -81,7 +81,8 @@ stock_fnn_sha256=$stock_hash
 attack_fiber_repository=$ATTACK_FIBER_REPOSITORY
 attack_fiber_ref=$ATTACK_FIBER_REF
 attack_fiber_sha=$attack_sha
-attack_base_verified=true
+attack_destination=$ATTACK_DESTINATION
+attack_base_verified=false
 attack_fnn_profile=debug
 attack_fnn_sha256=$attack_hash
 PROVENANCE

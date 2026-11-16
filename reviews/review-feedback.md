@@ -1,0 +1,41 @@
+- model: unavailable | cases: PR1675-04 PR1675-07 | feedback: `1675-04` 和`PR1675-07` 可以先写测试，以测试结果为准，可以写自动化测试了，能复用的用例尽量复用，自动化框架里的fnn 我已经更新了
+- model: unavailable | cases: H32V2-34 | feedback: 不应该卡在`NegotiatingFunding`， 新节点应该abort channel 让旧节点知道channel 创建失败
+- model: unavailable | cases: H32V2-05 | feedback: 须迁移
+- model: unavailable | cases: PR1671 CI 接入 | feedback: 没必要啊 手动触发一下就行 但是之后的CI得跑到这些用例
+- model: unavailable | cases: PR1671-01～08 中文表述 | feedback: 生硬的英语翻中文全给我检查并改正一下
+- model: unavailable | cases: UDT-CLOSE-01 UDT-CLOSE-02 | feedback: 那先把这两处遗漏补齐，按规则先给我看用例，确认后再改自动化、跑聚焦测试，更新到这个 PR，因为这个上额外的修改（帮我确认一下） 跟这个pr的场景无关，可以再搞一个commit做这个事情。
+- model: unavailable | cases: PR1677-01 PR1677-02 PR1677-03 PR1677-04 PR1677-05 PR1677-06 PR1677-07 | feedback: 所以集成这边最主要做重连混沌测试
+- model: unavailable | cases: PR1677-01 PR1677-04 PR1677-08 | feedback: 我没看到用例里说做重连混沌测试
+- model: unavailable | cases: PR1677 review scope | feedback: guopeng: 这个pr 应该只需要测压测重连重启混沌测试，然后tlc不会卡住；Quake: 对，顺便再跑一下性能测试；Quake: 我自己测试有30%的下降；guopeng: 重启要考虑强制kill吗；Quake: 可以试试看 设计上是不确保的，但是可以看看会出现什么样的问题
+- model: unavailable | cases: PR1677-01 PR1677-02 PR1677-04 PR1677-08 | feedback: 断连有2种 一种是重启，一种是调用rpc disconnect 都需要考虑
+- model: unavailable | cases: PR1677-10 | feedback: 可以补充极端情况a-b-c-d-a，手续费为0，然后每个节点都自己给自己发压测交易，期间不停断连重启
+- model: unavailable | cases: PR1677-11 | feedback: 还需要补充长时间断连重启用例，跑1h看看，后面可以不回归
+- model: unavailable | cases: PR1677-11 | feedback: 路由场景可以复杂一点
+- model: unavailable | cases: PR1677-11 | feedback: 每十分钟改成每分钟
+- model: unavailable | cases: PR1677-09 | feedback: PR1677-09 不需要 可以删
+- model: unavailable | cases: PR1705-01 PR1705-02 | feedback: Pr1705Build 为什么有这个东西，这是要长期回归的测试用例
+- model: unavailable | cases: PR1705-01 PR1705-02 | feedback: 旧版本只考虑仓库有的0.9.1
+- model: unavailable | cases: PR1705-01 PR1705-02 | feedback: evidence 和signal 回归不需要
+- model: unavailable | cases: PR1705-01 PR1705-02 | feedback: 用例名不能包含pr1705
+- model: unavailable | cases: PR1705-01 PR1705-02 | feedback: 文件名不可以包含这个，后期不好复用
+- model: unavailable | cases: PR1728-01 PR1728-02 | feedback: 回归用例不需要 evidence 不需要
+- model: unavailable | cases: PR1728-01 PR1728-02 | feedback: signal 也不需要
+- model: unavailable | cases: PR1728-01 PR1728-02 | feedback: 加个flag 只有true 时才检查`WAITING_ONCHAIN_SETTLEMENT` ，ci上不用检查这个判断
+- model: unavailable | cases: PR1728-01 PR1728-02 | feedback: 还是慢
+- model: unavailable | cases: PR1703-01 PR1703-02 PR1703-03 | feedback: 我确认可以用日志断言不需要压测 我们当前工程是黑盒测试功能
+- model: unavailable | cases: PR1703-01 SPEC-01 SPEC-03 | feedback: 这个标题和测试内容不匹配吧（Spec 标题的「生效」超出黑盒断言范围，应为「被接受并在日志声明开启」）
+
+- model: unavailable | cases: PR1711-02 PR1711-08 / SPEC-02 | feedback: SPEC-02 不就会导致资金一直卡住
+- model: unavailable | cases: PR1711-08 | feedback: 那补充这个用例
+- model: unavailable | cases: PR1711-01～08 | feedback: 08用例先skip 补充其他用例
+- model: unavailable | cases: PR1711-01～07 | feedback: 只用 v0.9.1，04 加 V2 对照（建议）
+- model: unavailable | cases: PR1711-01～08 | feedback: 长期回归用例直接使用仓库 current 配置，移除 PR 专用二进制和端口环境变量，文件名、说明和运行信息按功能命名；既有映射 ID 保持稳定。
+- model: unavailable | cases: PR1711-07 | feedback: 密钥搬移、CLI 备份恢复等底层操作封装到 FiberTest，用例只保留恢复调用和行为断言。
+- model: unavailable | cases: PR1711-01～08 | feedback: 删除 SimpleNamespace 版本包装及无意义的 --version 调用、版本打印和提交号检查。
+
+- model: unavailable | cases: MPP1705-01～14 | feedback: 这些用例要沉淀成长期回归用例，不需要 scripts/run_mpp1705.py；直接使用项目已有 pytest / Makefile 和 CURRENT_DEV 配置，保留场景、断言及稳定映射 ID。
+- model: unavailable | cases: MPP1705-01～14 | feedback: 再检查 PR #127，清理其他 PR 专用配置、硬编码提交号和一次性验收逻辑，按项目现有长期回归风格维护；保留稳定 Case ID，配置使用 CURRENT_DEV / V091_DEV。
+- model: unavailable | cases: MPP1705-12 | feedback: 保留 CURRENT_DEV 下 0/1,000/8,000 笔历史的重启功能回归，检查历史、余额和新付款；不再做 base/head、RSS 或 SLA 验收。
+- model: unavailable | cases: MPP1705-01～14 | feedback: MppFixture 不要依赖具体测试类；通用方法放 framework，场景和变量要易读，避免包装层与重复 review，并将这些约束写入 AGENTS.md。
+- model: unavailable | cases: MPP1705-07～12 | feedback: 耗时过长的用例先在方法上标注 pytest.mark.skip 和原因，不在 fiber.yml 维护排除清单；退款慢测后续复用已有 change_time / restore_time，验证链状态清理和时钟恢复后再启用。
+- model: unavailable | cases: MPP1705-01～14 | feedback: 通道两端、容量/资产、路由和付款操作直接展开在每条用例中，并加网络拓扑注释；公共方法只保留观察、等待、启停和核对，避免隐藏资金操作。以长期可维护、人类易懂的原生回归用例为目标，不写一次性验收脚本。

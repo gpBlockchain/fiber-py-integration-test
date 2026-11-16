@@ -137,7 +137,11 @@ class TestForceCloseMpp(FiberTest):
                 {"channel_id": channel_id, "force": True}
             )
 
-        time.sleep(10)
+        self._wait_until(
+            lambda: len(self.get_commit_cells()) == len(channel_ids),
+            "both force-close commitment cells to confirm",
+            timeout=120,
+        )
         fiber3.get_client().settle_invoice(
             {"payment_hash": payment_hash, "payment_preimage": preimage}
         )
@@ -146,26 +150,30 @@ class TestForceCloseMpp(FiberTest):
         self.wait_payment_state(self.fiber1, payment_hash, "Success", timeout=360)
         self.wait_invoice_state(fiber3, payment_hash, "Paid", timeout=360)
 
-        sender_removed = 0
-        receiver_removed = 0
-        for channel_id in channel_ids:
-            if self._get_tlc_status(
-                self.fiber1,
-                self.fiber2.get_pubkey(),
-                channel_id,
-                payment_hash,
-            ) == {"Outbound": "RemoteRemoved"}:
-                sender_removed += 1
-            if self._get_tlc_status(
-                self.fiber2,
-                self.fiber1.get_pubkey(),
-                channel_id,
-                payment_hash,
-            ) == {"Inbound": "LocalRemoved"}:
-                receiver_removed += 1
-
-        assert sender_removed == 2
-        assert receiver_removed == 2
+        expected = ({"Outbound": "RemoteRemoved"}, {"Inbound": "LocalRemoved"})
+        for _ in range(120):
+            observed = {
+                channel_id: (
+                    self._find_tlc_status(
+                        self.fiber1,
+                        self.fiber2.get_pubkey(),
+                        channel_id,
+                        payment_hash,
+                    ),
+                    self._find_tlc_status(
+                        self.fiber2,
+                        self.fiber1.get_pubkey(),
+                        channel_id,
+                        payment_hash,
+                    ),
+                )
+                for channel_id in channel_ids
+            }
+            if all(statuses == expected for statuses in observed.values()):
+                break
+            time.sleep(1)
+        else:
+            assert False, f"MPP split TLCs did not all settle: {observed}"
 
     def test_mpp_force_close_one_channel_only_one_tlc_consumed(self):
         fiber3, payment_hash, preimage, channel_ids = self._prepare_mpp_payment()

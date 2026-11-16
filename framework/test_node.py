@@ -1,4 +1,5 @@
 import time
+import subprocess
 from enum import Enum
 from framework.util import (
     create_config_file,
@@ -234,11 +235,15 @@ class CkbNode:
     def start_miner(self):
         if self.ckb_miner_pid != -1:
             return
-        self.ckb_miner_pid = run_command(
-            "cd {ckb_dir} && ./ckb miner > ckb.miner.log 2>&1  &".format(
-                ckb_dir=self.ckb_dir
+        # Record the actual miner PID instead of guessing a shell child's PID.
+        with open(f"{self.ckb_dir}/ckb.miner.log", "w") as log:
+            miner = subprocess.Popen(
+                ["./ckb", "miner"],
+                cwd=self.ckb_dir,
+                stdout=log,
+                stderr=subprocess.STDOUT,
             )
-        )
+        self.ckb_miner_pid = miner.pid
         # replace check height upper
         time.sleep(3)
 

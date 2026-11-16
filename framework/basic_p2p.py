@@ -3,7 +3,7 @@
 Each test method gets:
 
 - ``self.victim``: stock ``download/fiber/current/fnn`` (no Dev intercept)
-- ``self.attacker``: debug ``download/fiber/attack/fnn``
+- ``self.attacker``: debug ``download/fiber/attack-full-payment-hash/fnn``
 - ``self.peer``: ``P2pPeer`` bound to the attacker
 - ``self.channel_id``: a ChannelReady channel (unless ``auto_open_channel``
   is set to False)
@@ -47,7 +47,6 @@ class P2pFiberTest(FiberTest):
     auto_open_channel = True
     # Keep P2P fault-injection suites independent from the default devnet
     # ports and its on-disk stores, so a focused run has no cross-suite locks.
-    tmp_path_name = "tmp-p2p"
     ckb_rpc_port = 18114
     ckb_p2p_port = 18125
     fiber1_rpc_port = 18228
@@ -60,6 +59,10 @@ class P2pFiberTest(FiberTest):
     extra_mock_fiber_p2p_port = 18402
     fnn_log_level = "debug"
     attacker_auto_accept = True
+    # The single attack build supports both V1 and Legacy behavior; suites can
+    # select counterparty behavior with per-node environment switches.
+    attacker_fiber_version = FiberConfigPath.ATTACK_FULL_HASH_DEV
+    attacker_env: dict | None = None
     channel_local_balance = 200 * 100000000
     channel_remote_balance = 0
 
@@ -73,9 +76,11 @@ class P2pFiberTest(FiberTest):
         super().setup_method(method)
         self.victim = self.fiber1
         if self.debug:
+            # Debug reruns attach to already-running nodes; mock fibers do not
+            # execute the binary, so attacker_env is intentionally ignored here.
             self.fibers.remove(self.fiber2)
             self.attacker = self.start_new_mock_fiber(
-                None, fiber_version=FiberConfigPath.ATTACK_DEV
+                None, fiber_version=self.attacker_fiber_version
             )
             self.peer = P2pPeer(self.attacker)
             self.channel_id = None
@@ -96,9 +101,13 @@ class P2pFiberTest(FiberTest):
                 **getattr(self, "start_fiber_config", {}),
                 "fiber_open_channel_auto_accept_min_ckb_funding_amount": hex(10**18),
             }
+        # Only pass env when a suite configures one, so the default call shape
+        # (and the debug harness assertions on it) stay unchanged.
+        attacker_kwargs = {"fiber_version": self.attacker_fiber_version}
+        if self.attacker_env is not None:
+            attacker_kwargs["env"] = self.attacker_env
         self.attacker = self.start_new_fiber(
-            self.generate_account(10000),
-            fiber_version=FiberConfigPath.ATTACK_DEV,
+            self.generate_account(10000), **attacker_kwargs
         )
         self.peer = P2pPeer(self.attacker)
         self.channel_id = None
@@ -263,7 +272,8 @@ class P2pFiberTest(FiberTest):
 class P2pRouterTest(P2pFiberTest):
     """Two stock nodes plus a debug router in the middle.
 
-    Alice (current/fnn) -- Router (attack/fnn) -- Bob (current/fnn)
+    Alice (current/fnn) -- Router (attack-full-payment-hash/fnn)
+                        -- Bob (current/fnn)
 
     The router sees Alice's P2P messages as inbound on ``ch_alice`` and
     Bob's as inbound on ``ch_bob``. Intercept either leg independently.

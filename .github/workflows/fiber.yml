@@ -17,8 +17,8 @@ on:
         description: 'fiber -git url'
         default: 'https://github.com/nervosnetwork/fiber.git'
       GitBranch:
-        description: 'fiber -git branch'
-        default: 'v0.9.1'
+        description: 'fiber -git branch or tag'
+        default: 'v0.10.1'
   schedule:
     - cron: '0 0 */7 * *'
 
@@ -45,7 +45,7 @@ jobs:
         run: make prepare
         env:
           GitUrl: '${{ github.event.inputs.GitUrl }}'
-          GitBranch: ${{ github.event.inputs.GitBranch || 'v0.9.1' }}
+          GitBranch: ${{ github.event.inputs.GitBranch || 'v0.10.1' }}
 
 
       - name: Tar backup
@@ -159,7 +159,7 @@ jobs:
           tar -xzf prepare-backup.tar.gz
 
       - name: Run fiber_test_demo
-        run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/get_invoice test_cases/fiber/devnet/graph_channels test_cases/fiber/devnet/graph_nodes test_cases/fiber/devnet/list_channels test_cases/fiber/devnet/new_invoice"
+        run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/get_invoice test_cases/fiber/devnet/graph_channels test_cases/fiber/devnet/graph_nodes test_cases/fiber/devnet/list_channels test_cases/fiber/devnet/list_payments test_cases/fiber/devnet/new_invoice"
 
       - name: Publish reports
         if: failure()
@@ -231,7 +231,7 @@ jobs:
           tar -xzf prepare-backup.tar.gz
 
       - name: Run fiber_test_demo
-        run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/send_payment/params test_cases/fiber/devnet/send_payment/path"
+        run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/send_payment/params test_cases/fiber/devnet/send_payment/path test_cases/fiber/devnet/send_payment_with_router"
 
       - name: Publish reports
         if: failure()
@@ -425,7 +425,7 @@ jobs:
           cd ../
         env:
           GitUrl: '${{ github.event.inputs.GitUrl }}'
-          GitBranch: ${{ github.event.inputs.GitBranch || 'v0.9.1' }}
+          GitBranch: ${{ github.event.inputs.GitBranch || 'v0.10.1' }}
       - name: Run fiber_test_demo
         run: |
            make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/wasm"
@@ -580,12 +580,23 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: jfoa-fiber_test_send_payment_debug_mixed-reports-${{ runner.os }}
+          name: fiber_test_trampoline_routing_one_way-reports-${{ runner.os }}
           path: ./report
 
   fiber_test_compatibility:
     needs: prepare
     runs-on: ubuntu-22.04
+    name: fiber_test_compatibility (${{ matrix.shard }})
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      FIBER_COMPATIBILITY_SHARD_COUNT: "4"
+      FIBER_COMPATIBILITY_SHARD_INDEX: ${{ matrix.shard }}
+      FIBER_ASSERT_LEGACY_SETTLEMENT: "false"
 
     steps:
       - uses: actions/checkout@v3
@@ -616,7 +627,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: jfoa-fiber_test_send_payment_debug_mixed-reports-${{ runner.os }}
+          name: compatibility-${{ matrix.shard }}-reports-${{ runner.os }}
           path: ./report
 
   fiber_test_open_channel_with_external_funding:
@@ -727,7 +738,7 @@ jobs:
           name: jfoa-fnn-cli-reports-${{ runner.os }}
           path: ./report
 
-  fiber_test_security:
+  fiber_test_security_list_payments:
     needs: prepare
     runs-on: ubuntu-22.04
 
@@ -754,7 +765,7 @@ jobs:
           tar -xzf prepare-backup.tar.gz
 
       - name: Run security tests
-        run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/security"
+        run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/devnet/security test_cases/fiber/devnet/list_payments"
 
       - name: Publish reports
         if: failure()

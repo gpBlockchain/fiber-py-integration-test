@@ -57,24 +57,40 @@ class FiberConfigPath(Enum):
         "download/fiber/current/fnn.debug",
     )
 
-    ATTACK_DEV = (
+    # p2p-tap debug RPCs adapted onto the full-payment-hash branch (8b95af3);
+    # this is the single attack build and can act as a Legacy or V1
+    # counterparty, see framework/attack_fnn.py.
+    ATTACK_FULL_HASH_DEV = (
         "/source/fiber/dev_config_3.yml.j2",
-        "download/fiber/attack/fnn",
+        "download/fiber/attack-full-payment-hash/fnn",
     )
 
     CURRENT_MAINNET = (
         "/source/template/fiber/mainnet_config_3.yml.j2",
-        "download/fiber/0.9.0/fnn",
+        "download/fiber/current/fnn",
     )
 
     CURRENT_TESTNET = (
         "/source/template/fiber/testnet_config_3.yml.j2",
-        "download/fiber/0.9.0/fnn",
+        "download/fiber/current/fnn",
     )
 
     V070_DEV = (
         "/source/fiber/dev_config_3.yml.j2",
         "download/fiber/0.7.0/fnn",
+    )
+
+    V091_DEV = (
+        "/source/fiber/dev_config_3.yml.j2",
+        "download/fiber/0.9.1/fnn",
+    )
+
+    # Pre-PR-1628 build (2026-08-06, e6cb7ac). Used by the MuSig2 nonce-reuse
+    # wire PoC: after PR 1628 the stock victim no longer emits the reciprocal
+    # empty CommitmentSigned that carries signature A.
+    V090_DEV = (
+        "/source/fiber/dev_config_3.yml.j2",
+        "download/fiber/0.9.0/fnn",
     )
 
     V081_DEV = (
@@ -130,6 +146,9 @@ class Fiber:
             "rpc_listening_addr": config["rpc_listening_addr"],
         }
         self.account_private = account_private
+        # Extra environment variables for this node only (e.g. test-only
+        # counterparty switches); applied by start().
+        self.extra_env = {}
         self.tmp_path = f"{get_tmp_path()}/{tmp_path}"
         self.fiber_config_path = f"{self.tmp_path}/config.yml"
         self.client = FiberRPCClient(f"http://{config['rpc_listening_addr']}")
@@ -216,6 +235,7 @@ class Fiber:
         password="password0",
         fnn_log_level="debug",
         rpc_biscuit_public_key=None,
+        timeout=300,
     ):
         # env_map = dict(os.environ)  # Make a copy of the current environment
         # if node:,
@@ -228,12 +248,15 @@ class Fiber:
             rpc_biscuit_public_key_option = (
                 f" --rpc-biscuit-public-key {rpc_biscuit_public_key}"
             )
+        extra_env = "".join(
+            f"{key}='{value}' " for key, value in getattr(self, "extra_env", {}).items()
+        )
         run_command(
-            f" FIBER_SECRET_KEY_PASSWORD='{password}' RUST_LOG=info,fnn={fnn_log_level} {get_project_root()}/{self.fiber_config_enum.fiber_bin_path} -c {self.tmp_path}/config.yml -d {self.tmp_path} {rpc_biscuit_public_key_option}  >> {self.tmp_path}/node.log 2>&1 &"
+            f" {extra_env}FIBER_SECRET_KEY_PASSWORD='{password}' RUST_LOG=info,fnn={fnn_log_level} {get_project_root()}/{self.fiber_config_enum.fiber_bin_path} -c {self.tmp_path}/config.yml -d {self.tmp_path} {rpc_biscuit_public_key_option}  >> {self.tmp_path}/node.log 2>&1 &"
             # env=env_map,
         )
         # wait rpc port open
-        wait_for_port(self.rpc_port, timeout=300, open=True)
+        wait_for_port(self.rpc_port, timeout, open=True)
         print("start fiber client ")
 
     def stop(self):

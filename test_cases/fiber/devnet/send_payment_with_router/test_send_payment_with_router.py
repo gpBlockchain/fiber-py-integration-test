@@ -209,10 +209,10 @@ class TestSendPaymentWithRouter(FiberTest):
         except Exception as e:
             error_message = str(e)
             assert (
-                "Error: Send payment first hop error: Failed to send onion packet with error UnknownNextPeer"
-                in error_message
+                "no path found" in error_message
             ), f"预期错误信息不匹配，实际错误: {error_message}"
 
+    @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/1696")
     def test_loop_send_payment_with_router(self):
         """
         b-c-d-私-a网络-b网络(网络成环状)

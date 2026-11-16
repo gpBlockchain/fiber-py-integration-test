@@ -116,6 +116,35 @@ class TestShutdownMidNode(FiberTest):
                     f"remaining_commit_cells={commit_cells}"
                 )
 
+        # commitment cells 清空后，中继仍需识别链上关闭并向上游传递结算结果。
+        # 预留关闭扫描（最长 300 秒）、结算检查和消息传播时间；不重发付款。
+        deadline = time.monotonic() + 420
+        while True:
+            payments = [
+                sender.get_client().get_payment({"payment_hash": payment_hash})
+                for sender, payment_hash in zip(self.new_fibers, payment_hashes)
+            ]
+            upstream_channels = [
+                sender.get_client().list_channels({"pubkey": self.fiber1.get_pubkey()})[
+                    "channels"
+                ]
+                for sender in self.new_fibers
+            ]
+            assert all(payment["status"] != "Failed" for payment in payments), payments
+            if all(payment["status"] == "Success" for payment in payments) and all(
+                len(channels) == 1
+                and int(channels[0]["offered_tlc_balance"], 16) == 0
+                and int(channels[0]["received_tlc_balance"], 16) == 0
+                for channels in upstream_channels
+            ):
+                break
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Upstream UDT payments did not settle: {payments}; "
+                    f"channels={upstream_channels}"
+                )
+            time.sleep(1)
+
         for fiber in self.new_fibers:
             channels = fiber.get_client().list_channels(
                 {"pubkey": self.fiber1.get_pubkey()}
@@ -130,8 +159,7 @@ class TestShutdownMidNode(FiberTest):
                         "fee_rate": "0x3FC",
                     }
                 )
-                tx_hash = self.wait_and_check_tx_pool_fee(1000, False)
-                self.Miner.miner_until_tx_committed(self.node, tx_hash)
+                # 后台矿工持续出块，按通道等待关闭，不捕捉全局 pending 瞬时状态。
                 self.wait_for_channel_state(
                     fiber.get_client(),
                     self.fiber1.get_pubkey(),

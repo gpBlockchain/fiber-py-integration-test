@@ -322,7 +322,7 @@ class TestReceiveBtc(FiberCchTest):
             self.fiber1.account_private,
             10000 * 100000000,
         )
-        self.open_channel(
+        channel_id = self.open_channel(
             self.fiber2,
             self.fiber1,
             1000 * 100000000,
@@ -351,7 +351,8 @@ class TestReceiveBtc(FiberCchTest):
         self.wait_cch_order_state(
             self.fiber1, receive_btc_result["payment_hash"], "Success"
         )
-        time.sleep(1)
+        for fiber in (self.fiber1, self.fiber2):
+            self.wait_channel_tlcs_settled(fiber, channel_id)
         # check balance
         after_balances = self.get_fibers_balance()
         after_lnd1_balance = self.LNDs[1].ln_cli_with_cmd("channelbalance")

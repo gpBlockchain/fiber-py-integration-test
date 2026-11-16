@@ -4,7 +4,8 @@ Wraps the debug Dev RPCs so tests can drop, capture, delay, and inject
 Fiber channel messages without touching the honest victim.
 
 Prefer ``P2pFiberTest`` in ``framework.basic_p2p`` when writing a new
-scenario: it already starts ``current/fnn`` as victim and ``attack/fnn``
+scenario: it already starts ``current/fnn`` as victim and
+``attack-full-payment-hash/fnn``
 as this peer, then opens a ready channel.
 
 Typical use:
@@ -135,7 +136,11 @@ class P2pPeer:
         return self.intercept(channel_id)
 
     def take(self, kind=None):
-        """Drain captured inbound messages. Optionally keep only ``kind``."""
+        """Drain captured messages matching a name or an explicit list of names.
+
+        Versioned messages are not aliases: callers that support both protocols
+        must request both names, e.g. ("CommitmentSigned", "CommitmentSignedV2").
+        """
         result = self.client.take_captured_fiber_messages() or {}
         messages = list(result.get("messages") or [])
         self._inbox.extend(messages)
@@ -169,7 +174,7 @@ class P2pPeer:
 
     def deliver(self, count=None, kind=None):
         """Release captured inbound messages into this node's channel actor."""
-        params = {"kinds": [kind] if kind else []}
+        params = {"kinds": self._kinds(kind)}
         if count is not None:
             params["count"] = _hex_u64(count)
         return self.client.deliver_captured_fiber_messages(params)
@@ -227,7 +232,7 @@ class P2pPeer:
         raise TimeoutError(f"timed out waiting for held {kind or 'message'}")
 
     def release_held(self, count=None, kind=None):
-        params = {"kinds": [kind] if kind else []}
+        params = {"kinds": self._kinds(kind)}
         if count is not None:
             params["count"] = _hex_u64(count)
         return self.client.release_held_outbound_fiber_messages(params)
@@ -335,8 +340,14 @@ class P2pPeer:
         )
 
     @staticmethod
+    def _kinds(kind):
+        if kind is None:
+            return []
+        return [kind] if isinstance(kind, str) else list(kind)
+
+    @staticmethod
     def _kind_eq(left, right):
         def normalize(value):
             return "".join(ch for ch in str(value or "") if ch not in "_-").lower()
 
-        return normalize(left) == normalize(right)
+        return any(normalize(left) == normalize(kind) for kind in P2pPeer._kinds(right))

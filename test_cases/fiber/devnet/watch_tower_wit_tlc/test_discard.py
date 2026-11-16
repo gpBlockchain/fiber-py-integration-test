@@ -5,7 +5,9 @@ import pytest
 from framework.basic_fiber import FiberTest
 
 CHAIN_DEPTH_WAIT_ATTEMPTS = 120
-COMMIT_CELL_SWEEP_ROUNDS = 10
+# Payments can retain TLCs for up to 14 days; allow time for their expiry and
+# subsequent commitment settlement while keeping the wait bounded.
+COMMIT_CELL_SWEEP_ROUNDS = 18
 
 
 class TestDiscard(FiberTest):
@@ -99,7 +101,8 @@ class TestDiscard(FiberTest):
         ckb_change_balance = 0
         for i in range(len(result)):
             ckb_change_balance += result[i]["ckb"]
-        assert ckb_change_balance < 20000
+        # Two UDT channels may require multiple on-chain TLC settlement txs.
+        assert ckb_change_balance < 50000
         assert ckb_change_balance > 0
 
     # @pytest.mark.skip("会遗弃tlc")
