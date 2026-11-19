@@ -25,6 +25,8 @@
 
 任何编码 agent 在执行 `git commit` 前，或收到提交前审核请求时，都按[提交前审核清单](.agents/skills/fiber-precommit-review/SKILL.md)审核完整暂存区。支持项目技能的客户端可加载 `fiber-precommit-review`；没有技能运行器时，直接打开链接按 Markdown 正文执行，无需安装插件。
 
+对 pull request diff 的 `/review` 使用[PR 评审清单](.agents/skills/fiber-py-pr-review/SKILL.md)，技能名为 `fiber-py-pr-review`。不要用提交前清单代替 PR diff 评审。
+
 通用提示语：「请读取仓库根目录的 `AGENTS.md`，按提交前审核清单审核暂存区，只报告结论和依据。」只有结论为「可提交」且提交内容仍与已审快照一致时才放行；「需修改」或「待确认」时先停止提交。审核通过不等于用户授权提交或推送。
 
 ## 2. 两份事实来源与目录约定

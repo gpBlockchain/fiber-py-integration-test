@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fiber PR 评审"
+  short_description: "按 pull request diff 核对 fiber-py 评审规则，给出可提交、需修改或待确认"
+  default_prompt: "用 $fiber-py-pr-review 审核当前 pull request diff，只报告结论和依据。"
