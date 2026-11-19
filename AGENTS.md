@@ -43,6 +43,8 @@
 - Devnet 测试：`test_cases/fiber/devnet/<category>/test_<feature>.py`。
 - CCH 测试：`test_cases/fiber/cch/`；框架测试：`test_cases/framework/`。
 - Testnet / Mainnet 测试保留在各自现有目录，只在当前用例确有需要时运行。
+- 测试代码只收需要长期维护、可重复运行的回归用例及其必要支持。一次运行产生的测试日志、节点日志、终端输出或 pytest HTML/XML 报告留在本地或作为 CI 产物，不随代码提交。固定测试输入与预期不是运行记录。
+- 同类用例优先放进已有功能目录，通过 `python -m pytest <目录>` 或项目已有的 Makefile/CI 入口运行。不为某批用例另写脚本来编排测试集群、枚举或串行调用用例；节点生命周期复用框架。新增分类按第 7 节核对收集范围与 CI 接入。
 - 旧测试不批量补 ID、不搬目录；仅在当前范围接入评审映射。
 - 不新增覆盖率台账、审批状态字段或内部 ID 链。映射数量按需计算，不维护第二份清单。
 
@@ -107,6 +109,7 @@ def test_missing_parameter(...):
 
 - 新增或扩展 Fiber 场景时，先在同功能目录和已有映射中找旧用例。操作和判断依据相同，优先在旧用例补输入或断言；判断依据不同，保留独立测试方法，优先并入已有测试类。合并时保留原有断言、Case ID 和映射，实质调整预期仍按第 4 节确认。
 - 多条用例的节点配置兼容时，优先用 `SharedFiberTest` 复用类内节点及稳定拓扑，减少 CI 里逐方法启停 Fiber 的开销。共享节点不等于共享业务状态：需要独立通道或发票时单独创建，每条用例都应能单跑、换序运行。将旧类切换为共享前要核对其全部方法；确需全新数据目录、互斥配置或故障会影响其他用例时，保留 `FiberTest` 隔离。
+- 在项目标准配置下，用例应直接运行并执行核心断言，无需手动设置额外环境变量。用例本身以及调用的 fixture、辅助方法都不得在缺变量时失败、跳过或提前返回。环境变量若仅作可选覆盖，未设置时仍须完整验证同一行为。
 - 常用对象：`self.node`、`self.fiber1`、`self.fiber2`、`self.udtContract`；检查当前基类和配置，不假设整个链状态逐方法重置。
 - 复用 `open_channel`、`send_payment`、`send_invoice_payment`、`wait_payment_state`、`wait_invoice_state` 等已有方法，先核对真实签名。
 - 额外节点使用 `self.start_new_fiber(self.generate_account(...))`。共享拓扑可在 `setUp()` 中用类级 `_channel_inited` 守卫，节点保存在 `self.__class__.fiberN`；拓扑成功建立后再设置守卫。
