@@ -140,14 +140,7 @@ class CkbNode:
         self.start()
 
     def start(self):
-        if self.virtual_clock is not None:
-            self._start_with_clock("--indexer")
-        else:
-            self.ckb_pid = run_command(
-                "cd {ckb_dir} && ./ckb run --indexer  --skip-spec-check > node.log 2>&1 &".format(
-                    ckb_dir=self.ckb_dir
-                )
-            )
+        self._start_process("--indexer")
         # //todo replace by rpc
         time.sleep(3)
 
@@ -157,19 +150,12 @@ class CkbNode:
         Returns:
 
         """
-        if self.virtual_clock is not None:
-            self._start_with_clock("--rich-indexer")
-        else:
-            self.ckb_pid = run_command(
-                "cd {ckb_dir} && ./ckb run --rich-indexer  --skip-spec-check > node.log 2>&1 &".format(
-                    ckb_dir=self.ckb_dir
-                )
-            )
+        self._start_process("--rich-indexer")
         time.sleep(3)
 
-    def _start_with_clock(self, indexer_option):
-        # A direct exec preserves DYLD_* on macOS; routing through /bin/sh may
-        # strip it under SIP before the CKB process starts.
+    def _start_process(self, indexer_option):
+        # Direct exec preserves DYLD_* on macOS and records the real ckb PID.
+        # env is None in the default path so FAKETIME/LD_PRELOAD are not injected.
         with open(f"{self.ckb_dir}/node.log", "a") as log:
             process = subprocess.Popen(
                 ["./ckb", "run", indexer_option, "--skip-spec-check"],
@@ -272,7 +258,7 @@ class CkbNode:
     def _process_env(self):
         if self.virtual_clock is None:
             return None
-        return {**os.environ, **self.virtual_clock.process_env()}
+        return self.virtual_clock.merge_env()
 
     def stop_miner(self):
         if self.ckb_miner_pid == -1:

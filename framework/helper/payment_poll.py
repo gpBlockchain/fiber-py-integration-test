@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from typing import Callable, Dict, Mapping, MutableMapping, Optional
 
+from framework.cluster_clock import scheduling_now
+
 PaymentReader = Callable[[], Mapping]
 
 
@@ -13,15 +15,18 @@ def wait_until_any_payment_failed(
     *,
     timeout: float = 120,
     interval: float = 1,
-    clock: Callable[[], float] = time.monotonic,
+    clock: Callable[[], float] = scheduling_now,
     sleep: Callable[[float], None] = time.sleep,
 ) -> Dict[str, Mapping]:
     """Poll until at least one payment status is Failed.
 
+    Timeouts use real scheduling time (``scheduling_now`` / monotonic), not
+    ClusterClock business wall time and not a faketime rate. Payments are not
+    retried. Both sides remaining Inflight until timeout is a failure, not a
+    pass. Errors raised by a reader propagate immediately.
+
     `readers` maps a label to a zero-argument callable that returns the latest
-    payment object (must include a `status` field). Payments are not retried.
-    Both sides remaining Inflight until timeout is a failure, not a pass.
-    Errors raised by a reader propagate immediately.
+    payment object (must include a `status` field).
     """
     if not readers:
         raise ValueError("readers must not be empty")

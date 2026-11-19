@@ -1,17 +1,37 @@
 """Opt-in wall-clock offset shared by local FNN and CKB test processes.
 
 Requires a platform-matching libfaketime dynamic library. The pytest process
-keeps real time; callers must use ``now_ms`` when constructing block headers.
+keeps real scheduling time (``time.monotonic``); callers must use ``now_ms``
+when constructing block headers or reading business wall time.
+
+This clock jumps a whole-second offset. It does not implement a faketime
+rate (``x2``) and does not move backwards. Monotonic timers in Tokio/CKB
+and pytest wait loops stay on real time.
 """
+
+from __future__ import annotations
 
 import math
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import sysconfig
 import tempfile
 import time
+from typing import Mapping, MutableMapping, Optional
+
+# libfaketime offset file: only "+<non-negative seconds>" is accepted.
+_OFFSET_RE = re.compile(r"^\+(\d+)$")
+
+# Process-scoped registry so host-clock helpers can refuse to mix mechanisms.
+_ACTIVE_CLOCKS: list["ClusterClock"] = []
+
+
+def scheduling_now():
+    """Real elapsed time for waits, sleeps, and RPC timeouts."""
+    return time.monotonic()
 
 
 def resolve_faketime_library():
@@ -58,6 +78,34 @@ def resolve_faketime_library():
     )
 
 
+def parse_offset_text(value: str) -> int:
+    """Parse a timestamp-file body. Rate and absolute faketime formats are rejected."""
+    text = value.strip()
+    match = _OFFSET_RE.fullmatch(text)
+    if not match:
+        raise ValueError(
+            f"Invalid cluster clock offset: {value!r}. Only a whole-second "
+            "offset like '+14400' is supported; libfaketime rate (x2) and "
+            "absolute (@...) formats are not used."
+        )
+    return int(match.group(1))
+
+
+def has_active_cluster_clock() -> bool:
+    return bool(_ACTIVE_CLOCKS)
+
+
+def require_real_host_clock(action: str = "this operation"):
+    """Refuse helpers that change the host clock while a ClusterClock is live."""
+    if _ACTIVE_CLOCKS:
+        raise RuntimeError(
+            f"{action} cannot be mixed with ClusterClock. "
+            "Use cluster_clock.advance_seconds() or "
+            "BasicClockFiber.advance_time_by() for business time, and keep "
+            "pytest waits on real monotonic time."
+        )
+
+
 class ClusterClock:
     def __init__(self, library_path, *, timestamp_file=None, reuse=False):
         self.library_path = Path(library_path).expanduser().resolve(strict=True)
@@ -77,13 +125,16 @@ class ClusterClock:
             self.timestamp_file.parent.mkdir(parents=True, exist_ok=True)
 
         if reuse:
-            value = self.timestamp_file.read_text(encoding="ascii").strip()
-            if not value.startswith("+") or not value[1:].isdigit():
-                raise ValueError(f"Invalid cluster clock offset: {value!r}")
-            self._offset_seconds = int(value[1:])
+            value = self.timestamp_file.read_text(encoding="ascii")
+            self._offset_seconds = parse_offset_text(value)
         else:
             self._offset_seconds = 0
             self._write_offset()
+        _ACTIVE_CLOCKS.append(self)
+
+    @property
+    def offset_seconds(self) -> int:
+        return self._offset_seconds
 
     def _write_offset(self):
         temporary = self.timestamp_file.with_suffix(".new")
@@ -91,6 +142,7 @@ class ClusterClock:
         os.replace(temporary, self.timestamp_file)
 
     def process_env(self):
+        """Clock variables only; use merge_env to combine with a process environment."""
         env = {
             "FAKETIME_TIMESTAMP_FILE": str(self.timestamp_file),
             "FAKETIME_NO_CACHE": "1",
@@ -110,8 +162,37 @@ class ClusterClock:
             env["LD_PRELOAD"] = str(self.library_path)
         return env
 
+    def apply_to_env(self, env: MutableMapping[str, str]) -> MutableMapping[str, str]:
+        """Inject clock vars into an extra_env mapping without copying os.environ."""
+        clock_env = self.process_env()
+        for key in ("LD_PRELOAD", "DYLD_INSERT_LIBRARIES"):
+            injected = clock_env.get(key)
+            existing = env.get(key)
+            if injected and existing and injected not in existing.split(":"):
+                clock_env[key] = f"{injected}:{existing}"
+        env.update(clock_env)
+        return env
+
+    def merge_env(
+        self, base: Optional[Mapping[str, str]] = None, **overrides
+    ) -> MutableMapping[str, str]:
+        """Copy ``base`` (default ``os.environ``) and inject libfaketime safely.
+
+        Existing LD_PRELOAD / DYLD_INSERT_LIBRARIES values are preserved by
+        prepending the faketime library so child processes still inherit both.
+        """
+        env = dict(os.environ if base is None else base)
+        self.apply_to_env(env)
+        env.update(overrides)
+        return env
+
     def now_ms(self):
+        """Business wall time in milliseconds (real UTC + offset)."""
         return int(time.time() * 1000) + self._offset_seconds * 1000
+
+    def now_s(self):
+        """Business wall time in whole seconds."""
+        return self.now_ms() // 1000
 
     def advance_seconds(self, seconds):
         if not isinstance(seconds, int) or seconds <= 0:
@@ -129,5 +210,8 @@ class ClusterClock:
         return self.advance_seconds(math.ceil(remaining_ms / 1000))
 
     def close(self):
+        if self in _ACTIVE_CLOCKS:
+            _ACTIVE_CLOCKS.remove(self)
         if self._directory is not None:
             self._directory.cleanup()
+            self._directory = None

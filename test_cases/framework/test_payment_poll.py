@@ -131,3 +131,35 @@ def test_success_and_inflight_is_not_enough_and_times_out():
             clock=clock.time,
             sleep=clock.sleep,
         )
+
+
+def test_timeout_is_independent_of_cluster_clock_business_offset(tmp_path):
+    from unittest.mock import patch
+
+    from framework.cluster_clock import ClusterClock
+
+    library = tmp_path / "libfaketime.1.dylib"
+    library.touch()
+    with patch("framework.cluster_clock.platform.system", return_value="Darwin"):
+        business = ClusterClock(library)
+    sched = FakeClock()
+    try:
+
+        def inflight():
+            if business.offset_seconds == 0:
+                business.advance_seconds(10_000)
+            return {"status": "Inflight", "payment_hash": "p1"}
+
+        with pytest.raises(AssertionError, match="timed out after 2"):
+            wait_until_any_payment_failed(
+                {"fiber1": inflight},
+                timeout=2,
+                interval=1,
+                clock=sched.time,
+                sleep=sched.sleep,
+            )
+        assert business.offset_seconds == 10_000
+        assert sched.now >= 2
+        assert sched.now < 10_000
+    finally:
+        business.close()

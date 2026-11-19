@@ -148,9 +148,8 @@ class FiberTest(CkbTest):
             str(self.fiber2_p2p_port),
         )
         if self.cluster_clock is not None:
-            clock_env = self.cluster_clock.process_env()
-            self.fiber1.extra_env.update(clock_env)
-            self.fiber2.extra_env.update(clock_env)
+            self.cluster_clock.apply_to_env(self.fiber1.extra_env)
+            self.cluster_clock.apply_to_env(self.fiber2.extra_env)
         self.fibers.append(self.fiber1)
         self.fibers.append(self.fiber2)
         #
@@ -317,10 +316,9 @@ class FiberTest(CkbTest):
         )
         self.fibers.append(fiber)
         self.new_fibers.append(fiber)
-        fiber.extra_env = {
-            **(self.cluster_clock.process_env() if self.cluster_clock else {}),
-            **(env or {}),
-        }
+        fiber.extra_env = dict(env or {})
+        if self.cluster_clock is not None:
+            self.cluster_clock.apply_to_env(fiber.extra_env)
         fiber.prepare(update_config=update_config)
         fiber.start(fnn_log_level=self.fnn_log_level)
         return fiber
@@ -1262,11 +1260,27 @@ class FiberTest(CkbTest):
             f"Graph channels did not sync to {channels_count} within {timeout} seconds."
         )
 
-    def add_time_and_generate_epoch(self, hour, epoch):
-        # Remember wall-clock origin so restore_time can jump back exactly when NTP is unavailable.
+    def _advance_business_hours(self, hour):
+        """Advance business wall time used by invoice/epoch checks.
+
+        ClusterClock jumps the shared libfaketime offset only. The legacy
+        host-clock path (change_time) is used when no virtual clock is active
+        and records an origin so restore_time can rewind the machine clock.
+        pytest wait loops stay on real monotonic time in both modes.
+        """
+        seconds = int(round(float(hour) * 3600))
+        if self.cluster_clock is not None:
+            if seconds < 0:
+                raise ValueError("ClusterClock cannot move backwards")
+            if seconds > 0:
+                self.cluster_clock.advance_seconds(seconds)
+            return
         if getattr(self.__class__, "_clock_origin", None) is None:
             self.__class__._clock_origin = (time.time(), time.monotonic())
         change_time(hour)
+
+    def add_time_and_generate_epoch(self, hour, epoch):
+        self._advance_business_hours(hour)
         client = self.node.getClient()
         header = client.get_tip_header()
         before_median_time = client.get_block_median_time(header["hash"])
@@ -1282,9 +1296,7 @@ class FiberTest(CkbTest):
         )
 
     def add_time_and_generate_block(self, hour, block_num):
-        if getattr(self.__class__, "_clock_origin", None) is None:
-            self.__class__._clock_origin = (time.time(), time.monotonic())
-        change_time(hour)
+        self._advance_business_hours(hour)
         client = self.node.getClient()
         header = client.get_tip_header()
         before_median_time = client.get_block_median_time(header["hash"])
@@ -1374,7 +1386,16 @@ class FiberTest(CkbTest):
         GitHub runners often lack sntp/ntpdate. Falling back to "minus one hour"
         leaves the clock days ahead after a multi-hour TLC expiry advance and
         poisons later jobs in the same workflow. Prefer the saved origin.
+
+        This only restores the host clock. When ClusterClock is active the
+        host clock was not changed; closing the clock in teardown is enough.
         """
+        if getattr(cls, "cluster_clock", None) is not None:
+            print(
+                "ClusterClock is active; host clock was not changed, skip restore_time"
+            )
+            cls._clock_origin = None
+            return
         print("开始恢复系统时间...")
         print("current time:", time.time())
         print("current datetime:", datetime.now())

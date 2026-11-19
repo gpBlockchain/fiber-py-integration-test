@@ -286,3 +286,256 @@ def test_basic_clock_fiber_waits_for_chain_median_time():
 
     assert suite.wait_chain_median_time(9_000) == 10_000
     client.get_block_median_time.assert_called_once_with("0xabc")
+
+
+def test_cluster_clock_rejects_rate_absolute_and_rollback(tmp_path):
+    library = tmp_path / "libfaketime.so.1"
+    library.touch()
+    clock_file = tmp_path / "clock.rc"
+    with patch("framework.cluster_clock.platform.system", return_value="Linux"):
+        for value in ("x2", "+0 x2", "@2020-01-01 00:00:00", "-3600", "+1.5", ""):
+            clock_file.write_text(value + "\n")
+            with pytest.raises(ValueError, match="Invalid cluster clock offset"):
+                ClusterClock(library, timestamp_file=clock_file, reuse=True)
+
+        clock = ClusterClock(library)
+        try:
+            assert "FAKETIME" not in clock.process_env()
+            assert clock.timestamp_file.read_text() == "+0\n"
+            with patch("framework.cluster_clock.time.time", return_value=1000.0):
+                clock.advance_seconds(60)
+                assert clock.offset_seconds == 60
+                with pytest.raises(ValueError, match="later"):
+                    clock.advance_to_ms(clock.now_ms() - 1)
+                with pytest.raises(ValueError, match="positive"):
+                    clock.advance_seconds(-1)
+        finally:
+            clock.close()
+
+
+def test_merge_env_prepends_existing_preload_and_skips_rate(tmp_path):
+    library = tmp_path / "libfaketime.so.1"
+    library.touch()
+    with patch("framework.cluster_clock.platform.system", return_value="Linux"):
+        clock = ClusterClock(library)
+    try:
+        env = clock.merge_env({"PATH": "/bin", "LD_PRELOAD": "other.so"})
+        assert env["LD_PRELOAD"] == f"{library}:other.so"
+        assert env["PATH"] == "/bin"
+        assert env.get("FAKETIME") is None
+        extra = {"LD_PRELOAD": "extra.so"}
+        clock.apply_to_env(extra)
+        assert extra["LD_PRELOAD"].startswith(str(library))
+        assert extra["LD_PRELOAD"].endswith("extra.so")
+    finally:
+        clock.close()
+
+
+def test_change_time_blocked_when_cluster_clock_active(tmp_path):
+    from framework.util import change_time, restore_time
+
+    library = tmp_path / "libfaketime.1.dylib"
+    library.touch()
+    with patch("framework.cluster_clock.platform.system", return_value="Darwin"):
+        clock = ClusterClock(library)
+    try:
+        with pytest.raises(RuntimeError, match="cannot be mixed"):
+            change_time(1)
+        with pytest.raises(RuntimeError, match="cannot be mixed"):
+            restore_time()
+    finally:
+        clock.close()
+
+
+def test_add_time_routes_to_cluster_clock_or_host_change_time(tmp_path):
+    from framework.basic_fiber import FiberTest
+
+    library = tmp_path / "libfaketime.1.dylib"
+    library.touch()
+    with patch("framework.cluster_clock.platform.system", return_value="Darwin"):
+        clock = ClusterClock(library)
+    try:
+        suite = object.__new__(FiberTest)
+        suite.cluster_clock = clock
+        with patch("framework.basic_fiber.change_time") as change:
+            suite._advance_business_hours(1)
+            change.assert_not_called()
+            assert clock.offset_seconds == 3600
+            with pytest.raises(ValueError, match="backwards"):
+                suite._advance_business_hours(-1)
+
+        host = object.__new__(FiberTest)
+        host.cluster_clock = None
+        FiberTest._clock_origin = None
+        with patch("framework.basic_fiber.change_time") as change:
+            host._advance_business_hours(2)
+            change.assert_called_once_with(2)
+            assert FiberTest._clock_origin is not None
+        FiberTest._clock_origin = None
+    finally:
+        clock.close()
+
+
+def test_restore_time_skips_host_clock_when_cluster_clock_active(tmp_path):
+    from framework.basic_fiber import FiberTest
+
+    library = tmp_path / "libfaketime.1.dylib"
+    library.touch()
+    with patch("framework.cluster_clock.platform.system", return_value="Darwin"):
+        clock = ClusterClock(library)
+    try:
+        FiberTest.cluster_clock = clock
+        FiberTest._clock_origin = (1.0, 2.0)
+        with patch("framework.util.restore_time") as restore:
+            FiberTest.restore_time()
+            restore.assert_not_called()
+        assert FiberTest._clock_origin is None
+    finally:
+        FiberTest.cluster_clock = None
+        FiberTest._clock_origin = None
+        clock.close()
+
+
+def test_fnn_start_default_does_not_inject_faketime(tmp_path, monkeypatch):
+    monkeypatch.delenv("FAKETIME_TIMESTAMP_FILE", raising=False)
+    monkeypatch.delenv("LD_PRELOAD", raising=False)
+    monkeypatch.delenv("DYLD_INSERT_LIBRARIES", raising=False)
+    fiber = object.__new__(Fiber)
+    fiber.extra_env = {}
+    fiber.fiber_config_enum = FiberConfigPath.CURRENT_DEV
+    fiber.tmp_path = str(tmp_path)
+    fiber.rpc_port = "8227"
+    with (
+        patch("framework.test_fiber.subprocess.Popen") as popen,
+        patch("framework.test_fiber.wait_for_port"),
+    ):
+        popen.return_value = Mock(pid=11)
+        fiber.start()
+    env = popen.call_args.kwargs["env"]
+    assert "FAKETIME_TIMESTAMP_FILE" not in env
+    assert "LD_PRELOAD" not in env
+    assert "DYLD_INSERT_LIBRARIES" not in env
+    assert fiber.pid == 11
+
+
+def test_fnn_restart_inherits_existing_clock_env(tmp_path):
+    library_path = tmp_path / "libfaketime.1.dylib"
+    library_path.touch()
+    with patch("framework.cluster_clock.platform.system", return_value="Darwin"):
+        clock = ClusterClock(library_path)
+    try:
+        fiber = object.__new__(Fiber)
+        fiber.extra_env = clock.process_env()
+        fiber.fiber_config_enum = FiberConfigPath.CURRENT_DEV
+        fiber.tmp_path = str(tmp_path)
+        fiber.rpc_port = "8227"
+        with (
+            patch("framework.test_fiber.subprocess.Popen") as popen,
+            patch("framework.test_fiber.wait_for_port"),
+        ):
+            popen.return_value = Mock(pid=12)
+            fiber.start()
+            fiber.start()
+        assert popen.call_count == 2
+        for call in popen.call_args_list:
+            assert call.kwargs["env"]["FAKETIME_TIMESTAMP_FILE"] == str(
+                clock.timestamp_file
+            )
+            assert call.kwargs["env"]["DYLD_INSERT_LIBRARIES"] == str(library_path)
+    finally:
+        clock.close()
+
+
+def test_ckb_default_start_does_not_inject_clock_env(tmp_path):
+    node = object.__new__(CkbNode)
+    node.ckb_dir = str(tmp_path)
+    node.virtual_clock = None
+    with (
+        patch("framework.test_node.subprocess.Popen") as popen,
+        patch("framework.test_node.time.sleep"),
+    ):
+        popen.return_value = Mock(pid=13)
+        node.start()
+    assert popen.call_args.kwargs["env"] is None
+    assert node.ckb_pid == 13
+
+
+def test_ckb_restart_inherits_virtual_clock(tmp_path):
+    library_path = tmp_path / "libfaketime.1.dylib"
+    library_path.touch()
+    with patch("framework.cluster_clock.platform.system", return_value="Darwin"):
+        clock = ClusterClock(library_path)
+    try:
+        node = object.__new__(CkbNode)
+        node.ckb_dir = str(tmp_path)
+        node.ckb_miner_pid = -1
+        node.virtual_clock = clock
+        with (
+            patch.object(node, "stop"),
+            patch.object(node, "stop_miner"),
+            patch("framework.test_node.subprocess.Popen") as popen,
+            patch("framework.test_node.time.sleep"),
+        ):
+            popen.return_value = Mock(pid=14)
+            node.restart()
+        assert node.virtual_clock is clock
+        assert popen.call_args.kwargs["env"]["FAKETIME_TIMESTAMP_FILE"] == str(
+            clock.timestamp_file
+        )
+    finally:
+        clock.close()
+
+
+def test_cch_expiry_assert_refuses_active_cluster_clock(tmp_path):
+    from framework.helper.cch_lnd_expiry import assert_receive_btc_lnd_expiry
+
+    library = tmp_path / "libfaketime.1.dylib"
+    library.touch()
+    with patch("framework.cluster_clock.platform.system", return_value="Darwin"):
+        clock = ClusterClock(library)
+    try:
+        with pytest.raises(RuntimeError, match="ClusterClock"):
+            assert_receive_btc_lnd_expiry(
+                {"timestamp": 100, "expiry": 10},
+                order_expiry_delta_seconds=10,
+                min_outgoing_invoice_expiry_delta_seconds=5,
+                call_started_at=100.0,
+                call_finished_at=100.2,
+            )
+    finally:
+        clock.close()
+
+
+def test_fiber_cch_test_rejects_virtual_clock_library():
+    from framework.basic_fiber_with_cch import FiberCchTest
+
+    class BadCch(FiberCchTest):
+        virtual_clock_library = "/tmp/libfaketime.so.1"
+
+    with pytest.raises(RuntimeError, match="cannot enable ClusterClock"):
+        BadCch.setup_class()
+
+
+def test_wait_chain_median_time_timeout_is_scheduling_time():
+    suite = BasicClockFiber()
+    suite.node = Mock()
+    client = suite.node.getClient.return_value
+    client.get_tip_header.return_value = {"hash": "0xabc"}
+    client.get_block_median_time.return_value = hex(1_000)
+
+    now = {"t": 0.0}
+
+    def fake_now():
+        return now["t"]
+
+    def fake_sleep(seconds):
+        now["t"] += seconds
+
+    with (
+        patch("framework.basic_clock_fiber.scheduling_now", side_effect=fake_now),
+        patch("framework.basic_clock_fiber.time.sleep", side_effect=fake_sleep),
+        patch("framework.basic_clock_fiber.time.time", return_value=10_000_000),
+    ):
+        with pytest.raises(TimeoutError, match="below"):
+            suite.wait_chain_median_time(9_000, timeout=1, interval=0.5)
+    assert now["t"] >= 1

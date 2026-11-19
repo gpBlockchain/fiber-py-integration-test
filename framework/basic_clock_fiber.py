@@ -8,7 +8,7 @@ import time
 import framework.config as framework_config
 from framework.basic_fiber import check_port
 from framework.basic_share_fiber import SharedFiberTest
-from framework.cluster_clock import resolve_faketime_library
+from framework.cluster_clock import resolve_faketime_library, scheduling_now
 from framework.util import get_project_root
 
 
@@ -148,9 +148,9 @@ class BasicClockFiber(SharedFiberTest):
 
     def wait_chain_median_time(self, target_ms, *, timeout=30, interval=0.2):
         """Wait for the devnet median time, using a real-time timeout."""
-        deadline = time.monotonic() + timeout
+        deadline = scheduling_now() + timeout
         observed = None
-        while time.monotonic() < deadline:
+        while scheduling_now() < deadline:
             client = self.node.getClient()
             header = client.get_tip_header()
             observed = int(client.get_block_median_time(header["hash"]), 16)

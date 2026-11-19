@@ -16,6 +16,12 @@ class FiberCchTest(FiberTest):
 
     @classmethod
     def setup_class(cls):
+        if getattr(cls, "virtual_clock_library", None) is not None:
+            raise RuntimeError(
+                "FiberCchTest cannot enable ClusterClock: LND and bitcoind "
+                "are not on the virtual clock, so invoice/order expiry would "
+                "disagree with Fiber/CKB."
+            )
         cls.LNDs = []
         cls.btcNode = None
         try:

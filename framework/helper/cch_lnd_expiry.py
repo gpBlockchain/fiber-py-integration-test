@@ -124,8 +124,16 @@ def assert_receive_btc_lnd_expiry(
     covering second flooring and a 1s LND/Fiber clock difference. The
     1-second tolerance is not a license to accept any value in (0, delta].
     """
+    from framework.cluster_clock import has_active_cluster_clock
+
     if clock_tolerance_seconds < 0:
         raise ValueError("clock_tolerance_seconds must be >= 0")
+    if has_active_cluster_clock():
+        raise RuntimeError(
+            "receive_btc LND expiry assertions compare Fiber and LND wall "
+            "time in one clock domain. LND/bitcoind are not on ClusterClock; "
+            "do not enable the virtual clock for CCH tests."
+        )
 
     timestamp, expiry, absolute = lnd_absolute_expiry(decode)
     lower, upper = relative_expiry_bounds(
