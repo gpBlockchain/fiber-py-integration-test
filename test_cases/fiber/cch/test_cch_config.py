@@ -3,6 +3,10 @@ import time
 import pytest
 
 from framework.basic_fiber_with_cch import FiberCchTest
+from framework.helper.cch_lnd_expiry import (
+    assert_receive_btc_lnd_expiry,
+    parse_order_created_at,
+)
 
 
 class TestCCHConfig(FiberCchTest):
@@ -174,14 +178,26 @@ class TestCCHConfig(FiberCchTest):
                 "payment_preimage": self.generate_random_preimage(),
             }
         )
+        started = time.time()
         receive_btc = self.fiber1.get_client().receive_btc(
             {"fiber_pay_req": invoice["invoice_address"]}
         )
+        finished = time.time()
         ret = self.LNDs[0].ln_cli_with_cmd(
             "decodepayreq " f"{receive_btc['incoming_invoice']['Lightning']}"
         )
         print("ret:", ret)
-        assert ret["expiry"] == "10"
+        order = self.fiber1.get_client().get_cch_order(
+            {"payment_hash": receive_btc["payment_hash"]}
+        )
+        assert_receive_btc_lnd_expiry(
+            ret,
+            order_expiry_delta_seconds=expiry_seconds,
+            min_outgoing_invoice_expiry_delta_seconds=5,
+            call_started_at=started,
+            call_finished_at=finished,
+            order_created_at=parse_order_created_at(order),
+        )
 
     # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/976")
     def test_CCH_FEE_RATE_PER_MILLION_SATS(self):
