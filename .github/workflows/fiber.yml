@@ -539,6 +539,14 @@ jobs:
           python download_btc.py
           python download_lnd.py
 
+      - name: Set up Go for file-offset-clock LND
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.6"
+
+      - name: Build test-only file-offset-clock LND
+        run: tools/build_lnd_file_clock.sh
+
       - name: Run fiber_test_demo
         run: make fiber_test_demo FIBER_TEST_DEMO="test_cases/fiber/cch"
 
