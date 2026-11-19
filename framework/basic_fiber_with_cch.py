@@ -1,4 +1,10 @@
 from framework.basic_fiber import FiberTest
+from framework.clock_backends import (
+    BitcoindMocktimeBackend,
+    LndFileOffsetBackend,
+    apply_lnd_file_clock_env,
+    resolve_lnd_file_clock_binaries,
+)
 from framework.test_btc import BtcNode
 from framework.test_lnd import LndNode
 
@@ -15,31 +21,60 @@ class FiberCchTest(FiberTest):
     start_lnd_config = {}
 
     @classmethod
+    def _lnd_binaries(cls):
+        if getattr(cls, "_lnd_file_clock_bins", None):
+            return cls._lnd_file_clock_bins
+        return (None, None)
+
+    @classmethod
+    def _make_lnd(cls, tmp_path, listen_port, rpc_port, rest_port):
+        lnd_bin, lnd_cli = cls._lnd_binaries()
+        node = LndNode(
+            tmp_path,
+            listen_port,
+            rpc_port,
+            rest_port,
+            lnd_binary=lnd_bin,
+            lnd_cli=lnd_cli,
+        )
+        if cls.cluster_clock is not None:
+            apply_lnd_file_clock_env(node, cls.cluster_clock)
+        return node
+
+    @classmethod
     def setup_class(cls):
-        if getattr(cls, "virtual_clock_library", None) is not None:
-            raise RuntimeError(
-                "FiberCchTest cannot enable ClusterClock: LND and bitcoind "
-                "are not on the virtual clock, so invoice/order expiry would "
-                "disagree with Fiber/CKB."
-            )
+        # Official LND cannot jump wall time. ClusterClock CCH tests must use
+        # the test-only file-offset-clock binary; default CCH tests stay off.
+        wants_clock = cls.enable_cluster_clock or (
+            getattr(cls, "virtual_clock_library", None) is not None
+        )
+        cls._lnd_file_clock_bins = (
+            resolve_lnd_file_clock_binaries() if wants_clock else None
+        )
         cls.LNDs = []
         cls.btcNode = None
         try:
             super().setup_class()
             cls.btcNode = BtcNode()
+            if cls.cluster_clock is not None:
+                cls.btcNode.cluster_clock = cls.cluster_clock
             cls.LNDs = [
-                LndNode("tmp/lnd/node0", 9735, 10009, 8180),
-                LndNode("tmp/lnd/node1", 9736, 11010, 8181),
+                cls._make_lnd("tmp/lnd/node0", 9735, 10009, 8180),
+                cls._make_lnd("tmp/lnd/node1", 9736, 11010, 8181),
             ]
             if cls.debug == True:
                 return
                 # 启动btc
             cls.btcNode.prepare()
             cls.btcNode.start()
+            if cls.cluster_clock is not None:
+                cls.cluster_clock.attach(BitcoindMocktimeBackend(cls.btcNode))
             # 启动lnd
             for lnd in cls.LNDs:
                 lnd.prepare(cls.start_lnd_config)
                 lnd.start()
+                if cls.cluster_clock is not None:
+                    cls.cluster_clock.attach(LndFileOffsetBackend(lnd))
 
             # 建立2个lnd的连接
             ingrid_p2tr_address = cls.LNDs[0].ln_cli_with_cmd("newaddress p2tr")[
@@ -118,10 +153,12 @@ class FiberCchTest(FiberTest):
 
         i = len(self.LNDs)
         # start lnd
-        lnd = LndNode(f"tmp/lnd/node{i}", 9735 + i, 10009 + i, 8180 + i)
+        lnd = self._make_lnd(f"tmp/lnd/node{i}", 9735 + i, 10009 + i, 8180 + i)
         self.LNDs.append(lnd)
         lnd.prepare(self.start_lnd_config)
         lnd.start()
+        if self.cluster_clock is not None:
+            self.cluster_clock.attach(LndFileOffsetBackend(lnd))
         return lnd
 
     def start_new_mock_lnd(self):

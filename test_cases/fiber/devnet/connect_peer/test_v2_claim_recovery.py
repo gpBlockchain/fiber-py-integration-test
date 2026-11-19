@@ -18,7 +18,7 @@ from framework.helper.settlement_witness import (
     assert_commitment_args,
 )
 from framework.rpc import RPCClient
-from framework.util import change_time, ckb_hash, restore_time
+from framework.util import ckb_hash
 from test_cases.fiber.devnet.compatibility.contract_upgrade_support import (
     commitment_hash_without_deps,
     tlc_is_terminal,
@@ -30,6 +30,7 @@ PRIVACY_DELTA_MS = 14_400_000
 
 
 class TestV2ClaimRecovery(FiberTest):
+    enable_cluster_clock = True
     tmp_path_name = "tmp-v2-claim-recovery"
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 2}
     fnn_log_level = "info"
@@ -297,7 +298,7 @@ class TestV2ClaimRecovery(FiberTest):
                 if committed_rounds < 2:
                     time.sleep(min(0.2, max(0, deadline - time.monotonic())))
             protection_at = claim["expiry"] / 1000 - SAFETY_MS / 1000 - 60
-            assert time.time() + 600 < protection_at, "故障前保护窗口余量不足"
+            assert self.business_now_s() + 600 < protection_at, "故障前保护窗口余量不足"
             for rpc in [self.ckb, *rpcs]:
                 rpc.deadline = self._case_deadline
 
@@ -408,7 +409,7 @@ class TestV2ClaimRecovery(FiberTest):
             while True:
                 snapshot()
                 assert completely_settled(), "结清后状态或余额再次变化"
-                assert time.time() < claim["expiry"] / 1000, "已到 TLC 期限"
+                assert self.business_now_s() < claim["expiry"] / 1000, "已到 TLC 期限"
                 if time.monotonic() >= stable_until:
                     break
                 time.sleep(min(0.2, max(0, stable_until - time.monotonic())))
@@ -494,7 +495,9 @@ class TestV2ClaimRecovery(FiberTest):
         assert self._channel(self.fiber1)["state"]["state_name"] == "ChannelReady"
         self._assert_unspent()
         protection_at = min(expiries) / 1000 - SAFETY_MS / 1000 - 60
-        assert time.time() + 300 < protection_at, "已不足五分钟的主动关闭观察余量"
+        assert (
+            self.business_now_s() + 300 < protection_at
+        ), "已不足五分钟的主动关闭观察余量"
         close_started = time.monotonic()
         self._settlement_deadline = min(self._case_deadline, close_started + 660)
         rpc = self.fiber1.get_client()
@@ -736,7 +739,7 @@ class TestV2ClaimRecovery(FiberTest):
         # 2. 付款前已固定基线；m 和 fee 来自输入，不由节点应收总额反推。
         amount = 200_000_017
         fee = (amount * 1000 + 999_999) // 1_000_000
-        sent_at = time.time()
+        sent_at = self.business_now_s()
         claim = self._hold_payment(
             self.fiber2,
             receiver,
@@ -857,10 +860,7 @@ class TestV2ClaimRecovery(FiberTest):
 
     @classmethod
     def setup_class(cls):
-        # CKB 在类内共享；调时后已有未来区块，用例之间保持时间单调前进。
-        cls._elapsed_clock = getattr(time, "CLOCK_BOOTTIME", time.CLOCK_MONOTONIC_RAW)
-        cls._clock_anchor = time.time(), time.clock_gettime(cls._elapsed_clock)
-        cls._clock_changed = False
+        # CKB 在类内共享；ClusterClock 只向前跳业务墙钟，不改宿主时钟。
         super().setup_class()
 
     def setup_method(self, method):
@@ -874,26 +874,8 @@ class TestV2ClaimRecovery(FiberTest):
 
     @classmethod
     def teardown_class(cls):
-        try:
-            # 先停止矿工和 CKB、清理链数据，再回拨系统时间。
-            super().teardown_class()
-        finally:
-            if cls._clock_changed:
-                before_wall, before_elapsed = cls._clock_anchor
-                expected = (
-                    before_wall
-                    + time.clock_gettime(cls._elapsed_clock)
-                    - before_elapsed
-                )
-                assert restore_time(
-                    reference_timestamp=expected
-                ), "恢复系统时间命令失败"
-                drift = time.time() - (
-                    before_wall
-                    + time.clock_gettime(cls._elapsed_clock)
-                    - before_elapsed
-                )
-                assert abs(drift) < 5, f"系统时间恢复后偏差 {drift:.3f}s"
+        # ClusterClock does not change the host clock; no restore_time().
+        super().teardown_class()
 
     def _check_initial_payments(self):
         """已建通道双向付款并核账，记录故障前的本金、funding 和最后承诺。"""
@@ -1114,7 +1096,7 @@ class TestV2ClaimRecovery(FiberTest):
         # 正式版会给所有跳共同追加至少 4 小时；收紧预算固定为一档。
         upstream_delta = 0 if payee is self.fiber1 else SAFETY_MS
         expiry_limit = expiry_delta + upstream_delta + PRIVACY_DELTA_MS + 1000
-        sent_at_ms = time.time() * 1000
+        sent_at_ms = self.business_now_ms()
         payment = payer.get_client().send_payment(
             {
                 "invoice": invoice["invoice_address"],
@@ -1176,7 +1158,7 @@ class TestV2ClaimRecovery(FiberTest):
                 tlc = self._pending(self.fiber1, self.channel_id, payment_hash)
                 assert tlc and int(tlc["amount"], 16) == claim["amount"]
                 claim["expiry"] = int(tlc["expiry"], 16)
-                assert claim["expiry"] - time.time() * 1000 > SAFETY_MS + 120_000
+                assert claim["expiry"] - self.business_now_ms() > SAFETY_MS + 120_000
             time.sleep(1)
         self.latest_commitment = channel["latest_commitment_transaction_hash"]
 
@@ -1196,38 +1178,43 @@ class TestV2ClaimRecovery(FiberTest):
         )
         lower, upper = earliest - 60, earliest + 30
         # 只跳过窗口前的长空等，保留至少两分钟的提前关闭反例观察。
-        advance_minutes = max(0, int((lower - time.time() - 120) // 60))
+        host_before = time.time()
+        advance_minutes = max(0, int((lower - self.business_now_s() - 120) // 60))
         if advance_minutes:
             self._assert_unspent()
-            before = time.time()
-            self.__class__._clock_changed = True
-            assert change_time(0, advance_minutes), "修改系统时间命令失败"
-            actual_advance = time.time() - before
-            assert abs(actual_advance - advance_minutes * 60) < 65, actual_advance
-            assert time.time() < lower - 100
+            before = self.business_now_s()
+            self.advance_business_time(minutes=advance_minutes)
+            actual_advance = self.business_now_s() - before
+            assert abs(actual_advance - advance_minutes * 60) < 2, actual_advance
+            assert self.business_now_s() < lower - 100
+            # Host clock must not have been used for the jump.
+            assert abs(time.time() - host_before) < 5
             self._assert_unspent()
         deadline = time.monotonic() + 420
-        observed_wall, observed_mono = time.time(), time.monotonic()
+        observed_host, observed_mono = time.time(), time.monotonic()
         next_print, next_probe = 0, 0
         print(
-            "claim close UTC epoch window:",
+            "claim close business-time window:",
             lower,
             upper,
             "remaining:",
-            upper - time.time(),
+            upper - self.business_now_s(),
         )
-        while time.time() <= upper and time.monotonic() < deadline:
-            clock_drift = (time.time() - observed_wall) - (
+        while self.business_now_s() <= upper and time.monotonic() < deadline:
+            host_drift = (time.time() - observed_host) - (
                 time.monotonic() - observed_mono
             )
-            assert (
-                abs(clock_drift) < 5
-            ), f"观察期间系统时间跳变或休眠 {clock_drift:.2f}s"
+            assert abs(host_drift) < 5, f"观察期间宿主时钟跳变或休眠 {host_drift:.2f}s"
             assert not self._peer_present(), "故障上游意外恢复连接"
             commitment = self._spender(self.funding)
             if commitment:
-                assert time.time() >= lower - 2, "claim 在保护窗口前强关"
-                print("automatic claim close:", commitment["hash"], "at:", time.time())
+                assert self.business_now_s() >= lower - 2, "claim 在保护窗口前强关"
+                print(
+                    "automatic claim close:",
+                    commitment["hash"],
+                    "at business:",
+                    self.business_now_s(),
+                )
                 return commitment
             now = time.monotonic()
             if probe and now >= next_probe:
@@ -1236,13 +1223,13 @@ class TestV2ClaimRecovery(FiberTest):
             if now >= next_print:
                 print(
                     "waiting claim window, seconds:",
-                    round(upper - time.time()),
+                    round(upper - self.business_now_s()),
                     flush=True,
                 )
                 next_print = now + 60
             time.sleep(1)
-        clock_drift = (time.time() - observed_wall) - (time.monotonic() - observed_mono)
-        assert abs(clock_drift) < 5, f"观察期间系统时间跳变或休眠 {clock_drift:.2f}s"
+        host_drift = (time.time() - observed_host) - (time.monotonic() - observed_mono)
+        assert abs(host_drift) < 5, f"观察期间宿主时钟跳变或休眠 {host_drift:.2f}s"
         raise AssertionError(
             f"越过 claim 保护窗口仍未广播：{self._channel(self.fiber1)}"
         )
@@ -1251,29 +1238,28 @@ class TestV2ClaimRecovery(FiberTest):
         """固定到期点 E、截止 E+180s；提前关闭和跳时中的关闭单独分类。"""
         target = expiry_ms / 1000
         cutoff = target + 180
-        assert time.time() < target, "准备阶段已错过 expiry，前置条件失败"
+        assert self.business_now_s() < target, "准备阶段已错过 expiry，前置条件失败"
         observation = {
             "expiry": expiry_ms / 1000,
             "target": target,
             "cutoff": cutoff,
             "closed_before_cutoff": False,
         }
-        last_absent = time.time()
+        last_absent = self.business_now_s()
         commitment = self._spender(self.funding)
-        seen_wall, seen_mono = time.time(), time.monotonic()
+        seen_wall, seen_mono = self.business_now_s(), time.monotonic()
         phase = "before_expiry"
         if not commitment:
-            # 留至少两分钟到期前余量；随后真实跨过 E，截止不随调时落点移动。
-            minutes = max(0, int((target - time.time() - 120) // 60))
+            # 留至少两分钟到期前余量；随后按真实调度时间跨过 E。
+            minutes = max(0, int((target - self.business_now_s() - 120) // 60))
             if minutes:
-                before_wall, before_mono = time.time(), time.monotonic()
-                self.__class__._clock_changed = True
-                assert change_time(0, minutes), "修改系统时间命令失败"
-                after_wall, after_mono = time.time(), time.monotonic()
-                shift_error = (
-                    after_wall - before_wall - (after_mono - before_mono) - minutes * 60
-                )
-                assert abs(shift_error) < 5, f"调时偏差 {shift_error}s"
+                host_before = time.time()
+                before_wall = self.business_now_s()
+                self.advance_business_time(minutes=minutes)
+                after_wall = self.business_now_s()
+                shift_error = after_wall - before_wall - minutes * 60
+                assert abs(shift_error) < 2, f"业务调时偏差 {shift_error}s"
+                assert abs(time.time() - host_before) < 5, "宿主时钟被改动"
                 observation["clock_shift"] = {
                     "before": before_wall,
                     "after": after_wall,
@@ -1281,17 +1267,25 @@ class TestV2ClaimRecovery(FiberTest):
                 }
                 assert after_wall < target, "调时落点越过 expiry，前置条件失败"
                 commitment = self._spender(self.funding)
-                seen_wall, seen_mono = time.time(), time.monotonic()
+                seen_wall, seen_mono = self.business_now_s(), time.monotonic()
                 if commitment:
                     phase = "during_clock_shift_time_unknown"
-        anchor_wall, anchor_mono = time.time(), time.monotonic()
+        anchor_business, anchor_mono, anchor_host = (
+            self.business_now_s(),
+            time.monotonic(),
+            time.time(),
+        )
         if not commitment:
-            assert anchor_wall < target, "开始完整观察前已错过 expiry，前置条件失败"
+            assert anchor_business < target, "开始完整观察前已错过 expiry，前置条件失败"
         while True:
-            now, mono = time.time(), time.monotonic()
+            now, mono = self.business_now_s(), time.monotonic()
+            # After the jump, business time and monotonic should advance together.
             assert (
-                abs((now - anchor_wall) - (mono - anchor_mono)) < 5
-            ), "观察期间系统时间跳变或休眠"
+                abs((now - anchor_business) - (mono - anchor_mono)) < 5
+            ), "观察期间业务时钟与调度时钟不同步"
+            assert (
+                abs((time.time() - anchor_host) - (mono - anchor_mono)) < 5
+            ), "观察期间宿主时钟跳变或休眠"
             assert mono < self._case_deadline, "本例 30 分钟预算已用尽"
             assert not self._peer_present(), "上游 A 意外恢复"
             if commitment:
@@ -1321,10 +1315,14 @@ class TestV2ClaimRecovery(FiberTest):
                 observation["channel_at_cutoff"] = self._channel(self.fiber1)["state"]
                 return None, observation
             last_absent = now
-            time.sleep(min(1, cutoff - now))
+            time.sleep(min(1, max(0.1, cutoff - now)))
             commitment = self._spender(self.funding)
-            seen_wall, seen_mono = time.time(), time.monotonic()
-            phase = "before_expiry" if time.time() < target else "observed_in_window"
+            seen_wall, seen_mono = self.business_now_s(), time.monotonic()
+            phase = (
+                "before_expiry"
+                if self.business_now_s() < target
+                else "observed_in_window"
+            )
 
     def _assert_claimed_funds(self, commitment, deadline=None):
         """沿真实消费链逐笔核对应收款、本金、目的锁及费用，最后对账钱包增量。"""

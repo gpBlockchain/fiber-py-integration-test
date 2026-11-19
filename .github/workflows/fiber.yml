@@ -47,6 +47,8 @@ jobs:
           GitUrl: '${{ github.event.inputs.GitUrl }}'
           GitBranch: ${{ github.event.inputs.GitBranch || 'v0.10.1' }}
 
+      - name: Build jemalloc-safe libfaketime
+        run: tools/install_libfaketime.sh download/libfaketime
 
       - name: Tar backup
         run: |

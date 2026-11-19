@@ -47,20 +47,10 @@ def test_latest_commitment_number_is_max():
     assert ac.latest_commitment_number(client, "ch") == 3
 
 
-def test_restore_time_returns_to_origin_plus_elapsed():
+def test_restore_time_without_cluster_clock_is_disabled():
     class Case(FiberTest):
-        pass
+        cluster_clock = None
+        _clock_origin = (1.0, 2.0)
 
-    # Pretend the clock was advanced 9 days, 60 real seconds ago.
-    advanced = 9 * 24 * 3600
-    Case._clock_origin = (time.time() - advanced - 60, time.monotonic() - 60)
-    calls = []
-    with mock.patch(
-        "framework.util.change_time",
-        lambda hour, minutes=0: calls.append((hour, minutes)) or True,
-    ):
+    with pytest.raises(RuntimeError, match="Host system clock restore is disabled"):
         Case.restore_time()
-    assert Case._clock_origin is None
-    ((hour, minutes),) = calls
-    assert hour == 0
-    assert abs(minutes - (-advanced / 60)) < 1, minutes

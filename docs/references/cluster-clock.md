@@ -44,9 +44,12 @@ Ubuntu 使用 `sudo apt-get install libfaketime`（CI Linux 会构建与 jemallo
 时间只向前推进。直接调用 `self.advance_time_by()` 会同时推进 4 小时和
 CKB 1 个 epoch；跨越更多 epoch 时显式传入相应的 `mine_epochs`。
 
-`FiberTest.add_time_and_generate_epoch/block` 在启用 `cluster_clock` 时会
-走 `advance_seconds`，未启用时仍走主机 `change_time()`。不要混用这两种机制；
-主机调时在 ClusterClock 存活时会被拒绝。
+原有会调时的用例在测试类上设置 `enable_cluster_clock = True`，通过
+`FiberTest.advance_business_time` / `advance_business_to_ms` /
+`add_time_and_generate_epoch/block` 推进业务墙钟。主机
+`change_time()` / `restore_time()` 已关闭（调用立即失败），避免遗漏迁移
+时静默改宿主时钟。未调时的普通用例保持默认 `enable_cluster_clock = False`，
+不注入 `FAKETIME` / `LD_PRELOAD`。
 
 调试时可在子类中设置 `debug = True`。首次运行会保留 CKB/FNN 进程和
 `tmp/clock-fiber/cluster-clock/` 中的时钟文件；再次运行连接原进程并读取上次的时间偏移，
@@ -72,18 +75,28 @@ CKB miner 和 `start_new_fiber()` 创建的 FNN。自行创建的其他进程需
    确认链上时间条件已满足；仅改变进程时间不会自动改变既有链历史。
 3. pytest 进程使用真实调度时间。需要验证 Tokio/CKB 长定时器时，单独使用
    真实短超时测试，不要指望偏移会加速这些定时器。
-4. `FiberCchTest` 的 LND/Bitcoin 进程未接入此时钟，禁止在 CCH 用例上启用
-   ClusterClock。跨链 expiry 断言要求 Fiber 与 LND 处于同一真实墙钟。
-5. 不要同时调用旧的主机 `change_time()` / `restore_time()`；它们仍供未启用
-   虚拟时钟的 TLC timeout、v2 claim recovery 等用例使用，不得删除。
+4. CCH 默认仍关闭 ClusterClock，官方 CCH CI 继续使用官方 LND 二进制。
+   需要跳墙钟的 CCH 用例设置 `enable_cluster_clock = True`，并使用测试仓库
+   内的 **测试专用** file-offset-clock LND（`tools/build_lnd_file_clock.sh`，
+   产物在 `download/lnd-file-clock/`）。官方 LND 是静态链接，`LD_PRELOAD`
+   libfaketime 无效。bitcoind 通过 `setmocktime` 接入（冻结、重启丢失，
+   需在启动后重新 apply）。部分失败会抛 `ClockPropagationError`，不会静默
+   降级。Fiber CCH 调度器用 tokio `send_after`（真实单调时间，最长 1h），
+   跳墙钟不会立刻唤醒已在跑的 tick；验证过期常需重启 Fiber，让
+   `update_if_expired` 按新的业务墙钟生效。这是产品限制，不在 Fiber 产品
+   仓库里改。
+5. 不要调用已关闭的主机 `change_time()` / `restore_time()`。业务时间比较
+   用 `business_now_s()` / `business_now_ms()`；pytest 等待仍用
+   `time.monotonic()` / `scheduling_now()`。
 6. 支付状态轮询（如 MPP `wait_until_any_payment_failed`）的 timeout 是真实
    单调时间，与业务墙钟偏移无关，也不按倍率缩放。
 
 ## CI
 
-`.github/workflows/fiber.yml` 的 `fiber_test_fake_time` job 只在
-`ubuntu-22.04` 上安装兼容 jemalloc 的 `libfaketime`，并运行框架测试及实时
-进程的 4 小时时间跳跃冒烟。该 job 复用 `prepare` 产出的 CKB/FNN 二进制，
-执行 `test_cases/fiber/devnet/fake_time/` 全目录；后续使用 `BasicClockFiber`
-的 devnet 时间用例直接放在这里，就会由该 job 执行。macOS runner 不在此
-矩阵中。工作流监听 `main` 和 `v0.10.0` 的 PR。
+`prepare` 会运行 `tools/install_libfaketime.sh`，把与 jemalloc 兼容的
+pinned `libfaketime` 打进 `download/libfaketime/` 产物。
+`fiber_test_fake_time` job 只在 `ubuntu-22.04` 上运行框架测试及实时进程的
+4 小时时间跳跃冒烟，复用该产物和 CKB/FNN 二进制，执行
+`test_cases/fiber/devnet/fake_time/` 全目录。macOS runner 不在此矩阵中。
+工作流监听 `main` 和 `v0.10.0` 的 PR。需要跳墙钟的 CCH 用例还依赖
+`tools/build_lnd_file_clock.sh` 产出的测试专用 LND。

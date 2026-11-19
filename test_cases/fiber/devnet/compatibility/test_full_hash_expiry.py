@@ -35,6 +35,7 @@ from test_cases.fiber.devnet.compatibility.contract_upgrade_support import (
 
 
 class TestFullHashExpiry(FullHashChannelSupport):
+    enable_cluster_clock = True
     ckb_rpc_port, ckb_p2p_port = 23214, 23215
     fiber1_rpc_port, fiber1_p2p_port = 23228, 23227
     fiber2_rpc_port, fiber2_p2p_port = 23229, 23230
@@ -100,7 +101,7 @@ class TestFullHashExpiry(FullHashChannelSupport):
     def hours_past_expiry(self, tlc):
         """SETTLE-04 的时间跳跃：多跳几小时，确保区块中位时间晚于 TLC 到期。"""
         expiry_ms = int(tlc["expiry"], 16)
-        remain_seconds = expiry_ms / 1000.0 - time.time()
+        remain_seconds = expiry_ms / 1000.0 - self.business_now_s()
         return max(1, int(remain_seconds // 3600) + 2)
 
     def mine_watchtower_rounds(self, rounds=4):

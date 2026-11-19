@@ -7,6 +7,7 @@ from framework.basic_fiber_with_cch import FiberCchTest
 
 # @pytest.mark.skip("https://github.com/nervosnetwork/fiber/issues/1216 https://github.com/nervosnetwork/fiber/pull/1498")
 class TestCCHExpiryDeltaSeconds(FiberCchTest):
+    enable_cluster_clock = True
     """
     https://github.com/nervosnetwork/fiber/issues/1216
         Currently, when a CCH order expires due to expiry_delta_seconds in Fiber, only the order itself is marked as failed (CchOrder.status = Failed), but the associated incoming_invoice is not cleaned up. In business reality, if an expired order is failed but the incoming_invoice is not cancelled/failed, it can cause:
@@ -45,14 +46,23 @@ class TestCCHExpiryDeltaSeconds(FiberCchTest):
         )
         self.fiber1.start()
 
+    def _jump_past_order_expiry(self, expiry_seconds, extra_seconds=2):
+        # Jump business wall time shared by Fiber, CKB, file-clock LND, and
+        # bitcoind. The live Fiber CCH scheduler uses tokio send_after on
+        # real monotonic time (cap 1h), so a jump does not fire the current
+        # tick; restart so update_if_expired sees the new wall clock.
+        self.advance_business_time(seconds=expiry_seconds + extra_seconds)
+        self.fiber1.stop()
+        self.fiber1.start()
+
     def _wait_cch_order_failed(self, payment_hash, timeout):
-        start = time.time()
-        while time.time() - start < timeout:
+        start = time.monotonic()
+        while time.monotonic() - start < timeout:
             order = self.fiber1.get_client().get_cch_order(
                 {"payment_hash": payment_hash}
             )
             if str(order["status"]).lower() == "failed":
-                return order, time.time() - start
+                return order, time.monotonic() - start
             time.sleep(1)
         raise TimeoutError(
             f"CCH order {payment_hash} did not become Failed in {timeout}s"
@@ -160,7 +170,7 @@ class TestCCHExpiryDeltaSeconds(FiberCchTest):
             100000 * 100000000,
             udt=self.get_account_udt_script(self.fiber1.account_private),
         )
-        expiry_seconds = 10
+        expiry_seconds = 3600
         self._restart_fiber1_with_expiry(expiry_seconds)
 
         with open(self.fiber1.fiber_config_path, "r") as f:
@@ -177,12 +187,19 @@ class TestCCHExpiryDeltaSeconds(FiberCchTest):
             actual_expiry = int(actual_expiry, 16)
         assert actual_expiry == expiry_seconds
 
+        created_at = order.get("timestamp")
+        if isinstance(created_at, str):
+            created_at = int(created_at, 16)
+        self._jump_past_order_expiry(expiry_seconds)
         order, elapsed = self._wait_cch_order_failed(
             payment_hash=payment_hash,
-            timeout=expiry_seconds + 30,
+            timeout=30,
         )
         assert str(order["status"]).lower() == "failed"
-        assert elapsed >= expiry_seconds - 1
+        if created_at is not None:
+            assert self.business_now_s() >= created_at + expiry_seconds
+        # Elapsed time is real scheduling time after the jump+restart.
+        assert elapsed < 30
 
     def test_expired_order_should_cancel_incoming_lightning_invoice(self):
         self.faucet(
@@ -198,29 +215,27 @@ class TestCCHExpiryDeltaSeconds(FiberCchTest):
             100000 * 100000000,
             udt=self.get_account_udt_script(self.fiber1.account_private),
         )
-        expiry_seconds = 10
+        expiry_seconds = 3600
         self._restart_fiber1_with_expiry(expiry_seconds)
 
         receive_btc_result = self._create_receive_btc_order()
         payment_hash = receive_btc_result["payment_hash"]
 
-        self._wait_cch_order_failed(
-            payment_hash=payment_hash, timeout=expiry_seconds + 30
-        )
+        self._jump_past_order_expiry(expiry_seconds)
+        self._wait_cch_order_failed(payment_hash=payment_hash, timeout=30)
         lnd_invoice = self._wait_lnd_invoice_state(
             self.LNDs[0], payment_hash, "CANCELED"
         )
         assert lnd_invoice["state"] == "CANCELED"
 
     def test_expired_order_should_cancel_incoming_fiber_invoice(self):
-        expiry_seconds = 10
-        self._restart_fiber1_with_expiry(expiry_seconds, 8)
+        expiry_seconds = 3600
+        self._restart_fiber1_with_expiry(expiry_seconds)
 
         send_btc_result = self._create_send_btc_order()
         payment_hash = send_btc_result["payment_hash"]
-        self._wait_cch_order_failed(
-            payment_hash=payment_hash, timeout=expiry_seconds + 30
-        )
+        self._jump_past_order_expiry(expiry_seconds)
+        self._wait_cch_order_failed(payment_hash=payment_hash, timeout=30)
         self.wait_invoice_state(self.fiber1, payment_hash, "Cancelled", timeout=30)
 
     def test_cancelled_outgoing_hold_invoice_should_cancel_incoming_fiber_invoice(

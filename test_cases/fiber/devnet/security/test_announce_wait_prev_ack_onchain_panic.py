@@ -22,6 +22,7 @@ PANIC_MARKERS = (
 
 
 class TestAnnounceWaitPrevAckOnchainPanic(P2pFiberTest):
+    enable_cluster_clock = True
     tmp_path_name = "tmp-p2p-awpa"
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 5}
     fnn_log_level = "debug"
@@ -164,7 +165,7 @@ class TestAnnounceWaitPrevAckOnchainPanic(P2pFiberTest):
                 "amount": hex(PAYMENT_AMOUNT),
                 "payment_hash": inbound_hash,
                 # Release FNN uses 4h epochs; expiry must beat commitment delay.
-                "expiry": hex((int(time.time()) + 24 * 60 * 60) * 1000),
+                "expiry": hex((int(self.business_now_s()) + 24 * 60 * 60) * 1000),
             }
         )
         inbound = self._wait_tlc(
@@ -191,7 +192,9 @@ class TestAnnounceWaitPrevAckOnchainPanic(P2pFiberTest):
         # The keysend expiry can be much later than the injected inbound TLC.
         # Advance past the later expiry, then mine the delay epoch.
         expiry_ms = max(int(tlc["expiry"], 16) for tlc in (outbound_tlc, inbound))
-        hours = max(1, (expiry_ms - int(time.time() * 1000) + 3599999) // 3600000 + 1)
+        hours = max(
+            1, (expiry_ms - int(self.business_now_ms()) + 3599999) // 3600000 + 1
+        )
         self.add_time_and_generate_epoch(hours, 1)
         # Let the running watchtower settle without restarting the local node.
         deadline = time.monotonic() + 120

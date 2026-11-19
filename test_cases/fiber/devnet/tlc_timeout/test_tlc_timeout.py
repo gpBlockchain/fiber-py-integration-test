@@ -4,10 +4,10 @@ from datetime import datetime
 import pytest
 
 from framework.basic_fiber import FiberTest
-from framework.util import change_time
 
 
 class TestTlcTimeout(FiberTest):
+    enable_cluster_clock = True
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 5}
 
     def teardown_class(cls):
@@ -71,7 +71,7 @@ class TestTlcTimeout(FiberTest):
         tlc_seconds = tlc_seconds - 1 * 60 - 2 / 3 * 4 * 60 * 60
         hour = int(tlc_seconds / (60 * 60))
         minutes = int(tlc_seconds / 60 % 60)
-        change_time(hour, minutes)
+        self.advance_business_time(hours=hour, minutes=minutes)
         self.node.getClient().generate_epochs("0x1")
         time.sleep(10)
         balance = self.get_fiber_balance(self.fibers[-1])
@@ -178,7 +178,7 @@ class TestTlcTimeout(FiberTest):
 
         # 时间慢慢加上去
 
-        change_time(hour, minutes)
+        self.advance_business_time(hours=hour, minutes=minutes)
         self.node.getClient().generate_epochs("0x1")
         time.sleep(10)
         balance = self.get_fiber_balance(self.fibers[-1])
@@ -311,7 +311,7 @@ class TestTlcTimeout(FiberTest):
         hour = int(tlc_seconds / (60 * 60))
         minutes = int(tlc_seconds / 60 % 60)
 
-        change_time(hour, minutes)
+        self.advance_business_time(hours=hour, minutes=minutes)
         self.node.getClient().generate_epochs("0x1")
         time.sleep(10)
         balance = self.get_fiber_balance(self.fibers[-1])
@@ -429,7 +429,7 @@ class TestTlcTimeout(FiberTest):
         tlc_seconds = tlc_seconds - 1 * 60 - 2 / 3 * 4 * 60 * 60
         hour = int(tlc_seconds / (60 * 60))
         minutes = int(tlc_seconds / 60 % 60)
-        change_time(hour, 0)
+        self.advance_business_time(hours=hour)
         self.node.getClient().generate_epochs("0x1", 0)
         shutdown_tx_hash = self.wait_and_check_tx_pool_fee(1000, False, 60 * 5)
         self.Miner.miner_until_tx_committed(self.node, shutdown_tx_hash)
@@ -543,7 +543,7 @@ class TestTlcTimeout(FiberTest):
             hour = int(tlc_seconds / (60 * 60))
             minutes = int(tlc_seconds / 60 % 60)
             self.add_time_and_generate_epoch(hour, 1)
-            change_time(0, minutes)
+            self.advance_business_time(minutes=minutes)
             self.node.getClient().generate_epochs("0x1", 0)
             time.sleep(5 * 60)
             offered_tlc_balance_is_zero = True

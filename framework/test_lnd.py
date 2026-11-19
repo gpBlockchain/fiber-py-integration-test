@@ -56,13 +56,23 @@ class LndNode:
     }
     """
 
-    def __init__(self, tmp_path, listen_port, rpc_port, rest_port):
+    def __init__(
+        self,
+        tmp_path,
+        listen_port,
+        rpc_port,
+        rest_port,
+        lnd_binary=None,
+        lnd_cli=None,
+    ):
         self.tmp_path = f"{get_project_root()}/{tmp_path}"
         self.listen_port = listen_port
         self.rpc_port = rpc_port
         self.rest_port = rest_port
-        self.lnd = f"{get_project_root()}/download/lnd/current/lnd/lnd"
-        self.lnd_cli = f"{get_project_root()}/download/lnd/current/lnd/lncli"
+        root = get_project_root()
+        self.lnd = lnd_binary or f"{root}/download/lnd/current/lnd/lnd"
+        self.lnd_cli = lnd_cli or f"{root}/download/lnd/current/lnd/lncli"
+        self.extra_env = {}
         """
             listen=0.0.0.0:{{ lnd_listen_port }}
             rpclisten=localhost:{{ lnd_rpc_listen_port }}
@@ -95,8 +105,20 @@ class LndNode:
                 f"listener processes are still running: {sorted(existing_pids)}"
             )
 
-        run_command(
-            f'{self.lnd} --lnddir="{self.tmp_path}" > {self.tmp_path}/lnd.log 2>&1 &'
+        env = os.environ.copy()
+        if self.extra_env:
+            env.update(self.extra_env)
+            # Official and file-offset LND binaries are static; never preload.
+            env.pop("LD_PRELOAD", None)
+            env.pop("DYLD_INSERT_LIBRARIES", None)
+        log_path = f"{self.tmp_path}/lnd.log"
+        log_file = open(log_path, "ab")
+        subprocess.Popen(
+            [self.lnd, f"--lnddir={self.tmp_path}"],
+            env=env,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
         )
         retries = LND_PROCESS_TIMEOUT_SECONDS
         last_error = None

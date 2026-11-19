@@ -14,7 +14,6 @@ import time
 
 from framework.basic_fiber import COMMIT_LOCK_CODE_HASH, FiberTest
 from framework.helper.settlement_witness import SettlementWitness
-from framework.util import change_time
 
 CKB = 100000000
 CHANNEL_BALANCE = 1000 * CKB
@@ -24,6 +23,7 @@ XUDT_COMPATIBLE_WITNESS = bytes([16, 0, 0, 0] * 4)
 
 
 class TestPR1618OnchainTlcReconcile(FiberTest):
+    enable_cluster_clock = True
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 5}
 
     @classmethod
@@ -80,10 +80,7 @@ class TestPR1618OnchainTlcReconcile(FiberTest):
         )
 
     def _advance_clock_to(self, unix_time_ms):
-        seconds = unix_time_ms / 1000 - time.time()
-        minutes = max(1, math.ceil(seconds / 60))
-        hours, minutes = divmod(minutes, 60)
-        change_time(hours, minutes)
+        self.advance_business_to_ms(unix_time_ms)
 
     def _advance_to_receiver_remove(self, receiver_tlc, minutes_before=0):
         # HoldTlcTimeout fires before absolute expiry.  This is the same

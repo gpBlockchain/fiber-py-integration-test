@@ -6,13 +6,13 @@ import socket
 from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 from framework.helper.udt_contract import UdtContract, issue_udt_tx
 from framework.test_fiber import Fiber, FiberConfigPath
-from framework.cluster_clock import ClusterClock
+from framework.cluster_clock import ClusterClock, resolve_faketime_library
 from framework.util import generate_account_privakey, get_project_root
 from framework.util import run_command
 import time
 import random
 from datetime import datetime, timedelta
-from framework.util import to_int_from_big_uint128_le, change_time
+from framework.util import to_int_from_big_uint128_le
 import logging
 import os
 import subprocess
@@ -61,6 +61,9 @@ class FiberTest(CkbTest):
     virtual_clock_library = None
     virtual_clock_timestamp_file = None
     virtual_clock_reuse = False
+    # Existing time-acceleration tests must set this so they use ClusterClock
+    # instead of changing the host clock. Ordinary tests leave it False.
+    enable_cluster_clock = False
 
     @classmethod
     def setup_class(cls):
@@ -71,6 +74,8 @@ class FiberTest(CkbTest):
         Returns:
 
         """
+        if cls.enable_cluster_clock and cls.virtual_clock_library is None:
+            cls.virtual_clock_library = resolve_faketime_library()
         cls.cluster_clock = (
             ClusterClock(
                 cls.virtual_clock_library,
@@ -1260,24 +1265,47 @@ class FiberTest(CkbTest):
             f"Graph channels did not sync to {channels_count} within {timeout} seconds."
         )
 
-    def _advance_business_hours(self, hour):
-        """Advance business wall time used by invoice/epoch checks.
-
-        ClusterClock jumps the shared libfaketime offset only. The legacy
-        host-clock path (change_time) is used when no virtual clock is active
-        and records an origin so restore_time can rewind the machine clock.
-        pytest wait loops stay on real monotonic time in both modes.
-        """
-        seconds = int(round(float(hour) * 3600))
+    def business_now_s(self):
+        """Business wall time in seconds (ClusterClock when enabled)."""
         if self.cluster_clock is not None:
-            if seconds < 0:
-                raise ValueError("ClusterClock cannot move backwards")
-            if seconds > 0:
-                self.cluster_clock.advance_seconds(seconds)
-            return
-        if getattr(self.__class__, "_clock_origin", None) is None:
-            self.__class__._clock_origin = (time.time(), time.monotonic())
-        change_time(hour)
+            return self.cluster_clock.now_s()
+        return time.time()
+
+    def business_now_ms(self):
+        """Business wall time in milliseconds (ClusterClock when enabled)."""
+        if self.cluster_clock is not None:
+            return self.cluster_clock.now_ms()
+        return int(time.time() * 1000)
+
+    def advance_business_time(self, *, hours=0, minutes=0, seconds=0):
+        """Jump ClusterClock business time; do not change the host clock.
+
+        pytest / RPC waits must keep using real monotonic time.
+        """
+        if self.cluster_clock is None:
+            raise RuntimeError(
+                "Host clock changes are disabled. Set enable_cluster_clock = True "
+                "and jump time with advance_business_time / "
+                "add_time_and_generate_epoch."
+            )
+        total = int(round(float(hours) * 3600 + float(minutes) * 60 + float(seconds)))
+        if total < 0:
+            raise ValueError("ClusterClock cannot move backwards")
+        if total > 0:
+            return self.cluster_clock.advance_seconds(total)
+        return self.cluster_clock.now_ms()
+
+    def advance_business_to_ms(self, unix_time_ms):
+        if self.cluster_clock is None:
+            raise RuntimeError(
+                "Host clock changes are disabled. Set enable_cluster_clock = True "
+                "before calling advance_business_to_ms."
+            )
+        return self.cluster_clock.advance_to_ms(int(unix_time_ms))
+
+    def _advance_business_hours(self, hour, minutes=0):
+        """Advance business wall time used by invoice/epoch checks."""
+        self.advance_business_time(hours=hour, minutes=minutes)
 
     def add_time_and_generate_epoch(self, hour, epoch):
         self._advance_business_hours(hour)
@@ -1396,6 +1424,11 @@ class FiberTest(CkbTest):
             )
             cls._clock_origin = None
             return
+        raise RuntimeError(
+            "Host system clock restore is disabled. Tests that jumped time "
+            "must enable ClusterClock so teardown does not call restore_time() "
+            "on the host clock."
+        )
         print("开始恢复系统时间...")
         print("current time:", time.time())
         print("current datetime:", datetime.now())

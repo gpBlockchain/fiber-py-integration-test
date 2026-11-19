@@ -172,6 +172,8 @@ def same_twenty_byte_prefix_hash(payment_hash):
 class FullHashBadPreimageFixture(P2pFiberTest):
     """Prefix-only preimage claims: Legacy vs V1, relay, restart and expiry."""
 
+    enable_cluster_clock = True
+
     attacker_fiber_version = FiberConfigPath.ATTACK_FULL_HASH_DEV
     # Legacy cases begin with the official old binary, then select the attack
     # node's feature switch when restarting that peer on its existing store.
@@ -904,7 +906,7 @@ class FullHashBadPreimageFixture(P2pFiberTest):
         )
 
     def _hours_past_expiry(self, tlc):
-        remaining = int(tlc["expiry"], 16) / 1000.0 - time.time()
+        remaining = int(tlc["expiry"], 16) / 1000.0 - self.business_now_s()
         return max(1, int(remaining // 3600) + 2)
 
     # ------------------------------------------------------------- assertions
@@ -1072,7 +1074,7 @@ class FullHashBadPreimageFixture(P2pFiberTest):
             assert failed.get("payment_preimage") is None, failed
             assert int(failed["last_updated_at"], 16) < expiry, failed
             # 失败由消费证据触发而非超时：观察时刻也必须在到期之前。
-            assert int(time.time() * 1000) < expiry, failed
+            assert self.business_now_ms() < expiry, failed
             self._wait_target_tlc_terminal(self.victim, bad_hash)
         else:
             failed = self.victim.get_client().get_payment({"payment_hash": bad_hash})
@@ -1379,7 +1381,7 @@ class TestFullHashBadPreimage(FullHashBadPreimageFixture):
         # The claim is confirmed strictly before the recorded TLC expiry, so the
         # failure must come from the confirmed on-chain evidence, not the timeout.
         assert (
-            int(time.time() * 1000) < expiry
+            self.business_now_ms() < expiry
         ), f"claim confirmed after the recorded TLC expiry {expiry}"
         assert (
             self._chain_median_time() < expiry
@@ -1393,7 +1395,7 @@ class TestFullHashBadPreimage(FullHashBadPreimageFixture):
             assert failed["status"] == "Failed", failed
             assert failed.get("payment_preimage") is None, failed
             assert int(failed["last_updated_at"], 16) < expiry, failed
-            assert int(time.time() * 1000) < expiry, failed
+            assert self.business_now_ms() < expiry, failed
             self._wait_target_tlc_terminal(self.victim, bad_hash)
         else:
             failed = self.victim.get_client().get_payment({"payment_hash": bad_hash})
@@ -1532,7 +1534,7 @@ class TestFullHashBadPreimage(FullHashBadPreimageFixture):
         # Failure must come from the confirmed downstream claim, not from the
         # normal TLC-expiry path of either hop.
         assert (
-            int(time.time() * 1000) < earliest_expiry
+            self.business_now_ms() < earliest_expiry
         ), f"failure propagated after the earliest recorded TLC expiry {earliest_expiry}"
         assert (
             self._chain_median_time() < earliest_expiry
@@ -1978,7 +1980,7 @@ class TestFullHashBadPreimage(FullHashBadPreimageFixture):
         )
         # 证明点 4：消费在记录到期前确认，排除“失败来自超时”的解释。
         assert (
-            int(time.time() * 1000) < expiry
+            self.business_now_ms() < expiry
         ), f"claim confirmed after the recorded TLC expiry {expiry}"
         # 证明点 5：反复扫描不重复计账、不重新挂起，无关 TLC 保持自身状态。
         self._assert_failed_without_recovery(bad_hash, unrelated_hash, expiry)
@@ -2071,7 +2073,7 @@ class TestFullHashBadPreimageExpiry(FullHashBadPreimageFixture):
             assert payment["status"] == "Inflight", f"到期前不得提前失败: {payment}"
             assert payment.get("payment_preimage") is None, payment
             assert self._tlcs(self.victim, payment_hash), "到期前 TLC 不得被移除"
-        assert int(time.time() * 1000) < expiry_ms, "对照必须在 TLC 到期前完成"
+        assert self.business_now_ms() < expiry_ms, "对照必须在 TLC 到期前完成"
 
         # 证明点 3：Past the expiry: only the normal timeout path may resolve it.
         # teardown_method 恢复宿主机时间；独立测试类随后清理未来时间的 CKB 链。

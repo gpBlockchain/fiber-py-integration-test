@@ -10,6 +10,7 @@ COMMIT_CELL_SWEEP_ROUNDS = 10
 
 
 class TestPendingTlcHandle(FiberTest):
+    enable_cluster_clock = True
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 3}
     """
     pending tlc + watch tower,node1 force shutdown

@@ -18,6 +18,7 @@ MIN_OUTGOING_INVOICE_EXPIRY_SECONDS = 1
 
 
 class TestPr1608ReceiveBtcOrderExpiry(FiberCchTest):
+    enable_cluster_clock = True
     """Exercise the receive_btc Fiber/order deadline at the real LND boundary."""
 
     def _restart_cch_with_order_expiry(self, order_expiry_seconds):
@@ -122,15 +123,18 @@ class TestPr1608ReceiveBtcOrderExpiry(FiberCchTest):
         # invoice must still expire from its own PR #1608-capped expiry value.
         self.fiber1.force_stop()
 
-        deadline = time.time() + order_expiry_seconds + 30
+        # File-offset-clock TickAfter polls real time and fires when the
+        # jumped Now() passes the invoice deadline.
+        self.advance_business_time(seconds=order_expiry_seconds + 2)
+        deadline = time.monotonic() + 15
         lnd_invoice = None
-        while time.time() < deadline:
+        while time.monotonic() < deadline:
             lnd_invoice = self.LNDs[0].ln_cli_with_cmd(
                 f"lookupinvoice {order['payment_hash'].removeprefix('0x')}"
             )
             if lnd_invoice["state"] == "CANCELED":
                 break
-            time.sleep(1)
+            time.sleep(0.2)
 
         assert lnd_invoice is not None
         assert lnd_invoice["state"] == "CANCELED", lnd_invoice

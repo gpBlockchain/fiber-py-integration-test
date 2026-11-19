@@ -21,6 +21,7 @@ class BasicClockFiber(SharedFiberTest):
     """
 
     EPOCH_SECONDS = 4 * 60 * 60
+    enable_cluster_clock = True
     # Keep fake-time chain data separate from ordinary devnet debug sessions.
     tmp_path_name = "tmp/clock-fiber"
 

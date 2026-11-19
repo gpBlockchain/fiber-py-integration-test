@@ -12,6 +12,7 @@ COMMIT_CELL_SWEEP_ROUNDS = 10
 
 # @pytest.mark.skip("强制shutdown 后settle invoice  没用了")
 class TestPendingTlcHandleUdt(FiberTest):
+    enable_cluster_clock = True
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 5}
     """
     pending tlc + watch tower,node1 force shutdown

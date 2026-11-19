@@ -45,7 +45,18 @@ def resolve_faketime_library():
             )
         return str(library.resolve())
 
+    # CI prepare ships a jemalloc-safe build with the test binaries.
+    root = Path(__file__).resolve().parents[1]
     system = platform.system()
+    bundled = (
+        root
+        / "download"
+        / "libfaketime"
+        / ("libfaketime.1.dylib" if system == "Darwin" else "libfaketime.so.1")
+    )
+    if bundled.is_file():
+        return str(bundled.resolve())
+
     if system == "Darwin":
         prefixes = [os.environ.get("HOMEBREW_PREFIX")]
         brew = shutil.which("brew")
@@ -106,6 +117,10 @@ def require_real_host_clock(action: str = "this operation"):
         )
 
 
+class ClockPropagationError(RuntimeError):
+    """Raised when a jump could not be applied or verified on every backend."""
+
+
 class ClusterClock:
     def __init__(self, library_path, *, timestamp_file=None, reuse=False):
         self.library_path = Path(library_path).expanduser().resolve(strict=True)
@@ -130,6 +145,7 @@ class ClusterClock:
         else:
             self._offset_seconds = 0
             self._write_offset()
+        self._backends = []
         _ACTIVE_CLOCKS.append(self)
 
     @property
@@ -161,6 +177,42 @@ class ClusterClock:
         else:
             env["LD_PRELOAD"] = str(self.library_path)
         return env
+
+    def file_clock_env(self):
+        """Timestamp-file variables only; no LD_PRELOAD (for static LND)."""
+        return {
+            "FAKETIME_TIMESTAMP_FILE": str(self.timestamp_file),
+            "FAKETIME_NO_CACHE": "1",
+        }
+
+    def attach(self, backend):
+        """Register a component backend and apply the current offset to it."""
+        if backend not in self._backends:
+            self._backends.append(backend)
+        if self._offset_seconds > 0:
+            backend.propagate(self)
+        return backend
+
+    def propagate(self):
+        """Re-apply the current offset to every attached backend.
+
+        Used after a jump and after a component restart (bitcoind
+        setmocktime does not survive restart). Partial failures raise
+        ClockPropagationError; the offset file is not rolled back
+        (advances are one-way).
+        """
+        errors = []
+        for backend in list(self._backends):
+            try:
+                backend.propagate(self)
+            except Exception as exc:  # noqa: BLE001 - collect all backends
+                name = getattr(backend, "name", lambda: type(backend).__name__)()
+                errors.append(f"{name}: {exc}")
+        if errors:
+            raise ClockPropagationError(
+                "ClusterClock did not propagate to every component: "
+                + "; ".join(errors)
+            )
 
     def apply_to_env(self, env: MutableMapping[str, str]) -> MutableMapping[str, str]:
         """Inject clock vars into an extra_env mapping without copying os.environ."""
@@ -201,6 +253,7 @@ class ClusterClock:
             )
         self._offset_seconds += seconds
         self._write_offset()
+        self.propagate()
         return self.now_ms()
 
     def advance_to_ms(self, target_ms):

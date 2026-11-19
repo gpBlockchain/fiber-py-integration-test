@@ -10,6 +10,7 @@ from framework.basic_fiber import FiberTest
 
 
 class TestWatchToerWitMpp(FiberTest):
+    enable_cluster_clock = True
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 5}
 
     def teardown_class(cls):

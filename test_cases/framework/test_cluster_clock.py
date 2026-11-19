@@ -331,23 +331,16 @@ def test_merge_env_prepends_existing_preload_and_skips_rate(tmp_path):
         clock.close()
 
 
-def test_change_time_blocked_when_cluster_clock_active(tmp_path):
-    from framework.util import change_time, restore_time
+def test_host_clock_helpers_are_disabled():
+    from framework.util import HostClockDisabledError, change_time, restore_time
 
-    library = tmp_path / "libfaketime.1.dylib"
-    library.touch()
-    with patch("framework.cluster_clock.platform.system", return_value="Darwin"):
-        clock = ClusterClock(library)
-    try:
-        with pytest.raises(RuntimeError, match="cannot be mixed"):
-            change_time(1)
-        with pytest.raises(RuntimeError, match="cannot be mixed"):
-            restore_time()
-    finally:
-        clock.close()
+    with pytest.raises(HostClockDisabledError, match="Host system clock changes"):
+        change_time(1)
+    with pytest.raises(HostClockDisabledError, match="Host system clock restore"):
+        restore_time()
 
 
-def test_add_time_routes_to_cluster_clock_or_host_change_time(tmp_path):
+def test_add_time_requires_cluster_clock_and_jumps_offset(tmp_path):
     from framework.basic_fiber import FiberTest
 
     library = tmp_path / "libfaketime.1.dylib"
@@ -357,21 +350,15 @@ def test_add_time_routes_to_cluster_clock_or_host_change_time(tmp_path):
     try:
         suite = object.__new__(FiberTest)
         suite.cluster_clock = clock
-        with patch("framework.basic_fiber.change_time") as change:
-            suite._advance_business_hours(1)
-            change.assert_not_called()
-            assert clock.offset_seconds == 3600
-            with pytest.raises(ValueError, match="backwards"):
-                suite._advance_business_hours(-1)
+        suite.advance_business_time(hours=1, minutes=1)
+        assert clock.offset_seconds == 3660
+        with pytest.raises(ValueError, match="backwards"):
+            suite.advance_business_time(hours=-1)
 
         host = object.__new__(FiberTest)
         host.cluster_clock = None
-        FiberTest._clock_origin = None
-        with patch("framework.basic_fiber.change_time") as change:
-            host._advance_business_hours(2)
-            change.assert_called_once_with(2)
-            assert FiberTest._clock_origin is not None
-        FiberTest._clock_origin = None
+        with pytest.raises(RuntimeError, match="Host clock changes are disabled"):
+            host.add_time_and_generate_epoch(2, 1)
     finally:
         clock.close()
 
@@ -486,7 +473,7 @@ def test_ckb_restart_inherits_virtual_clock(tmp_path):
         clock.close()
 
 
-def test_cch_expiry_assert_refuses_active_cluster_clock(tmp_path):
+def test_cch_expiry_assert_allows_active_cluster_clock(tmp_path):
     from framework.helper.cch_lnd_expiry import assert_receive_btc_lnd_expiry
 
     library = tmp_path / "libfaketime.1.dylib"
@@ -494,25 +481,33 @@ def test_cch_expiry_assert_refuses_active_cluster_clock(tmp_path):
     with patch("framework.cluster_clock.platform.system", return_value="Darwin"):
         clock = ClusterClock(library)
     try:
-        with pytest.raises(RuntimeError, match="ClusterClock"):
-            assert_receive_btc_lnd_expiry(
-                {"timestamp": 100, "expiry": 10},
-                order_expiry_delta_seconds=10,
-                min_outgoing_invoice_expiry_delta_seconds=5,
-                call_started_at=100.0,
-                call_finished_at=100.2,
-            )
+        assert_receive_btc_lnd_expiry(
+            {"timestamp": 100, "expiry": 10},
+            order_expiry_delta_seconds=10,
+            min_outgoing_invoice_expiry_delta_seconds=5,
+            call_started_at=100.0,
+            call_finished_at=100.2,
+            order_created_at=100,
+        )
     finally:
         clock.close()
 
 
-def test_fiber_cch_test_rejects_virtual_clock_library():
+def test_fiber_cch_test_requires_file_clock_lnd_when_clock_enabled(
+    tmp_path, monkeypatch
+):
     from framework.basic_fiber_with_cch import FiberCchTest
 
+    monkeypatch.delenv("FIBER_TEST_LND_FILE_CLOCK_BIN", raising=False)
+    monkeypatch.setattr(
+        "framework.clock_backends.get_project_root", lambda: str(tmp_path)
+    )
+
     class BadCch(FiberCchTest):
+        enable_cluster_clock = True
         virtual_clock_library = "/tmp/libfaketime.so.1"
 
-    with pytest.raises(RuntimeError, match="cannot enable ClusterClock"):
+    with pytest.raises(FileNotFoundError, match="file-offset-clock"):
         BadCch.setup_class()
 
 

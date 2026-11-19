@@ -11,6 +11,7 @@ COMMIT_CELL_SWEEP_ROUNDS = 18
 
 
 class TestDiscard(FiberTest):
+    enable_cluster_clock = True
     start_fiber_config = {"fiber_watchtower_check_interval_seconds": 5}
 
     def teardown_method(self, method):

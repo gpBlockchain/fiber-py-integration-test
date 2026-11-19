@@ -216,8 +216,20 @@ def hex_timestamp_to_datetime(hex_str):
     return time1.strftime("%Y-%m-%d %H:%M:%S")
 
 
+class HostClockDisabledError(RuntimeError):
+    """Raised when a test still tries to change the host system clock."""
+
+
 def change_time(hour, minutes=0):
-    # Host-clock path only. Do not mix with ClusterClock/libfaketime.
+    raise HostClockDisabledError(
+        "Host system clock changes are disabled. Tests that jump business "
+        "time must set enable_cluster_clock = True and call "
+        "advance_business_time / add_time_and_generate_epoch / "
+        "cluster_clock.advance_seconds(). pytest waits stay on real "
+        "monotonic time."
+    )
+    # The original host-date implementation is kept below so the command
+    # sequence is not silently reinvented, but it is unreachable.
     from framework.cluster_clock import require_real_host_clock
 
     require_real_host_clock("change_time()")
@@ -264,7 +276,11 @@ import os
 
 
 def restore_time(reference_timestamp=None):
-    """恢复系统时间；提供参考时间时不依赖 NTP 网络同步。"""
+    """Host-clock restore; disabled so leftover calls fail closed."""
+    raise HostClockDisabledError(
+        "Host system clock restore is disabled. ClusterClock tests do not "
+        "change the host clock and should not call restore_time()."
+    )
     from framework.cluster_clock import require_real_host_clock
 
     require_real_host_clock("restore_time()")

@@ -1,0 +1,19 @@
+--- a/lnrpc/invoicesrpc/addinvoice.go
++++ b/lnrpc/invoicesrpc/addinvoice.go
+@@ -18,6 +18,7 @@
+ 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+ 	"github.com/btcsuite/btcd/wire"
+ 	"github.com/lightningnetwork/lnd/channeldb"
++	"github.com/lightningnetwork/lnd/clock"
+ 	"github.com/lightningnetwork/lnd/graph/db/models"
+ 	"github.com/lightningnetwork/lnd/invoices"
+ 	"github.com/lightningnetwork/lnd/lntypes"
+@@ -558,7 +559,7 @@
+ 	}
+ 
+ 	// Create and encode the payment request as a bech32 (zpay32) string.
+-	creationDate := time.Now()
++	creationDate := clock.NewDefaultClock().Now()
+ 	payReq, err := zpay32.NewInvoice(
+ 		cfg.ChainParams, paymentHash, creationDate, options...,
+ 	)
