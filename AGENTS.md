@@ -21,6 +21,10 @@
 - 先用 `rg` 定位，再读最近的 `AGENTS.md`、相关评审文档、反馈、映射测试和必要的源码片段或 diff。避免全仓库内容转储。
 - 对新用例、评审、映射维护和 PR 测试影响分析使用 `$ai-test-agent`。没有评审或映射工作流的普通单元测试修改按原有风格处理。
 
+### 提交前规范审核
+
+在本仓库执行 `git commit` 前，必须先用 [`$fiber-precommit-review`](.agents/skills/fiber-precommit-review/SKILL.md) 审核完整暂存区。只有结论为「可提交」且提交内容仍与已审快照一致时才放行；「需修改」或「待确认」时先停止提交。审核通过不等于用户授权提交或推送。
+
 ## 2. 两份事实来源与目录约定
 
 | 位置 | 职责 |
@@ -104,6 +108,7 @@ def test_missing_parameter(...):
 - 额外节点使用 `self.start_new_fiber(self.generate_account(...))`。共享拓扑可在 `setUp()` 中用类级 `_channel_inited` 守卫，节点保存在 `self.__class__.fiberN`；拓扑成功建立后再设置守卫。
 - 金额使用 Shannon：`1 CKB = 100000000 Shannon`；RPC 中按接口要求使用 `hex()`。调用 `open_channel` 时传 UDT 使用 `udt=...`，避免与费用位置参数混淆。
 - 每个功能或 PR 回归使用一个文件或类，方法命名为 `test_<scenario>`；文件顶部简短注明行为或 PR。
+- 测试文件按功能或可观察场景命名，例如 `test_channel_reconnect_after_restart.py`，不要以 PR 或其编号命名（如 `test_pr1234_channel_reconnect.py`）。需要追溯 PR 时写在文件头注释。此项适用于新增或重命名的测试文件，不要求批量改名历史文件。
 - 测试按准备、操作、等待、断言线性展开。只有逻辑确实复用时才抽取辅助方法，优先复用框架而非新增抽象。
 - 本文件专用等待使用有上限的循环、明确间隔和超时失败信息；优先使用匹配语义的现有 `wait_*`。避免无限重试和仅靠长时间 sleep 判断成功。
 - 断言 RPC 结果、通道状态、余额、付款结果及副作用；仅当错误文本本身是契约时断言具体措辞。只要求调用失败时可用 `pytest.raises(Exception)`。
