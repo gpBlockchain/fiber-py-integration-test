@@ -91,12 +91,12 @@ jobs:
           with urllib.request.urlopen(request, timeout=30) as response:
               print(f"Webhook status {response.status}")
 
-          kind = "pull request" if is_pr else "issue"
-          gh(
-              f"repos/{repo}/issues/{number}/comments",
-              "-f",
-              "body=" + f"Multica review queued for this {kind}.\n",
-          )
+          comment_id = os.environ["COMMENT_ID"]
+          if os.environ["EVENT_NAME"] == "pull_request_review_comment":
+              reaction_path = f"repos/{repo}/pulls/comments/{comment_id}/reactions"
+          else:
+              reaction_path = f"repos/{repo}/issues/comments/{comment_id}/reactions"
+          gh(reaction_path, "-f", "content=+1", "-H", "Accept: application/vnd.github+json")
           PY
 
   reply:
