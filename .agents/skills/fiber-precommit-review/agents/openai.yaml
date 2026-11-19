@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fiber 提交前规范审核"
+  short_description: "逐项核对本次暂存改动与项目规范，给出可提交、需修改或待确认的结论"
+  default_prompt: "用 $fiber-precommit-review 审核本仓库已暂存的改动，说明是否符合提交规范。"
