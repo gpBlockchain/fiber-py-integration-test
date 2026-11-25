@@ -7,7 +7,6 @@ import requests
 
 from framework.basic_fiber import FiberTest
 
-
 BISCUIT_PUBLIC_KEY = (
     "ed25519/17b172749be74276f0ed35a5d0685752684a3c5722114bba447a2f301136db79"
 )
