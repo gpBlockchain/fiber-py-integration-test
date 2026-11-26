@@ -51,6 +51,9 @@ class SharedFiberTest(FiberTest):
             str(self.fiber2_rpc_port),
             str(self.fiber2_p2p_port),
         )
+        if self.cluster_clock is not None:
+            self.cluster_clock.apply_to_env(self.fiber1.extra_env)
+            self.cluster_clock.apply_to_env(self.fiber2.extra_env)
         self.fibers.append(self.fiber1)
         self.fibers.append(self.fiber2)
         #

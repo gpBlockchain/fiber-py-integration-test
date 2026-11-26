@@ -217,7 +217,10 @@ def hex_timestamp_to_datetime(hex_str):
 
 
 def change_time(hour, minutes=0):
-    # 修改系统时间,加速1h
+    # Host-clock path only. Do not mix with ClusterClock/libfaketime.
+    from framework.cluster_clock import require_real_host_clock
+
+    require_real_host_clock("change_time()")
     success = False
     try:
         # 获取当前时间并加1小时
@@ -262,6 +265,9 @@ import os
 
 def restore_time(reference_timestamp=None):
     """恢复系统时间；提供参考时间时不依赖 NTP 网络同步。"""
+    from framework.cluster_clock import require_real_host_clock
+
+    require_real_host_clock("restore_time()")
     if reference_timestamp is not None:
         return change_time(0, (reference_timestamp - time.time()) / 60)
     print("开始恢复系统时间...")

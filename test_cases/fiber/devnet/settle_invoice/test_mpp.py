@@ -1,6 +1,7 @@
 import time
 
 from framework.basic_fiber import FiberTest
+from framework.helper.payment_poll import wait_until_any_payment_failed
 from test_cases.fiber.devnet.settle_invoice.test_settle_invoice import sha256_hex
 
 
@@ -32,16 +33,21 @@ class TestMpp(FiberTest):
             {"invoice": invoice["invoice_address"]}
         )
 
-        time.sleep(5)
         print("before--settle-----")
-        self.fiber1.get_client().get_payment({"payment_hash": payment_hash})
-        payment3 = self.fiber3.get_client().get_payment(
+        payments = wait_until_any_payment_failed(
             {
-                "payment_hash": payment_hash,
-            }
+                "fiber1": lambda: self.fiber1.get_client().get_payment(
+                    {"payment_hash": payment_hash}
+                ),
+                "fiber3": lambda: self.fiber3.get_client().get_payment(
+                    {"payment_hash": payment_hash}
+                ),
+            },
+            timeout=120,
+            interval=1,
         )
-        payment1 = self.fiber1.get_client().get_payment({"payment_hash": payment_hash})
-
+        payment1 = payments["fiber1"]
+        payment3 = payments["fiber3"]
         assert payment3["status"] == "Failed" or payment1["status"] == "Failed"
 
         self.fiber2.get_client().settle_invoice(

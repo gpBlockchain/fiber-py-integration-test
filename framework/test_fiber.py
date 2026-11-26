@@ -1,6 +1,7 @@
 import fcntl
 import shutil
 import socket
+import subprocess
 from enum import Enum
 import time
 import framework.helper.ckb_cli
@@ -28,8 +29,8 @@ def wait_for_port(port, timeout=30, open=True):
         TimeoutError: If the port does not reach the expected state within timeout.
     """
     port = int(port)
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(1)
             result = s.connect_ex(("127.0.0.1", port))
@@ -237,25 +238,30 @@ class Fiber:
         rpc_biscuit_public_key=None,
         timeout=300,
     ):
-        # env_map = dict(os.environ)  # Make a copy of the current environment
-        # if node:,
-        #     contract_map = self.get_contract_env_map(node)
-        #     env_map.update(contract_map)
-        # for key in env_map:
-        #     print(f"{key}={env_map[key]}")
-        rpc_biscuit_public_key_option = ""
-        if rpc_biscuit_public_key != None:
-            rpc_biscuit_public_key_option = (
-                f" --rpc-biscuit-public-key {rpc_biscuit_public_key}"
+        # Always exec fnn directly. A shell start can drop DYLD_* under macOS
+        # SIP, and the default path must not inject FAKETIME/LD_PRELOAD.
+        extra_env = getattr(self, "extra_env", {}) or {}
+        env = {
+            **os.environ,
+            **extra_env,
+            "FIBER_SECRET_KEY_PASSWORD": password,
+            "RUST_LOG": f"info,fnn={fnn_log_level}",
+        }
+        command = [
+            f"{get_project_root()}/{self.fiber_config_enum.fiber_bin_path}",
+            "-c",
+            f"{self.tmp_path}/config.yml",
+            "-d",
+            self.tmp_path,
+        ]
+        if rpc_biscuit_public_key is not None:
+            command.extend(["--rpc-biscuit-public-key", rpc_biscuit_public_key])
+        with open(f"{self.tmp_path}/node.log", "a") as log:
+            process = subprocess.Popen(
+                command, env=env, stdout=log, stderr=subprocess.STDOUT
             )
-        extra_env = "".join(
-            f"{key}='{value}' " for key, value in getattr(self, "extra_env", {}).items()
-        )
-        run_command(
-            f" {extra_env}FIBER_SECRET_KEY_PASSWORD='{password}' RUST_LOG=info,fnn={fnn_log_level} {get_project_root()}/{self.fiber_config_enum.fiber_bin_path} -c {self.tmp_path}/config.yml -d {self.tmp_path} {rpc_biscuit_public_key_option}  >> {self.tmp_path}/node.log 2>&1 &"
-            # env=env_map,
-        )
-        # wait rpc port open
+        self.pid = process.pid
+        # wait rpc port open (real monotonic timeout, not business time)
         wait_for_port(self.rpc_port, timeout, open=True)
         print("start fiber client ")
 
@@ -274,8 +280,8 @@ class Fiber:
         with "Resource temporarily unavailable". Poll the lock until it is
         actually released so subsequent start() is safe."""
         lock_path = f"{self.tmp_path}/fiber/store/LOCK"
-        deadline = time.time() + timeout
-        while time.time() < deadline:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
             try:
                 fd = open(lock_path, "r+")
             except FileNotFoundError:

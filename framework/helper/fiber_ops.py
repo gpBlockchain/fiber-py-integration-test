@@ -142,8 +142,8 @@ def start_with_confirm(
         except BrokenPipeError:
             pass
 
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(1)
             if s.connect_ex(("127.0.0.1", int(fiber.rpc_port))) == 0:
