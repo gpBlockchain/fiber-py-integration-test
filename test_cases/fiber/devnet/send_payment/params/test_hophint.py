@@ -10,12 +10,7 @@ class TestHopHint(FiberTest):  # a-b
     # FiberTest.debug = True
 
     def test_not_hophit_simple(self):
-        """
-        b-c-d-私-a
-        1.b-a(不通过hophit应该发送失败)
-        Returns:
-
-        """
+        """B—C—D—(私有)—A：没有 hop hint 时，B 找不到到 A 的路由。"""
         self.start_new_fiber(self.generate_account(10000))  # c
         self.start_new_fiber(self.generate_account(10000))  # d
 
@@ -41,26 +36,15 @@ class TestHopHint(FiberTest):  # a-b
             self.fibers[3].get_client(), self.fibers[0].get_pubkey(), "ChannelReady"
         )
 
-        # b-a(不通过hophit应该发送失败)
-
-        try:
-            self.send_payment(self.fibers[1], self.fibers[0], 1 * 100000000)
-        except Exception as e:
-            error_message = str(e)
-            assert (
-                error_message
-                == "Error: Send payment error: Failed to build route, PathFind error: no path found"
-            ), f"Unexpected error message: {error_message}"
+        # 只发起一次付款，验证首次寻路就报错。
+        with pytest.raises(Exception) as exc_info:
+            self.send_payment(
+                self.fiber2, self.fiber1, 100000000, wait=False, try_count=0
+            )
+        assert str(exc_info.value).endswith("no path found")
 
     def test_not_hophit(self):
-        """
-        a-私-b-c-d-私-a
-        路径选择
-        1. b-a，预期是能成功
-        2. 如果走的是b-c-d-a，则需要走hint才可以成功，预期是失败(大概率走这个路径)
-        Returns:
-
-        """
+        """A—(私有)—B—C—D—(私有)—A：B 可以直付 A，找不到路时应明确报错。"""
         self.start_new_fiber(self.generate_account(10000))  # c
         self.start_new_fiber(self.generate_account(10000))  # d
 
@@ -98,30 +82,21 @@ class TestHopHint(FiberTest):  # a-b
             self.fibers[3].get_client(), self.fibers[0].get_pubkey(), "ChannelReady"
         )
 
+        target_pubkey = self.fiber1.get_pubkey()
         try:
-            # 走b-a会成功
-            payment = (
-                self.fibers[1]
-                .get_client()
-                .send_payment(  # b
-                    {
-                        "target_pubkey": self.fibers[0]
-                        .get_client()
-                        .node_info()["pubkey"],
-                        "amount": hex(10 * 100000000),
-                        "keysend": True,
-                    }
-                )
+            payment = self.fiber2.get_client().send_payment(
+                {
+                    "target_pubkey": target_pubkey,
+                    "amount": hex(10 * 100000000),
+                    "keysend": True,
+                }
             )
-            print(f"debug payment content:{payment}")
-
-        except Exception as e:
-            # 如果走的是b-c-d-a，不通过hophit应该发送失败
-            error_message = str(e)
-            assert (
-                error_message
-                == "Error: Send payment error: Failed to build route, PathFind error: no path found"
-            ), f"Unexpected error message: {error_message}"
+        except Exception as exc:
+            assert str(exc).endswith("no path found")
+        else:
+            self.wait_payment_state(
+                self.fiber2, payment["payment_hash"], "Success", 120
+            )
 
     def test_use_hophit(self):
         """
