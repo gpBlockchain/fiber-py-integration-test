@@ -1,4 +1,4 @@
-"""Process-scoped fake-time smoke test; future devnet time cases live here."""
+"""Process-scoped fake-time smoke test."""
 
 import os
 import select

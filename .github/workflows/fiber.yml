@@ -8,7 +8,7 @@ on:
     paths-ignore:
       - ".github/workflows/**"
   pull_request:
-    branches: ["main", "v0.10.0"]
+    branches: ["main"]
     paths-ignore:
       - ".github/workflows/**"
   workflow_dispatch: # Allows the workflow to be manually triggered
@@ -24,6 +24,10 @@ on:
 
 permissions:
   contents: read
+
+env:
+  # Only clock-enabled tests load this library into their devnet processes.
+  FIBER_TEST_FAKETIME_LIB: ${{ github.workspace }}/download/libfaketime/libfaketime.so.1
 
 jobs:
   prepare:
@@ -47,6 +51,19 @@ jobs:
           GitUrl: '${{ github.event.inputs.GitUrl }}'
           GitBranch: ${{ github.event.inputs.GitBranch || 'develop' }}
 
+      - name: Build shared devnet clock library
+        shell: bash
+        run: |
+          set -euo pipefail
+          # With jemalloc, probing unavailable glibc symbols in libfaketime's
+          # lazy initializer re-enters malloc. Keep the compatible build flags.
+          src="$RUNNER_TEMP/libfaketime"
+          git clone --quiet https://github.com/wolfcw/libfaketime.git "$src"
+          git -C "$src" checkout --quiet e8d8c8531d824722f23e4e4d6ba6bd85c023f8d5
+          sed -i 's/ -DFAKE_INTERNAL_CALLS//; s/ -DFAKE_TIMERS//' "$src/src/Makefile"
+          sed -i -E 's/dlsym\(RTLD_NEXT, "(__clock_gettime64|clock_gettime64)"\)/NULL/' "$src/src/libfaketime.c"
+          make -C "$src/src" libfaketime.so.1
+          install -Dm755 "$src/src/libfaketime.so.1" "$FIBER_TEST_FAKETIME_LIB"
 
       - name: Tar backup
         run: |
@@ -840,32 +857,17 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Install libfaketime
+      - name: Install macOS clock library
+        if: runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$RUNNER_OS" == "Linux" ]]; then
-            # CKB and fnn link jemalloc as the global malloc. Stock libfaketime
-            # deadlocks (0.9.12) or aborts on recursion (Ubuntu's 0.9.10) because
-            # its lazy init calls dlsym for symbols glibc does not export
-            # (__ftime, clock_gettime64, timer_settime@GLIBC_2.2); each failed
-            # dlsym mallocs, re-entering jemalloc init -> clock_gettime -> init.
-            # Build a pinned libfaketime without those lookups.
-            src=/tmp/libfaketime
-            git clone --quiet https://github.com/wolfcw/libfaketime.git "$src"
-            git -C "$src" checkout --quiet e8d8c8531d824722f23e4e4d6ba6bd85c023f8d5
-            sed -i 's/ -DFAKE_INTERNAL_CALLS//; s/ -DFAKE_TIMERS//' "$src/src/Makefile"
-            sed -i -E 's/dlsym\(RTLD_NEXT, "(__clock_gettime64|clock_gettime64)"\)/NULL/' "$src/src/libfaketime.c"
-            make -C "$src/src" libfaketime.so.1
-            library="$src/src/libfaketime.so.1"
-          else
-            brew install libfaketime
-            prefix="$(brew --prefix libfaketime)"
-            # Homebrew's opt path is a symlink; macOS find -P does not descend into it.
-            library="$prefix/lib/faketime/libfaketime.1.dylib"
-            if [[ ! -f "$library" ]]; then
-              library=$(find -H "$prefix" -name 'libfaketime.1.dylib' -print -quit)
-            fi
+          brew install libfaketime
+          prefix="$(brew --prefix libfaketime)"
+          # Homebrew's opt path is a symlink; macOS find -P does not descend into it.
+          library="$prefix/lib/faketime/libfaketime.1.dylib"
+          if [[ ! -f "$library" ]]; then
+            library=$(find -H "$prefix" -name 'libfaketime.1.dylib' -print -quit)
           fi
           test -n "${library:-}"
           test -f "$library"
