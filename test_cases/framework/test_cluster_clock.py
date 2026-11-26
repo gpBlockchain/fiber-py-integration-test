@@ -1,6 +1,7 @@
 """Framework-only checks for the opt-in shared FNN/CKB wall clock."""
 
 import json
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -253,7 +254,11 @@ def test_fnn_start_command_receives_clock_env(tmp_path):
         assert popen.call_args.kwargs["env"]["DYLD_INSERT_LIBRARIES"] == str(
             library_path
         )
-        assert popen.call_args.args[0][0].endswith("/download/fiber/current/fnn")
+        expected_fnn = (
+            Path(__file__).resolve().parents[2]
+            / FiberConfigPath.CURRENT_DEV.fiber_bin_path
+        )
+        assert Path(popen.call_args.args[0][0]) == expected_fnn
         assert fiber.pid == 789
     finally:
         clock.close()

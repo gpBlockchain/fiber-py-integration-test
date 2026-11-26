@@ -7,6 +7,11 @@ import pytest
 from test_cases.fiber.devnet.send_payment.mpp import mpp_fixture as fixture
 from framework.helper.fiber_ops import clear_bootnodes, calculate_payment_hash
 from framework.helper.channel_settlement import ChannelSettlement
+from framework.helper.settlement_witness import (
+    SettlementTlc,
+    SettlementUnlock,
+    SettlementWitness,
+)
 from test_cases.fiber.devnet.send_payment.mpp import test_mpp_payment_history as history
 
 
@@ -198,3 +203,197 @@ def test_net_amounts_subtract_external_fee_input_and_reject_unknown_owner():
     tx["outputs"][1]["lock"] = {"code_hash": "unknown"}
     with pytest.raises(AssertionError):
         settlement.net_amounts(tx, funding, [owner_a, owner_b])
+
+
+def test_closed_channel_wait_does_not_treat_a_missing_channel_as_finished():
+    client = Mock()
+    fiber = Mock(get_client=lambda: client)
+    state = {"state_name": "Closed", "state_flags": "UNCOOPERATIVE_LOCAL"}
+    other = dict(channel_id="other", state=dict(state))
+    target = dict(channel_id="original", state=state)
+    client.list_channels.return_value = {"channels": [other, target]}
+    waiting = ChannelSettlement.closed_channel_waits_onchain
+
+    state["state_flags"] += " | WAITING_ONCHAIN_SETTLEMENT"
+    assert waiting(fiber, "original") is True
+    state["state_flags"] = "UNCOOPERATIVE_LOCAL"
+    assert waiting(fiber, "original") is False
+    client.list_channels.assert_called_with({"include_closed": True})
+    state["state_name"] = "ShuttingDown"
+    with pytest.raises(AssertionError):
+        waiting(fiber, "original")
+    client.list_channels.return_value = {"channels": [other]}
+    with pytest.raises(AssertionError, match="未返回原通道 original"):
+        waiting(fiber, "original")
+
+
+@pytest.mark.parametrize("unlock_type", [0, 0xFE, 0xFF])
+def test_chain_timeout_requires_the_target_tlc_unlock(unlock_type):
+    # 同一个输入、TLC 和净到账；唯一变量是消费见证选择了 TLC 还是单方余额。
+    target_hash = bytes.fromhex("ab" * 32)
+    tlc = SettlementTlc(0, 100, target_hash, bytes(20), bytes(20), 1000)
+    witness = SettlementWitness(
+        "v1",
+        bytes(16),
+        [tlc],
+        bytes(20),
+        0,
+        bytes(20),
+        0,
+        [SettlementUnlock(unlock_type, bytes(65))],
+    )
+    previous = dict(tx_hash="original", index="0x0")
+    owner = {"code_hash": "owner"}
+    output = dict(capacity="0x64", type=None, lock=owner)
+    tx = dict(
+        hash="spend",
+        inputs=[dict(previous_output=previous)],
+        outputs=[output],
+        witnesses=[witness.to_hex()],
+    )
+    observer = ChannelSettlement(Mock(), "commitment")
+    observer.find_spending_transaction = Mock(return_value=tx)
+    observer.get_output = Mock(
+        return_value=dict(output, lock={"code_hash": "commitment"})
+    )
+    chain = dict(
+        done=False,
+        version="v1",
+        outpoint=previous,
+        seen=False,
+        claimed=False,
+        timed_out=False,
+        locks=[owner, {"code_hash": "peer"}],
+        net=[0, 0],
+        fee=0,
+        funding=100,
+        spends=[],
+    )
+    assert observer.advance(
+        chain, "0x" + target_hash.hex(), 100, None, allow_claim=False
+    )
+    assert chain["timed_out"] is (unlock_type == 0)
+
+
+@pytest.mark.parametrize(
+    "source, changed_fields",
+    [
+        pytest.param("payment", {}, id="success-stays-success"),
+        pytest.param("payment", {"status": "Failed"}, id="success-becomes-failed"),
+        pytest.param("payment", {"status": "Inflight"}, id="success-becomes-inflight"),
+        pytest.param("payment", {"payment_preimage": None}, id="preimage-lost"),
+        pytest.param(
+            "payment", {"payment_preimage": "0x" + "55" * 32}, id="wrong-preimage"
+        ),
+        pytest.param("invoice", {"status": "Received"}, id="invoice-not-paid"),
+        pytest.param("invoice", {"invoice_address": "old-invoice"}, id="wrong-invoice"),
+        pytest.param("payee", {"local_balance": "0x0"}, id="not-credited"),
+        pytest.param("payee", {"local_balance": "0x14"}, id="credited-twice"),
+        pytest.param("payer", {"offered_tlc_balance": "0xa"}, id="still-locked"),
+    ],
+)
+def test_same_hash_paid_invoice_rechecks_both_nodes_and_balances(
+    source, changed_fields
+):
+    # 两次读取之间只变一项公开结果；这里验证断言，不模拟节点或旧通道的实际结算。
+    case, edge, rows = cleared_fixture()
+    preimage = "0x" + "35" * 32
+    payment_hash = calculate_payment_hash(preimage, "ckb_hash")
+    payment = dict(
+        payment_hash=payment_hash,
+        status="Success",
+        payment_preimage=preimage,
+        failed_error=None,
+    )
+    invoice = dict(
+        invoice_address="new-invoice",
+        status="Paid",
+        invoice=dict(data=dict(payment_hash=payment_hash), amount=hex(edge["sent"])),
+    )
+    sender_client, receiver_client = Mock(), Mock()
+    sender_client.get_payment.side_effect = lambda query: dict(payment)
+    receiver_client.get_invoice.side_effect = lambda query: dict(invoice)
+    edge.update(
+        left=Mock(get_client=lambda: sender_client),
+        right=Mock(get_client=lambda: receiver_client),
+    )
+
+    def assert_paid_now():
+        assert case.settlement.invoice_payment_is_settled(
+            edge, "new-invoice", payment_hash, preimage, "ckb_hash"
+        )
+
+    assert_paid_now()
+    {"payment": payment, "invoice": invoice, "payer": rows[0], "payee": rows[1]}[
+        source
+    ].update(changed_fields)
+    if changed_fields:
+        with pytest.raises(AssertionError):
+            assert_paid_now()
+    else:
+        assert_paid_now()
+    assert sender_client.get_payment.call_count == 2
+    sender_client.get_payment.assert_called_with({"payment_hash": payment_hash})
+    receiver_client.get_invoice.assert_called_with({"payment_hash": payment_hash})
+
+
+def test_refunded_receiver_cannot_collect_the_same_hash_payment_again():
+    # 多给 B 的旧持单金额由 A 的净额扣掉，手续费和总额仍完全守恒；必须按收款方拦下。
+    settlement = ChannelSettlement(Mock(), "commitment")
+    edge = dict(left=Mock(), channel_id="old", sent=100)
+    chain = dict(
+        funding=1000, net=[700, 0], fee=1, done=False, timed_out=True, claimed=False
+    )
+
+    def wrong_distribution(*args, **kwargs):
+        chain.update(net=[600, 398], fee=2, done=True)
+
+    settlement.wait = wrong_distribution
+    with pytest.raises(AssertionError):
+        settlement.wait_refunded_channel_close(
+            edge, chain, "old-hash", None, receiver_capacity=299
+        )
+    assert sum(chain["net"]) + chain["fee"] == chain["funding"]
+
+
+def test_timeout_refund_uses_cluster_expiry_and_real_poll(monkeypatch):
+    from framework.helper import channel_settlement as module
+
+    # 主机墙钟在 0，集群已越过 4 小时到期点；等待确认仍按真实秒轮询。
+    timer = Mock()
+    timer.monotonic.side_effect = [10, 11, 12, 1811]
+    timer.time.return_value = 0
+    monkeypatch.setattr(module, "time", timer)
+    now_s = Mock(return_value=14_401)
+    ckb = Mock()
+    observer = ChannelSettlement(ckb, "commitment")
+    deposit = module.DEFAULT_MIN_DEPOSIT_CKB
+    edge = dict(
+        before=[dict(local_balance="0x64"), dict(local_balance="0x32")],
+        sent=20,
+        tlcs=[dict(expiry=hex(14_400_000))],
+    )
+    cell = {"tx_hash": "pending", "index": "0x0"}
+    chain = dict(
+        version="v1",
+        funding=2 * deposit + 150,
+        fee=1,
+        net=[0, 0],
+        done=False,
+        seen=False,
+        claimed=False,
+        timed_out=False,
+        outpoint=cell,
+    )
+
+    def advance(chain, *args, **kwargs):
+        if ckb.generate_epochs.called:
+            chain.update(timed_out=True, seen=True, net=[deposit + 100, 0])
+
+    monkeypatch.setattr(observer, "advance", advance)
+    assert observer.wait_direct_timeout_refund(
+        edge, chain, "hash", None, now_s=now_s
+    ) == (cell, deposit + 49)
+    timer.sleep.assert_called_once_with(5)
+    timer.time.assert_not_called()
+    ckb.generate_epochs.assert_called_once_with("0x1", wait_time=0)

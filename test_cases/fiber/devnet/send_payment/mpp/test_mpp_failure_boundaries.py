@@ -2,9 +2,6 @@
 
 import time
 
-import pytest
-
-from framework.config import DEFAULT_MIN_DEPOSIT_CKB
 from test_cases.fiber.devnet.send_payment.mpp.mpp_fixture import (
     MppFixture,
     CKB,
@@ -15,7 +12,6 @@ from framework.helper.fiber_ops import (
     calculate_payment_hash,
     wait_for_result,
     start_fiber,
-    restart_fiber,
 )
 
 
@@ -288,110 +284,3 @@ class TestMppFailureBoundaries(MppFixture):
         assert (
             self.upstream_channel["sent"] > amount
         ), "必须覆盖正 trampoline 预算的完整退款"
-
-    # TEST-MAP: MPP1705-09
-    @pytest.mark.skip(
-        reason="真实 TLC 到期等待过长；待验证时间加速与链/时钟清理后启用。"
-    )
-    def test_direct_timeout_refund_then_sender_restart_and_new_payment(self):
-        """
-        1. 普通 P–R 无原像 hold 付款提交后停止 R，P 强关原通道。
-        2. 按公开 TLC 真实到期等待，核对准确消费链无原像且本金回到 P 的 lock。
-        3. 重启 P，旧付款失败且无原像，通过另一健康通道完成新付款。
-        """
-        # 1. 拓扑：sender --1,000 CKB--> receiver；sender --1,000 CKB--> healthy。
-        # 原付款 sender → receiver 为 100 CKB；退款后再向 healthy 发送 1 CKB。
-        self.sender, self.receiver = self.fiber1, self.fiber2
-        healthy = self.start_new_fiber(self.generate_account(10000))
-        delay = 0x10000000001  # 1 epoch；用于公开通道参数和到期保护核对。
-        public = {"public": True, "commitment_delay_epoch": hex(delay)}
-        old_channel = self.open_channel(
-            self.sender, self.receiver, 1000 * CKB, 0, 0, 0, other_config=public
-        )
-        old = self.settlement.snapshot_channel(
-            self.sender, self.receiver, old_channel, commitment_delay_epoch=delay
-        )
-        probe_channel = self.open_channel(
-            self.sender, healthy, 1000 * CKB, 0, 0, 0, other_config=public
-        )
-        probe = self.settlement.snapshot_channel(
-            self.sender, healthy, probe_channel, commitment_delay_epoch=delay
-        )
-        self.channels = [old]
-        self.hash_algorithm = "ckb_hash"
-        self.preimage = self.generate_random_preimage()
-        self.payment_hash = calculate_payment_hash(self.preimage, self.hash_algorithm)
-        invoice = self.receiver.get_client().new_invoice(
-            {
-                "amount": hex(100 * CKB),
-                "currency": "Fibd",
-                "payment_hash": self.payment_hash,
-                "hash_algorithm": self.hash_algorithm,
-                "final_expiry_delta": hex(10_800_000),
-                "expiry": hex(86400),
-            }
-        )
-        self.sender.get_client().send_payment(
-            {
-                "invoice": invoice["invoice_address"],
-                "tlc_expiry_limit": hex(172_800_000),
-            }
-        )
-        self.wait_invoice_state(
-            self.receiver, self.payment_hash, "Received", timeout=120
-        )
-        self.settlement.record_committed_tlcs(old, self.payment_hash)
-        self.assert_no_preimage(self.sender)
-        self.receiver.stop()
-        self.sender.get_client().shutdown_channel(
-            {"channel_id": old["channel_id"], "force": True}
-        )
-        chain = self.track_closed_channel(old)
-
-        # 2. 真实到期加链上结算预算；公开查询中的名义到期并不等于已退款。
-        expiry = max(int(t["expiry"], 16) / 1000 for t in old["tlcs"])
-        deadline = time.monotonic() + max(0, expiry - time.time()) + 1800
-        while True:
-            assert time.monotonic() < deadline, f"退款未在真实到期+1800秒完成: {chain}"
-            self.settlement.advance(
-                chain, self.payment_hash, old["sent"], self.preimage, allow_claim=False
-            )
-            principal = (
-                int(old["before"][0]["local_balance"], 16) + DEFAULT_MIN_DEPOSIT_CKB
-            )
-            # R 离线时其保证金可留在派生 cell，P 的全部本金才是本例退款 oracle。
-            if principal - chain["fee"] <= chain["net"][0] <= principal:
-                break
-            self.node.getClient().generate_epochs("0x1", wait_time=0)
-            time.sleep(5 if time.time() >= expiry else min(30, expiry - time.time()))
-        assert not chain["claimed"] and chain["seen"]
-        assert 0 <= chain["fee"] < CKB // 100
-
-        # 3. 不重新提交旧付款；检查旧结果和独立健康付款。
-        restart_fiber(self.sender, peers=(healthy,))
-        wait_for_result(
-            "普通原付款 Failed 且无原像",
-            lambda: self.assert_no_preimage(self.sender)["status"] == "Failed",
-            RESULT_WAIT,
-        )
-        # 新付款：sender → healthy，1 CKB keysend，费用上限 0。
-        probe_before = [
-            get_channel(f, probe["channel_id"]) for f in (self.sender, healthy)
-        ]
-        probe_payment = self.sender.get_client().send_payment(
-            {
-                "target_pubkey": healthy.get_pubkey(),
-                "amount": hex(CKB),
-                "keysend": True,
-                "max_fee_amount": "0x0",
-            }
-        )
-        self.assert_healthy_payment_settled(
-            self.sender,
-            healthy,
-            probe,
-            probe_before,
-            probe_payment["payment_hash"],
-            CKB,
-        )
-        assert self.assert_no_preimage(self.sender)["status"] == "Failed"
