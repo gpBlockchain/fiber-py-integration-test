@@ -2,8 +2,13 @@
 
 import time
 
-from framework.helper.fiber_ops import get_channel, wait_for_result
-from framework.helper.settlement_witness import SettlementWitness
+from framework.config import DEFAULT_MIN_DEPOSIT_CKB
+from framework.helper.fiber_ops import (
+    calculate_payment_hash,
+    get_channel,
+    wait_for_result,
+)
+from framework.helper.settlement_witness import CKB, SettlementWitness
 
 
 class ChannelSettlement:
@@ -34,6 +39,17 @@ class ChannelSettlement:
         return self.ckb.get_transaction(outpoint["tx_hash"])["transaction"]["outputs"][
             int(outpoint["index"], 16)
         ]
+
+    @staticmethod
+    def closed_channel_waits_onchain(fiber, channel_id):
+        """只判断仍可查询的原 Closed 通道；记录缺失或非 Closed 均不是结清。"""
+        try:
+            state = get_channel(fiber, channel_id)["state"]
+        except StopIteration:
+            raise AssertionError(f"未返回原通道 {channel_id}") from None
+        assert state["state_name"] == "Closed", (channel_id, state)
+        flags = state["state_flags"].split("|")
+        return any(flag.strip() == "WAITING_ONCHAIN_SETTLEMENT" for flag in flags)
 
     def find_spending_transaction(self, outpoint):
         """同 lock 的交易只是候选；必须实际消费给定 outpoint 且已确认。"""
@@ -116,6 +132,7 @@ class ChannelSettlement:
             net=net,
             fee=fee,
             claimed=False,
+            timed_out=False,
             done=False,
             version=version,
             seen=False,
@@ -144,15 +161,19 @@ class ChannelSettlement:
             witness.assert_pending_tlcs([(payment_hash, amount)])
             chain["seen"] = True
         for unlock in witness.unlocks:
-            if unlock.preimage is not None:
+            # 0xfe/0xff 领取一方余额，不是目标 TLC 的退款证据。
+            if unlock.unlock_type in (0xFE, 0xFF):
+                assert unlock.preimage is None, unlock
+                continue
+            assert unlock.unlock_type < len(witness.tlcs), unlock
+            tlc = witness.tlcs[unlock.unlock_type]
+            expected_hash = bytes.fromhex(payment_hash[2:])[: len(tlc.payment_hash)]
+            assert (tlc.payment_hash, tlc.amount) == (expected_hash, amount)
+            if unlock.preimage is None:
+                chain["timed_out"] = True
+            else:
                 assert allow_claim and unlock.preimage == bytes.fromhex(preimage[2:])
-                assert unlock.unlock_type < len(witness.tlcs)
-                tlc = witness.tlcs[unlock.unlock_type]
-                expected_hash = bytes.fromhex(payment_hash[2:])[: len(tlc.payment_hash)]
-                assert (tlc.payment_hash, tlc.amount) == (expected_hash, amount)
                 chain["claimed"] = True
-        if not allow_claim:
-            assert all(u.preimage is None for u in witness.unlocks)
         net, fee = self.net_amounts(tx, previous, chain["locks"])
         chain["net"] = [a + b for a, b in zip(chain["net"], net)]
         chain["fee"] += fee
@@ -183,6 +204,62 @@ class ChannelSettlement:
             self.ckb.generate_epochs("0x1", wait_time=0)
             time.sleep(3)
         raise AssertionError(f"准确消费链未完成: {chain}")
+
+    def wait_direct_timeout_refund(
+        self, edge, chain, payment_hash, preimage, *, now_s=time.time
+    ):
+        """用节点业务时钟判断到期，实际等待仍由单调时钟限时；返回对端待领输出和容量。"""
+        assert chain["version"] == "v1", "直接退款场景需要完整付款哈希的 CKB 通道"
+        sender_principal, receiver_principal = [
+            int(row["local_balance"], 16) + DEFAULT_MIN_DEPOSIT_CKB
+            for row in edge["before"]
+        ]
+        assert sender_principal + receiver_principal == chain["funding"]
+        commitment_fee = chain["fee"]
+        expiry = max(int(t["expiry"], 16) / 1000 for t in edge["tlcs"])
+        deadline = time.monotonic() + max(0, expiry - now_s()) + 1800
+        while time.monotonic() < deadline:
+            self.advance(chain, payment_hash, edge["sent"], preimage, allow_claim=False)
+            assert not chain["done"], f"收款方离线时原承诺已无待领输出: {chain}"
+            sender_net = sender_principal - (chain["fee"] - commitment_fee)
+            if chain["timed_out"] and chain["net"] == [sender_net, 0]:
+                assert chain["seen"] and not chain["claimed"]
+                assert 0 <= chain["fee"] < CKB // 100
+                return chain["outpoint"], receiver_principal - commitment_fee
+            self.ckb.generate_epochs("0x1", wait_time=0)
+            remaining = expiry - now_s()
+            time.sleep(min(30, remaining) if remaining > 0 else 5)
+        raise AssertionError(
+            f"{payment_hash}: TLC 到期后 1800 秒内未确认全额退款: {chain}"
+        )
+
+    def assert_receiver_balance_pending(self, edge, outpoint, capacity):
+        """对照指定输出和付款方原通道，独立核对未领取的余额与等待标志。"""
+        live = self.ckb.get_live_cell(outpoint["index"], outpoint["tx_hash"], False)
+        assert live["status"] == "live", (outpoint, live)
+        assert int(live["cell"]["output"]["capacity"], 16) == capacity, live
+        assert self.closed_channel_waits_onchain(
+            edge["left"], edge["channel_id"]
+        ), edge["channel_id"]
+
+    def wait_refunded_channel_close(
+        self, edge, chain, payment_hash, preimage, receiver_capacity
+    ):
+        """收款方恢复后，先核对同一承诺的最终到账，再等原通道清除等待标志。"""
+        sender_net, fees_before_receiver = chain["net"][0], chain["fee"]
+        self.wait(chain, payment_hash, edge["sent"], preimage, timeout=1800)
+        assert chain["done"] and chain["timed_out"] and not chain["claimed"], chain
+        receiver_fee = chain["fee"] - fees_before_receiver
+        assert chain["net"] == [sender_net, receiver_capacity - receiver_fee], chain
+        assert sum(chain["net"]) + chain["fee"] == chain["funding"]
+        assert 0 <= chain["fee"] < CKB // 100
+        wait_for_result(
+            f"原通道 {edge['channel_id']} 已关闭且不再等待链上结算",
+            lambda: not self.closed_channel_waits_onchain(
+                edge["left"], edge["channel_id"]
+            ),
+            timeout=660,
+        )
 
     def record_committed_tlcs(self, edge, payment_hash):
         def read():
@@ -271,3 +348,28 @@ class ChannelSettlement:
                 == int(edge["before"][i]["remote_balance"], 16) - delta
             )
         return True
+
+    def invoice_payment_is_settled(
+        self, edge, invoice_address, payment_hash, preimage, algorithm
+    ):
+        """每次重查付款方、开票方和该通道账本；不发款、不结算、也不在此重试。"""
+        query = {"payment_hash": payment_hash}
+        payment = edge["left"].get_client().get_payment(query)
+        assert payment["payment_hash"] == payment_hash, payment
+        assert payment["status"] != "Failed", f"新付款被判失败: {payment}"
+        if payment["status"] != "Success":
+            return False
+        assert payment["payment_preimage"] == preimage and not payment.get(
+            "failed_error"
+        ), payment
+        assert (
+            calculate_payment_hash(payment["payment_preimage"], algorithm)
+            == payment_hash
+        )
+        invoice = edge["right"].get_client().get_invoice(query)
+        assert invoice["invoice_address"] == invoice_address, invoice
+        assert invoice["invoice"]["data"]["payment_hash"] == payment_hash, invoice
+        assert int(invoice["invoice"]["amount"], 16) == edge["sent"], invoice
+        return invoice["status"] == "Paid" and self.payment_is_settled(
+            edge, payment_hash
+        )

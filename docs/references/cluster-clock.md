@@ -81,9 +81,10 @@ CKB miner 和 `start_new_fiber()` 创建的 FNN。自行创建的其他进程需
 
 ## CI
 
-`.github/workflows/fiber.yml` 的 `fiber_test_fake_time` job 只在
-`ubuntu-22.04` 上安装兼容 jemalloc 的 `libfaketime`，并运行框架测试及实时
-进程的 4 小时时间跳跃冒烟。该 job 复用 `prepare` 产出的 CKB/FNN 二进制，
-执行 `test_cases/fiber/devnet/fake_time/` 全目录；后续使用 `BasicClockFiber`
-的 devnet 时间用例直接放在这里，就会由该 job 执行。macOS runner 不在此
-矩阵中。工作流监听 `main` 和 `v0.10.0` 的 PR。
+[`fiber.yml`](../../.github/workflows/fiber.yml) 的 `prepare` 在 Ubuntu 22.04 上构建一次兼容
+jemalloc 的 `libfaketime`，随 CKB/FNN 放进同一份准备包。各测试分组解包后都可使用
+`BasicClockFiber`：需要推进时间的 devnet 用例可以留在原功能目录，仍由原分组运行。
+`FIBER_TEST_FAKETIME_LIB` 只指定库的位置；普通用例和 pytest 进程仍使用真实时间。
+
+专用分组 `fiber_test_fake_time` 继续运行时钟框架测试及 `test_cases/fiber/devnet/fake_time/`
+全目录（含进程时间跳跃冒烟），不重复收集其他分组的用例。主工作流的 PR 只匹配目标分支 `main`。
