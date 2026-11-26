@@ -19,6 +19,7 @@ class TestInvalidWatchtowerPrivateKey(FiberTest):
             "params": [
                 {
                     "channel_id": "0x" + "11" * 32,
+                    "channel_features": "0x1",
                     "funding_udt_type_script": None,
                     "local_settlement_key": invalid_zero_key,
                     "remote_settlement_key": pubkey2,
