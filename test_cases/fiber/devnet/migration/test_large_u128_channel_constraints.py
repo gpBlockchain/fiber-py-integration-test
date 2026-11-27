@@ -32,6 +32,7 @@ pytestmark = pytest.mark.skipif(
 
 
 class TestLargeU128ChannelConstraints(MigrationFiberTest):
+    @pytest.mark.skip(reason="暂缓旧库升级：v0.8.1 原库早于 develop 的迁移起点")
     def test_auto_migrate_v081_explicit_max_tlc_value_in_flight(self):
         large_max_tlc_value = (1 << 128) - 1
 

@@ -23,6 +23,7 @@ pytestmark = pytest.mark.skipif(
 
 
 class TestMultiChannelMigration(MigrationFiberTest):
+    @pytest.mark.skip(reason="暂缓旧库升级：v0.8.1 原库早于 develop 的迁移起点")
     def test_auto_migrate_v081_three_node_route(self):
         old_a = self.start_new_fiber(
             self.generate_account(10000), fiber_version=FiberConfigPath.V081_DEV

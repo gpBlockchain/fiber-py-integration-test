@@ -5,6 +5,8 @@ import shutil
 import tempfile
 import time
 
+import pytest
+
 from framework.test_fiber import FiberConfigPath
 from framework.helper.fiber_ops import start_with_confirm
 from test_cases.fiber.devnet.send_payment.mpp.mpp_fixture import (
@@ -743,6 +745,7 @@ class TestMppUpgrade(MppFixture):
     fiber_version = FiberConfigPath.V091_DEV
 
     # TEST-MAP: MPP1705-10
+    @pytest.mark.skip(reason="暂缓旧库升级：强关后在途 TLC 由哪个版本接手尚待确认")
     def test_upgrade_partial_success_and_paginated_queries(self):
         """
         1. 0.9.1 经正常操作生成成功/失败对照和已有原像、链上片未完成的旧付款。

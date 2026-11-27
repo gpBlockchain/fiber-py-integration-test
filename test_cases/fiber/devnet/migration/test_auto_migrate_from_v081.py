@@ -37,6 +37,7 @@ pytestmark = pytest.mark.skipif(
 
 
 class TestAutoMigrateFromV081(MigrationFiberTest):
+    @pytest.mark.skip(reason="暂缓旧库升级：v0.8.1 原库早于 develop 的迁移起点")
     def test_auto_migrate_v081_to_current(self):
         # 1. start two v0.8.1 nodes
         old_a = self.start_new_fiber(

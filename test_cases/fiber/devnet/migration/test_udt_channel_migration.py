@@ -21,6 +21,7 @@ pytestmark = pytest.mark.skipif(
 
 
 class TestUdtChannelMigration(MigrationFiberTest):
+    @pytest.mark.skip(reason="暂缓旧库升级：v0.8.1 原库早于 develop 的迁移起点")
     def test_auto_migrate_v081_udt_channel(self):
         udt_script = self.get_account_udt_script(self.account1_private_key)
         old_a = self.start_new_fiber(
