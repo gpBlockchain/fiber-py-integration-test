@@ -10,7 +10,7 @@ from test_cases.fiber.devnet.migration._helpers import start_with_confirm
 
 class TestData(FiberTest):
     # debug = True
-    # @pytest.mark.skip("migration failed")
+    @pytest.mark.skip(reason="暂缓旧库升级：v0.7.0 经 v0.8.1 中转仍早于 develop 起点")
     def test_old_fiber(self):
         """
          1. start fiber

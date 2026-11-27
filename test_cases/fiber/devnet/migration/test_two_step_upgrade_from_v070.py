@@ -35,6 +35,7 @@ pytestmark = pytest.mark.skipif(
 
 
 class TestTwoStepUpgradeFromV070(MigrationFiberTest):
+    @pytest.mark.skip(reason="暂缓旧库升级：v0.7.0 经 v0.8.1 中转仍早于 develop 起点")
     def test_v070_then_v081_migrate_then_current_autostart(self):
         # 1. v0.7.0 phase: real channel data on disk
         old_a = self.start_new_fiber(

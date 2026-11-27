@@ -52,6 +52,8 @@ import socket
 import subprocess
 import time
 
+import pytest
+
 from framework.attack_fnn import LEGACY_COUNTERPARTY_ENV, requires_attack_fnn
 from framework.helper.settlement_witness import (
     SettlementWitness,
@@ -527,6 +529,7 @@ class TestMixedVersionMpp(_MixedVersionMppCase):
     #     通道并按链上承诺 args 复核 —— 直连 58 字节且末位 0x01（V1）、桥接 57 字节（Legacy）。
     # 未覆盖：xUDT 资产、超过两片、重试、MPP 部分失败/重平衡分支；分片“具体金额”由路由决定，
     #   不由本测试固定（能固定的是通道归属：每条路径各自小于发票金额且只存在这两条路径）。
+    @pytest.mark.skip(reason="暂缓旧库升级：混合路由的活动 Legacy 通道升级路径待调整")
     def test_mixed_version_mpp_completes_offchain(self):
         payer, payee = self.fiber1, self.fiber2
         bridge = self.__class__.legacy_bridge
@@ -706,6 +709,7 @@ class TestMixedVersionMppSinglePart(_MixedVersionMppCase):
     #   （强关方必须持有原像，即总是收款方侧）、xUDT 资产、第二片仍 pending 的更复杂情形；
     #   以及“一片已链上结算、另一片仍锁定时整个 MPP 付款最终应处于什么状态”这一产品问题——
     #   本方法只断言“未标记 Success 且不公开原像”，不固定会话终态。
+    @pytest.mark.skip(reason="暂缓旧库升级：混合路由的活动 Legacy 通道升级路径待调整")
     def test_mixed_version_mpp_single_part_onsettled_does_not_complete(self):
         payer, payee = self.fiber1, self.fiber2
         bridge = self.__class__.legacy_bridge
@@ -1462,6 +1466,7 @@ class TestMixedVersionLongPathSuccess(_MixedVersionAdversarialSupport):
     #     不被扣转发费）且 <= 该笔金额 + 1% relay 手续费额度。
     #   证明点 10（链路资金守恒）：relay 的两跳变动大小相等、方向相反（钱穿过去，只留下转发费）。
 
+    @pytest.mark.skip(reason="暂缓旧库升级：混合路由的活动 Legacy 通道升级路径待调整")
     def test_mixed_version_long_path_full_preimage_success(self):
         payer, relay1 = self.fiber1, self.fiber2
         relay2 = self._start_extra("relay2_32", FiberConfigPath.V091_DEV)

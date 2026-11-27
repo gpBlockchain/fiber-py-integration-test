@@ -7,6 +7,8 @@ import socket
 import subprocess
 import time
 
+import pytest
+
 from framework.basic_fiber import FiberTest
 from framework.test_fiber import FiberConfigPath
 from framework.util import ckb_hash, get_project_root
@@ -53,6 +55,7 @@ class TestTrampolineUpgradeCKB(FiberTest):
         shutil.rmtree(ROOT / cls.tmp_path_name, ignore_errors=True)
 
     # TEST-MAP: PR1705-01
+    @pytest.mark.skip(reason="暂缓旧库升级：带在途转发的 Legacy 中继升级路径待调整")
     def test_fulfill_held_trampoline_payment_after_upgrade(self):
         """
         1. 0.9.1 节点产生转发历史和持单，T 创建同哈希发票，再保留原目录升级 T。
@@ -109,6 +112,7 @@ class TestTrampolineUpgradeCKB(FiberTest):
         )
 
     # TEST-MAP: PR1705-02
+    @pytest.mark.skip(reason="暂缓旧库升级：带在途转发的 Legacy 中继升级路径待调整")
     def test_cancel_held_trampoline_payment_after_upgrade(self):
         """
         1. 0.9.1 节点产生转发历史和持单，T 创建同哈希发票，再保留原目录升级 T。

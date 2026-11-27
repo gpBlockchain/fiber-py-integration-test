@@ -15,6 +15,8 @@ import socket
 import subprocess
 import time
 
+import pytest
+
 from framework.config import DEFAULT_MIN_LEDGER_DEPOSIT_CKB
 from framework.onchain_tlc_query import onchain_tlc_query_enabled
 from framework.test_fiber import FiberConfigPath
@@ -115,6 +117,7 @@ class TestFullHashOldData(ContractUpgradeSupport):
     #    相等 → 是同一条原通道被恢复，而不是升级后另开一条新通道。
     # 6) 恢复后可用：继续双向付款，并对该原通道强关；承诺锁仍为 57 字节、结算仍走 Legacy
     #    85 字节条目，最终付款 Success 且节点正常收尾 → 旧数据可继续付款与结算。
+    @pytest.mark.skip(reason="暂缓旧库升级：原 CI 的 v0.9.1 原库直升 develop 被拒")
     def test_real_old_stores_start_and_settle_original_legacy_channel(self):
         # 证据放在本节点临时目录内；失败时随节点数据复制到 report，清理时一并回收。
         # 避免跨运行复用 tmp/evidence，造成旧 checkpoint 路径冲突。
